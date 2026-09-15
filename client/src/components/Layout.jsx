@@ -6,6 +6,8 @@ const nav = [
   { to: '/', label: 'Home', icon: '🏠' },
   { to: '/search', label: 'Search', icon: '🔍' },
   { to: '/charts', label: 'Charts', icon: '📈' },
+  { to: '/radio', label: 'Radio', icon: '📻' },
+  { to: '/podcasts', label: 'Podcasts', icon: '🎙️' },
   { to: '/library', label: 'Your Library', icon: '📚' },
   { to: '/liked', label: 'Liked Songs', icon: '❤️' },
 ];

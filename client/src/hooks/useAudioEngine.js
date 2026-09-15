@@ -140,11 +140,16 @@ async function onError() {
     next();
     return;
   }
-  // try resolving via backend (fallback source), else skip
+  // try resolving via backend (same-id-space sources only — never cross-wire ids), else skip
   if (t && !t._retried) {
+    const [source, ...rest] = String(t.id).split(':');
+    if (!['saavn', 'deezer', 'itunes'].includes(source)) {
+      toast('Stream unavailable — skipping to next', 'error');
+      next();
+      return;
+    }
     try {
-      const [source, ...rest] = String(t.id).split(':');
-      const full = await api.song(source === 'saavn' || source === 'deezer' ? source : 'saavn', rest.join(':'));
+      const full = await api.song(source, rest.join(':'));
       if (full?.streamUrl && full.streamUrl !== el.src) {
         const q = [...store.getState().queue];
         q[store.getState().index] = { ...t, ...full, _retried: true };
@@ -275,11 +280,11 @@ export function useAudioEngine() {
           return;
         }
       }
-      if (!url && track.source !== 'ytmusic') {
-        // lazy-resolve full detail
+      if (!url && ['saavn', 'deezer', 'itunes'].includes(track.source)) {
+        // lazy-resolve full detail (same-id-space sources only)
         try {
           const [source, ...rest] = String(track.id).split(':');
-          const full = await api.song(source === 'saavn' || source === 'deezer' ? source : 'saavn', rest.join(':')).catch(() => null);
+          const full = await api.song(source, rest.join(':')).catch(() => null);
           if (cancelled) return;
           if (full?.streamUrl) {
             const q = [...useStore.getState().queue];

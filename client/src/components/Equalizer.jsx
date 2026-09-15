@@ -60,7 +60,7 @@ export default function Equalizer() {
           {EQ_LABELS.map((label, i) => (
             <label key={label} className="flex flex-col items-center gap-1" title={`${label} Hz: ${eqGains[i]} dB`}>
               <span className="text-[10px] font-bold text-dim w-8 text-center">{eqGains[i] > 0 ? `+${eqGains[i]}` : eqGains[i]}</span>
-              <input type="range" min={-12} max={12} step={0.5} value={eqGains[i]}
+              <input type="range" min={-12} max={12} step={0.5} value={eqGains[i]} orient="vertical"
                 onChange={(e) => { const v = Number(e.target.value); setEqGain(i, v); live(() => setBandGain(i, v)); }}
                 className="eq-slider" aria-label={`${label} Hz band`} />
               <span className="text-[10px] font-bold">{label}</span>

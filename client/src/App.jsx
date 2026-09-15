@@ -9,6 +9,8 @@ import Home from './pages/Home';
 import Search from './pages/Search';
 import Library, { LikedSongs, LocalPlaylist } from './pages/Library';
 import { AlbumPage, ArtistPage, ExtPlaylistPage, ChartsPage } from './pages/Detail';
+import Radio from './pages/Radio';
+import Podcasts from './pages/Podcasts';
 import Settings from './pages/Settings';
 
 export default function App() {
@@ -36,6 +38,8 @@ export default function App() {
               <Route path="/" element={<Home />} />
               <Route path="/search" element={<Search />} />
               <Route path="/charts" element={<ChartsPage />} />
+              <Route path="/radio" element={<Radio />} />
+              <Route path="/podcasts" element={<Podcasts />} />
               <Route path="/library" element={<Library />} />
               <Route path="/liked" element={<LikedSongs />} />
               <Route path="/playlist/:id" element={<LocalPlaylist />} />

@@ -22,6 +22,10 @@ export const api = {
   underground: () => get('/underground'),
   stations: (params = {}) => get('/radio-stations' + (Object.keys(params).length ? `?${new URLSearchParams(params)}` : '')),
   alternates: (title, artist = '') => get(`/alternates?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}`),
+  podcasts: (q) => get(`/podcasts/search?q=${encodeURIComponent(q)}`),
+  podcastTop: () => get('/podcasts/top'),
+  episodes: (feedUrl, image = '', show = '') => get(`/podcasts/episodes?feedUrl=${encodeURIComponent(feedUrl)}&image=${encodeURIComponent(image)}&show=${encodeURIComponent(show)}`),
+  concerts: () => get('/concerts'),
   radio: (seed) => get(`/radio?seed=${encodeURIComponent(seed)}`),
   lyrics: ({ saavnId, artist, title }) => {
     const p = new URLSearchParams();

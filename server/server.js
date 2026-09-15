@@ -355,8 +355,8 @@ function normalizeAudiusTrack(t) {
     isPreview: false, isLiked: false,
   };
 }
-async function audiusTrending(limit = 15) {
-  const j = await audiusFetch(`/v1/tracks/trending?limit=${limit}`);
+async function audiusTrending(limit = 15, genre = '') {
+  const j = await audiusFetch(`/v1/tracks/trending?limit=${limit}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`);
   return (j?.data || []).map(normalizeAudiusTrack).filter(t => t && t.streamUrl);
 }
 async function audiusSearch(query, limit = 10) {
@@ -819,6 +819,27 @@ app.get('/api/playlist/:source/:id', async (req, res) => {
       setCache(req.originalUrl, payload);
       return res.json(payload);
     }
+    if (source === 'archive') {
+      const meta = await fetchJson(`https://archive.org/metadata/${encodeURIComponent(id)}`, {}, 20000);
+      const files = (meta?.files || []).filter(f => /\.(mp3|ogg|flac|m4a)$/i.test(f.name || '') && !/_(vbr|64kb|meta|thumbs|itemimage)/i.test(f.name || ''));
+      const mp3s = files.filter(f => /\.mp3$/i.test(f.name));
+      const list = (mp3s.length ? mp3s : files).slice(0, 200);
+      const md = meta?.metadata || {};
+      const thumb = `https://archive.org/download/${id}/__ia_thumb.jpg`;
+      const songs = list.map((f, i) => ({
+        id: `archive:${id}:${i}`, source: 'archive', sourceId: `${id}/${f.name}`, type: 'track',
+        title: (f.title || f.name || '').replace(/\.[^.]+$/, '').replace(/[_+]/g, ' ').trim() || `Track ${i + 1}`,
+        artist: { id: '', name: md.creator || 'Unknown' }, artists: [],
+        album: { id: `archive:pl:${id}`, name: md.title || 'Live concert', image: thumb },
+        duration: parseArchiveDuration(f.length) || 0, image: thumb,
+        streamUrl: `https://archive.org/download/${id}/${encodeURIComponent(f.name)}`,
+        isPreview: false, codec: (String(f.name).split('.').pop() || '').toLowerCase(),
+      }));
+      const cname = `${md.creator || ''} — ${md.coverage || md.date || ''}`.trim() || md.title || 'Concert';
+      const payload = { id: `archive:pl:${id}`, source: 'archive', sourceId: id, type: 'playlist', name: cname, description: String(md.description || '').slice(0, 500), image: thumb, songs };
+      setCache(req.originalUrl, payload);
+      return res.json(payload);
+    }
     res.status(400).json({ error: 'Unknown source' });
   } catch (e) { res.status(502).json({ error: 'Failed to load playlist', detail: e.message }); }
 });
@@ -862,12 +883,20 @@ app.get('/api/underground', async (req, res) => {
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
   try {
-    const tracks = await audiusTrending(15);
+    const tracks = await audiusTrending(15, req.query.genre || '');
     setCache(req.originalUrl, tracks);
     res.json(tracks);
   } catch (e) { res.status(502).json({ error: 'Underground feed failed', detail: e.message }); }
 });
 
+const BUILTIN_STATIONS = [
+  { stationuuid: 'somafm-groovesalad', name: 'SomaFM: Groove Salad', url_resolved: 'https://ice1.somafm.com/groovesalad-128-mp3', favicon: 'https://somafm.com/img/groovesalad.jpg', tags: 'ambient,beats', country: 'USA', language: 'English', votes: 9999, homepage: 'https://somafm.com/groovesalad/' },
+  { stationuuid: 'somafm-defcon', name: 'SomaFM: DEF CON Radio', url_resolved: 'https://ice1.somafm.com/defcon-128-mp3', favicon: 'https://somafm.com/img/defcon.jpg', tags: 'hacker,electronic', country: 'USA', language: 'English', votes: 9998, homepage: 'https://somafm.com/defcon/' },
+  { stationuuid: 'somafm-dronezone', name: 'SomaFM: Drone Zone', url_resolved: 'https://ice1.somafm.com/dronezone-128-mp3', favicon: 'https://somafm.com/img/dronezone.jpg', tags: 'ambient,drone', country: 'USA', language: 'English', votes: 9997, homepage: 'https://somafm.com/dronezone/' },
+  { stationuuid: 'somafm-fluid', name: 'SomaFM: Fluid', url_resolved: 'https://ice1.somafm.com/fluid-128-mp3', favicon: 'https://somafm.com/img/fluid.jpg', tags: 'hiphop,chill', country: 'USA', language: 'English', votes: 9996, homepage: 'https://somafm.com/fluid/' },
+  { stationuuid: 'somafm-7soul', name: 'SomaFM: Seven Inch Soul', url_resolved: 'https://ice1.somafm.com/7soul-128-mp3', favicon: 'https://somafm.com/img/7soul.jpg', tags: 'soul,funk', country: 'USA', language: 'English', votes: 9995, homepage: 'https://somafm.com/7soul/' },
+  { stationuuid: 'somafm-metal', name: 'SomaFM: Metal Detector', url_resolved: 'https://ice1.somafm.com/metal-128-mp3', favicon: 'https://somafm.com/img/metal.jpg', tags: 'metal', country: 'USA', language: 'English', votes: 9994, homepage: 'https://somafm.com/metal/' },
+];
 app.get('/api/radio-stations', async (req, res) => {
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
@@ -881,7 +910,11 @@ app.get('/api/radio-stations', async (req, res) => {
     const stations = (Array.isArray(j) ? j : []).map(normalizeStation).filter(Boolean).slice(0, 24);
     setCache(req.originalUrl, stations);
     res.json(stations);
-  } catch (e) { res.status(502).json({ error: 'Radio stations failed', detail: e.message }); }
+  } catch (e) {
+    const fb = BUILTIN_STATIONS.map(normalizeStation).filter(Boolean);
+    if (fb.length) { setCache(req.originalUrl, fb); return res.json(fb); }
+    res.status(502).json({ error: 'Radio stations failed', detail: e.message });
+  }
 });
 
 function similarityScore(a, b) {
@@ -938,6 +971,122 @@ app.get('/api/mono-audio', async (req, res) => {
     res.setHeader('Content-Length', String(buf.length));
     res.end(buf);
   } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'Mono audio failed', detail: e.message }); }
+});
+
+// ---------------- Podcasts (iTunes Search, no key + RSS episodes) ----------------
+async function itunesPodcastSearch(q, limit = 20) {
+  const j = await fetchJson(`${ITUNES}/search?term=${encodeURIComponent(q)}&media=podcast&entity=podcast&limit=${limit}&country=${COUNTRY}`, {}, 12000).catch(() => null);
+  return (j?.results || []).map(c => ({
+    id: `podcast:${c.collectionId}`, source: 'podcast', type: 'podcast',
+    name: c.collectionName || 'Podcast', artist: c.artistName || '',
+    image: itunesArt(c.artworkUrl600 || c.artworkUrl100, 600),
+    feedUrl: c.feedUrl || '', genres: c.genres || [], trackCount: c.trackCount || 0,
+  })).filter(x => x.feedUrl);
+}
+function decodeEntities(s) {
+  return String(s || '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).trim();
+}
+function stripTags(s) { return decodeEntities(String(s || '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim(); }
+function parseEpDuration(s) {
+  if (!s) return 0;
+  s = String(s).trim();
+  if (/^\d+$/.test(s)) return +s;
+  const parts = s.split(':').map(Number);
+  if (parts.some(isNaN)) return 0;
+  return parts.reduce((a, b) => a * 60 + b, 0);
+}
+function parseRss(xml, feedMeta = {}) {
+  const channel = xml.match(/<channel>([\s\S]*?)<\/channel>/)?.[1] || xml;
+  const img = channel.match(/<itunes:image[^>]*href="([^"]+)"/)?.[1] || channel.match(/<image>\s*<url>([^<]+)<\/url>/)?.[1] || feedMeta.image || '';
+  const episodes = [];
+  for (const m of channel.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+    const it = m[1];
+    const enc = it.match(/<enclosure[^>]*url="([^"]+)"/)?.[1] || '';
+    if (!enc) continue;
+    episodes.push({
+      title: stripTags(it.match(/<title>([\s\S]*?)<\/title>/)?.[1] || 'Episode').slice(0, 200),
+      pubDate: (it.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1] || '').trim(),
+      streamUrl: decodeEntities(enc),
+      duration: parseEpDuration(it.match(/<(itunes:)?duration>([^<]+)<\/(itunes:)?duration>/)?.[2] || ''),
+      description: stripTags(it.match(/<description>([\s\S]*?)<\/description>/)?.[1] || '').slice(0, 500),
+      image: it.match(/<itunes:image[^>]*href="([^"]+)"/)?.[1] || img,
+      guid: stripTags(it.match(/<guid[^>]*>([\s\S]*?)<\/guid>/)?.[1] || '').slice(0, 120),
+    });
+    if (episodes.length >= 60) break;
+  }
+  return { image: img, episodes };
+}
+app.get('/api/podcasts/search', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.json([]);
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    const out = await itunesPodcastSearch(q, 20);
+    setCache(req.originalUrl, out);
+    res.json(out);
+  } catch (e) { res.status(502).json({ error: 'Podcast search failed', detail: e.message }); }
+});
+app.get('/api/podcasts/top', async (req, res) => {
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    const rss = await fetchJson('https://itunes.apple.com/us/rss/toppodcasts/limit=20/json', {}, 12000);
+    const entries = rss?.feed?.entry || [];
+    const ids = entries.map(e => e?.id?.attributes?.['im:id']).filter(Boolean).join(',');
+    if (!ids) return res.json([]);
+    const lookup = await fetchJson(`${ITUNES}/lookup?id=${ids}&entity=podcast&country=${COUNTRY}`, {}, 12000).catch(() => ({ results: [] }));
+    const out = (lookup?.results || []).filter(r => r.feedUrl).map(c => ({
+      id: `podcast:${c.collectionId}`, source: 'podcast', type: 'podcast',
+      name: c.collectionName || 'Podcast', artist: c.artistName || '',
+      image: itunesArt(c.artworkUrl600 || c.artworkUrl100, 600),
+      feedUrl: c.feedUrl || '', genres: c.genres || [], trackCount: c.trackCount || 0,
+    }));
+    setCache(req.originalUrl, out);
+    res.json(out);
+  } catch (e) { res.status(502).json({ error: 'Top podcasts failed', detail: e.message }); }
+});
+app.get('/api/podcasts/episodes', async (req, res) => {
+  const feedUrl = req.query.feedUrl || '';
+  if (!/^https?:\/\//.test(feedUrl)) return res.status(400).json({ error: 'Missing feedUrl' });
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    const r = await fetch(feedUrl, { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(20000) });
+    if (!r.ok) throw new Error(`Feed HTTP ${r.status}`);
+    const xml = await r.text();
+    const { image, episodes } = parseRss(xml, { image: req.query.image || '' });
+    const show = decodeEntities(req.query.show || '');
+    const tracks = episodes.map(ep => ({
+      id: `pod:${Buffer.from(ep.streamUrl).toString('base64url').slice(0, 32)}`, source: 'podcast', sourceId: ep.streamUrl, type: 'track',
+      title: ep.title, artist: { id: '', name: show || 'Podcast' }, artists: [],
+      album: { id: '', name: show || 'Podcast', image }, image,
+      duration: ep.duration, streamUrl: ep.streamUrl, isPreview: false,
+      pubDate: ep.pubDate, description: ep.description,
+    }));
+    const out = { image, episodes: tracks };
+    setCache(req.originalUrl, out);
+    res.json(out);
+  } catch (e) { res.status(502).json({ error: 'Episodes failed', detail: e.message }); }
+});
+
+// ---------------- Live concerts (Archive.org etree) ----------------
+app.get('/api/concerts', async (req, res) => {
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    const j = await fetchJson(`https://archive.org/advancedsearch.php?q=${encodeURIComponent('collection:etree AND mediatype:audio')}&fl[]=identifier,title,creator,date,coverage,downloads&rows=14&sort[]=downloads%20desc&output=json`, {}, 15000);
+    const items = (j?.response?.docs || []).map(d => ({
+      id: `archive:pl:${d.identifier}`, source: 'archive', sourceId: d.identifier, type: 'playlist',
+      name: `${d.creator || 'Unknown'} — ${d.coverage || d.date || ''}`.trim() || d.title,
+      description: d.title || '', image: `https://archive.org/download/${d.identifier}/__ia_thumb.jpg`,
+      trackCount: 0,
+    }));
+    setCache(req.originalUrl, items);
+    res.json(items);
+  } catch (e) { res.status(502).json({ error: 'Concerts failed', detail: e.message }); }
 });
 
 app.get('/api/lyrics', async (req, res) => {

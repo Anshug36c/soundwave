@@ -15,6 +15,10 @@ export default function Visualizer({ height = 64, bars = 48 }) {
     const g = canvas.getContext('2d');
     const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#1db954';
     const data = new Uint8Array(512);
+    const bar = (x, y, w, h) => {
+      if (g.roundRect) { g.beginPath(); g.roundRect(x, y, w, h, Math.min(w / 2, h / 2)); g.fill(); }
+      else g.fillRect(x, y, w, h); // older browsers
+    };
     let raf = 0, t = 0;
     const draw = () => {
       raf = requestAnimationFrame(draw);
@@ -29,22 +33,16 @@ export default function Visualizer({ height = 64, bars = 48 }) {
         for (let i = 0; i < bars; i++) {
           const v = data[Math.floor((i / bars) * data.length * 0.72)] / 255;
           const h = Math.max(3, v * H);
-          const x = i * bw + bw * 0.2, w = bw * 0.6;
-          g.beginPath();
-          g.roundRect(x, H - h, w, h, w / 2);
-          g.fill();
+          bar(i * bw + bw * 0.2, H - h, bw * 0.6, h);
         }
       } else {
         // idle wave while paused / studio off
+        g.globalAlpha = 0.35;
         for (let i = 0; i < bars; i++) {
           const h = 3 + Math.sin(t + i * 0.35) * 2 + 2;
-          const x = i * bw + bw * 0.2, w = bw * 0.6;
-          g.globalAlpha = 0.35;
-          g.beginPath();
-          g.roundRect(x, H - h, w, h, w / 2);
-          g.fill();
-          g.globalAlpha = 1;
+          bar(i * bw + bw * 0.2, H - h, bw * 0.6, h);
         }
+        g.globalAlpha = 1;
       }
     };
     draw();

@@ -22,6 +22,7 @@ export default function Home() {
   const [ytmSongs, setYtmSongs] = useState(null);
   const [underground, setUnderground] = useState(null);
   const [stations, setStations] = useState(null);
+  const [concerts, setConcerts] = useState(null);
 
   useEffect(() => {
     api.home().then(setData).catch(e => setError(e.message));
@@ -33,6 +34,7 @@ export default function Home() {
       .catch(() => setYtmSongs([]));
     api.underground().then(setUnderground).catch(() => setUnderground([]));
     api.stations().then(setStations).catch(() => setStations([]));
+    api.concerts().then(setConcerts).catch(() => setConcerts([]));
   }, []);
 
   useEffect(() => {
@@ -109,9 +111,12 @@ export default function Home() {
 
       {stations && stations.length > 0 && (
         <section className="mt-7">
-          <div className="mb-3 px-1">
-            <h2 className="text-xl font-extrabold tracking-tight">📻 Live Radio</h2>
-            <p className="text-xs text-dim">Real stations streaming now</p>
+          <div className="mb-3 px-1 flex items-end justify-between">
+            <div>
+              <h2 className="text-xl font-extrabold tracking-tight">📻 Live Radio</h2>
+              <p className="text-xs text-dim">Real stations streaming now</p>
+            </div>
+            <Link to="/radio" className="text-xs font-bold accent">Browse all →</Link>
           </div>
           <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 px-1">
             {stations.map(s => (
@@ -126,6 +131,12 @@ export default function Home() {
             ))}
           </div>
         </section>
+      )}
+
+      {concerts && concerts.length > 0 && (
+        <SectionRow title="🎸 Live Concerts" subtitle="Full concert recordings · Internet Archive">
+          {concerts.map(p => <PlaylistCard key={p.id} playlist={p} />)}
+        </SectionRow>
       )}
 
       <SectionRow title="Top Artists" subtitle="Most streamed voices">

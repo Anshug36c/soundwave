@@ -119,11 +119,4 @@ input[type="range"].slider::-webkit-slider-thumb { -webkit-appearance: none; wid
 .palette-modal { width: 100%; max-width: 560px; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; box-shadow: 0 24px 64px rgba(0,0,0,.5); animation: fadeUp .15s ease; }
 
 /* ---------- Equalizer vertical sliders ---------- */
-.eq-slider { writing-mode: vertical-lr; direction: rtl; width: 26px; height: 110px; accent-color: var(--accent); cursor: pointer; background: transparent; }
-
-/* ---------- Command palette ---------- */
-.palette-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.6); backdrop-filter: blur(4px); display: flex; justify-content: center; align-items: flex-start; padding: 12vh 1rem 1rem; }
-.palette-modal { width: 100%; max-width: 560px; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; box-shadow: 0 24px 64px rgba(0,0,0,.5); animation: fadeUp .15s ease; }
-
-/* ---------- Equalizer vertical sliders ---------- */
-.eq-slider { writing-mode: vertical-lr; direction: rtl; width: 26px; height: 110px; accent-color: var(--accent); cursor: pointer; background: transparent; }
+.eq-slider { writing-mode: vertical-lr; direction: rtl; width: 26px; height: 110px; accent-color: var(--accent); cursor: pointer; background: transparent; -webkit-appearance: slider-vertical; appearance: slider-vertical; }
