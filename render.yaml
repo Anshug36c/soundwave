@@ -1,0 +1,17 @@
+# SoundWave — one-click deploy on Render (free tier works)
+# Push this repo to GitHub → Render dashboard → New → Blueprint → select repo. Done.
+services:
+  - type: web
+    name: soundwave
+    runtime: node
+    plan: free
+    buildCommand: npm --prefix server install && npm --prefix client install && npm --prefix client run build
+    startCommand: npm --prefix server start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ITUNES_COUNTRY
+        value: IN
+      # Optional — get free keys to enrich artist data:
+      # - key: LASTFM_API_KEY
+      #   sync: false

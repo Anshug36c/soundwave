@@ -1,0 +1,670 @@
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+
+dotenv.config({ path: '../.env' });
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+const LASTFM_KEY = process.env.LASTFM_API_KEY || '';
+const AUDIODB_KEY = process.env.AUDIODB_API_KEY || '2'; // '2' = free test key
+
+// JioSaavn mirrors — tried in order, first healthy one wins (full 320kbps tracks)
+const SAAVN_BASES = [
+  process.env.JIOSAAVN_API_URL,
+  'https://saavn.dev/api',
+  'https://saavn.sumit.co/api',
+].filter(Boolean).map(u => u.replace(/\/$/, ''));
+
+const DEEZER = 'https://api.deezer.com';
+const ITUNES = 'https://itunes.apple.com';
+const COUNTRY = process.env.ITUNES_COUNTRY || 'IN';
+
+app.use(cors());
+app.use(express.json());
+
+// ---------- tiny in-memory cache ----------
+const cache = new Map();
+const CACHE_TTL = 1000 * 60 * 10;
+function getCache(k) {
+  const hit = cache.get(k);
+  if (!hit) return null;
+  if (Date.now() - hit.t > CACHE_TTL) { cache.delete(k); return null; }
+  return hit.v;
+}
+function setCache(k, v) {
+  if (cache.size > 800) cache.clear();
+  cache.set(k, { t: Date.now(), v });
+}
+
+async function fetchJson(url, opts = {}, timeoutMs = 12000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { ...opts, signal: ctrl.signal, headers: { 'User-Agent': 'SoundWave/1.0', Accept: 'application/json', ...(opts.headers || {}) } });
+    if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
+    const text = await r.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(`Non-JSON from ${url}: ${text.slice(0, 80)}`);
+    }
+  } finally { clearTimeout(t); }
+}
+
+// Saavn with mirror failover + short negative caching
+const baseCooldown = new Map();
+async function saavnFetch(path) {
+  for (const base of SAAVN_BASES) {
+    if ((baseCooldown.get(base) || 0) > Date.now()) continue;
+    try {
+      return await fetchJson(`${base}${path}`, {}, 8000);
+    } catch (e) {
+      baseCooldown.set(base, Date.now() + 60000);
+    }
+  }
+  throw new Error('All JioSaavn mirrors unreachable');
+}
+
+// ---------- normalizers → unified schema ----------
+function pickImage(images, quality = 'large') {
+  if (!images) return '';
+  if (typeof images === 'string') return images;
+  if (Array.isArray(images)) {
+    const order = quality === 'small' ? ['50x50', '150x150', '500x500'] : quality === 'medium' ? ['150x150', '500x500', '50x50'] : ['500x500', '150x150', '50x50'];
+    for (const q of order) { const f = images.find(i => i.quality === q || i.link?.includes(q)); if (f) return f.url || f.link; }
+    return images[images.length - 1]?.url || images[images.length - 1]?.link || '';
+  }
+  return images[quality] || images.large || '';
+}
+const itunesArt = (url, size = 600) => (url || '').replace('100x100bb', `${size}x${size}bb`).replace('100x100', `${size}x${size}`);
+
+function streamsFromSaavn(downloadUrl = []) {
+  const get = (q) => downloadUrl.find(d => d.quality === q)?.url || null;
+  const high = get('320kbps') || get('160kbps') || get('96kbps') || get('48kbps') || null;
+  const medium = get('160kbps') || get('96kbps') || high;
+  const low = get('96kbps') || get('48kbps') || medium;
+  return { low, medium, high };
+}
+
+function normalizeSaavnSong(s) {
+  if (!s || !s.id) return null;
+  const artists = s.artists?.primary || s.artists?.all || [];
+  const streams = streamsFromSaavn(s.downloadUrl || []);
+  return {
+    id: `saavn:${s.id}`, source: 'saavn', sourceId: String(s.id),
+    title: s.name || 'Unknown',
+    artist: { id: artists[0]?.id ? `saavn:ar:${artists[0].id}` : '', name: artists[0]?.name || s.primaryArtists || 'Unknown Artist', image: pickImage(artists[0]?.image, 'medium') },
+    artists: artists.map(a => ({ id: `saavn:ar:${a.id}`, name: a.name, image: pickImage(a.image, 'small') })),
+    album: { id: s.album?.id ? `saavn:al:${s.album.id}` : '', name: s.album?.name || 'Unknown Album', image: pickImage(s.image, 'large'), year: s.year || s.releaseDate?.slice(0, 4) || '' },
+    duration: Number(s.duration) || 0,
+    streamUrl: streams.high || streams.medium || streams.low || '', streams,
+    previewUrl: streams.low || '', image: pickImage(s.image, 'large'),
+    thumbnails: { small: pickImage(s.image, 'small'), medium: pickImage(s.image, 'medium'), large: pickImage(s.image, 'large') },
+    language: s.language || '', playCount: Number(s.playCount) || 0,
+    explicit: s.explicitContent === true || s.explicitContent === 'true',
+    hasLyrics: !!s.hasLyrics, lyricsId: s.lyricsId || s.id, genre: [], url: s.url || '',
+    isPreview: false, isLiked: false,
+  };
+}
+
+function normalizeDeezerTrack(t) {
+  if (!t || !t.id) return null;
+  return {
+    id: `deezer:${t.id}`, source: 'deezer', sourceId: String(t.id),
+    title: t.title || 'Unknown',
+    artist: { id: `deezer:ar:${t.artist?.id}`, name: t.artist?.name || 'Unknown Artist', image: t.artist?.picture_medium || t.artist?.picture || '' },
+    artists: t.contributors?.map(c => ({ id: `deezer:ar:${c.id}`, name: c.name, image: c.picture_small || '' })) || [],
+    album: { id: `deezer:al:${t.album?.id}`, name: t.album?.title || 'Unknown Album', image: t.album?.cover_xl || t.album?.cover_big || t.album?.cover || '', year: '' },
+    duration: Number(t.duration) || 30,
+    streamUrl: t.preview || '', streams: { low: t.preview || '', medium: t.preview || '', high: t.preview || '' },
+    previewUrl: t.preview || '', image: t.album?.cover_xl || t.album?.cover_big || '',
+    thumbnails: { small: t.album?.cover_small || '', medium: t.album?.cover_medium || '', large: t.album?.cover_xl || t.album?.cover_big || '' },
+    language: '', playCount: Number(t.rank) || 0, explicit: !!t.explicit_lyrics,
+    hasLyrics: false, lyricsId: null, genre: [], url: t.link || '',
+    isPreview: true, isLiked: false,
+  };
+}
+
+function normalizeItunesSong(t) {
+  if (!t || (!t.trackId && !t.collectionId)) return null;
+  const art = itunesArt(t.artworkUrl100, 600);
+  return {
+    id: `itunes:${t.trackId}`, source: 'itunes', sourceId: String(t.trackId),
+    title: t.trackName || 'Unknown',
+    artist: { id: `itunes:ar:${t.artistId}`, name: t.artistName || 'Unknown Artist', image: itunesArt(t.artworkUrl100, 300) },
+    artists: [{ id: `itunes:ar:${t.artistId}`, name: t.artistName || 'Unknown Artist', image: '' }],
+    album: { id: `itunes:al:${t.collectionId}`, name: t.collectionName || 'Unknown Album', image: art, year: (t.releaseDate || '').slice(0, 4) },
+    duration: Math.round((Number(t.trackTimeMillis) || 30000) / 1000),
+    streamUrl: t.previewUrl || '', streams: { low: t.previewUrl || '', medium: t.previewUrl || '', high: t.previewUrl || '' },
+    previewUrl: t.previewUrl || '', image: art,
+    thumbnails: { small: itunesArt(t.artworkUrl100, 100), medium: itunesArt(t.artworkUrl100, 300), large: art },
+    language: '', playCount: 0, explicit: t.trackExplicitness === 'explicit',
+    hasLyrics: false, lyricsId: null, genre: t.primaryGenreName ? [t.primaryGenreName] : [],
+    url: t.trackViewUrl || '', isPreview: true, isLiked: false,
+  };
+}
+
+function normalizeSaavnAlbum(a) {
+  if (!a || !a.id) return null;
+  return {
+    id: `saavn:al:${a.id}`, source: 'saavn', sourceId: String(a.id), type: 'album',
+    name: a.name || a.title || 'Unknown Album',
+    artist: a.primaryArtists || a.artists?.primary?.[0]?.name || 'Various Artists',
+    image: pickImage(a.image, 'large'),
+    thumbnails: { small: pickImage(a.image, 'small'), medium: pickImage(a.image, 'medium'), large: pickImage(a.image, 'large') },
+    year: a.year || '', songCount: a.songCount || a.songs?.length || 0,
+  };
+}
+function normalizeItunesAlbum(t) {
+  const id = t.collectionId;
+  if (!id) return null;
+  return {
+    id: `itunes:al:${id}`, source: 'itunes', sourceId: String(id), type: 'album',
+    name: t.collectionName || 'Unknown Album', artist: t.artistName || 'Various Artists',
+    image: itunesArt(t.artworkUrl100, 600),
+    thumbnails: { small: itunesArt(t.artworkUrl100, 100), medium: itunesArt(t.artworkUrl100, 300), large: itunesArt(t.artworkUrl100, 600) },
+    year: (t.releaseDate || '').slice(0, 4), songCount: Number(t.trackCount) || 0,
+  };
+}
+function normalizeDeezerAlbum(a) {
+  if (!a || !a.id) return null;
+  return {
+    id: `deezer:al:${a.id}`, source: 'deezer', sourceId: String(a.id), type: 'album',
+    name: a.title || 'Unknown Album', artist: a.artist?.name || 'Various Artists',
+    image: a.cover_xl || a.cover_big || a.cover || '',
+    thumbnails: { small: a.cover_small || '', medium: a.cover_medium || '', large: a.cover_xl || a.cover_big || '' },
+    year: a.release_date?.slice(0, 4) || '', songCount: a.nb_tracks || 0,
+  };
+}
+function normalizeSaavnArtist(a) {
+  if (!a || !a.id) return null;
+  return {
+    id: `saavn:ar:${a.id}`, source: 'saavn', sourceId: String(a.id), type: 'artist',
+    name: a.name || 'Unknown Artist', image: pickImage(a.image, 'large'),
+    thumbnails: { small: pickImage(a.image, 'small'), medium: pickImage(a.image, 'medium'), large: pickImage(a.image, 'large') }, role: a.role || '',
+  };
+}
+function normalizeItunesArtist(t) {
+  if (!t || !t.artistId) return null;
+  return {
+    id: `itunes:ar:${t.artistId}`, source: 'itunes', sourceId: String(t.artistId), type: 'artist',
+    name: t.artistName || 'Unknown Artist', image: itunesArt(t.artworkUrl100, 600),
+    thumbnails: { small: itunesArt(t.artworkUrl100, 100), medium: itunesArt(t.artworkUrl100, 300), large: itunesArt(t.artworkUrl100, 600) }, role: t.primaryGenreName || '',
+  };
+}
+function normalizeDeezerArtist(a) {
+  if (!a || !a.id) return null;
+  return {
+    id: `deezer:ar:${a.id}`, source: 'deezer', sourceId: String(a.id), type: 'artist',
+    name: a.name || 'Unknown Artist', image: a.picture_xl || a.picture_big || a.picture_medium || '',
+    thumbnails: { small: a.picture_small || '', medium: a.picture_medium || '', large: a.picture_xl || a.picture_big || '' }, role: '',
+  };
+}
+function normalizeSaavnPlaylist(p) {
+  if (!p || !p.id) return null;
+  return {
+    id: `saavn:pl:${p.id}`, source: 'saavn', sourceId: String(p.id), type: 'playlist',
+    name: p.name || p.title || 'Untitled Playlist', description: p.description || '',
+    image: pickImage(p.image, 'large'),
+    thumbnails: { small: pickImage(p.image, 'small'), medium: pickImage(p.image, 'medium'), large: pickImage(p.image, 'large') },
+    songCount: p.songCount || p.songs?.length || 0,
+  };
+}
+
+function dedupe(tracks) {
+  const seen = new Set();
+  return (tracks || []).filter(t => {
+    if (!t || !t.id) return false;
+    const key = `${(t.title || '').toLowerCase().trim()}|${(t.artist?.name || '').toLowerCase().trim()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// ---------- upstream helpers ----------
+async function saavnSearchSongs(query, limit = 20) {
+  const j = await saavnFetch(`/search/songs?query=${encodeURIComponent(query)}&limit=${limit}`);
+  const arr = j?.data?.results || j?.data || [];
+  return (Array.isArray(arr) ? arr : []).map(normalizeSaavnSong).filter(Boolean);
+}
+async function saavnSearchAlbums(query, limit = 12) {
+  const j = await saavnFetch(`/search/albums?query=${encodeURIComponent(query)}&limit=${limit}`);
+  const arr = j?.data?.results || j?.data || [];
+  return (Array.isArray(arr) ? arr : []).map(normalizeSaavnAlbum).filter(Boolean);
+}
+async function saavnSearchArtists(query, limit = 12) {
+  const j = await saavnFetch(`/search/artists?query=${encodeURIComponent(query)}&limit=${limit}`);
+  const arr = j?.data?.results || j?.data || [];
+  return (Array.isArray(arr) ? arr : []).map(normalizeSaavnArtist).filter(Boolean);
+}
+async function saavnSearchPlaylists(query, limit = 12) {
+  const j = await saavnFetch(`/search/playlists?query=${encodeURIComponent(query)}&limit=${limit}`);
+  const arr = j?.data?.results || j?.data || [];
+  return (Array.isArray(arr) ? arr : []).map(normalizeSaavnPlaylist).filter(Boolean);
+}
+async function deezerSearchTracks(query, limit = 20) {
+  const j = await fetchJson(`${DEEZER}/search?q=${encodeURIComponent(query)}&limit=${limit}`, {}, 8000);
+  return (j?.data || []).map(normalizeDeezerTrack).filter(Boolean);
+}
+async function itunesSearchSongs(query, limit = 20, country = COUNTRY) {
+  const j = await fetchJson(`${ITUNES}/search?term=${encodeURIComponent(query)}&media=music&entity=song&limit=${limit}&country=${country}`, {}, 8000);
+  return (j?.results || []).map(normalizeItunesSong).filter(t => t && t.streamUrl);
+}
+async function itunesSearchAlbums(query, limit = 12, country = COUNTRY) {
+  const j = await fetchJson(`${ITUNES}/search?term=${encodeURIComponent(query)}&media=music&entity=album&limit=${limit}&country=${country}`, {}, 8000);
+  const seen = new Set();
+  return (j?.results || []).map(normalizeItunesAlbum).filter(a => a && !seen.has(a.id) && (seen.add(a.id), true));
+}
+async function itunesSearchArtists(query, limit = 12, country = COUNTRY) {
+  const j = await fetchJson(`${ITUNES}/search?term=${encodeURIComponent(query)}&media=music&entity=musicArtist&limit=${limit}&country=${country}`, {}, 8000);
+  // artist entity has no artwork — enrich with a song search for images
+  const artists = (j?.results || []).filter(a => a.artistId);
+  const withArt = await Promise.allSettled(artists.slice(0, limit).map(async (a) => {
+    let img = '';
+    try {
+      const s = await fetchJson(`${ITUNES}/search?term=${encodeURIComponent(a.artistName)}&media=music&entity=song&limit=1&country=${country}`, {}, 6000);
+      img = itunesArt(s?.results?.[0]?.artworkUrl100, 600);
+    } catch {}
+    return { id: `itunes:ar:${a.artistId}`, source: 'itunes', sourceId: String(a.artistId), type: 'artist', name: a.artistName, image: img, thumbnails: { small: img, medium: img, large: img }, role: a.primaryGenreName || '' };
+  }));
+  return withArt.filter(s => s.status === 'fulfilled').map(s => s.value);
+}
+async function itunesLookup(ids, entity = 'song') {
+  const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean).join(',');
+  if (!list) return [];
+  const j = await fetchJson(`${ITUNES}/lookup?id=${list}&entity=${entity}&limit=200&country=${COUNTRY}`, {}, 10000);
+  return j?.results || [];
+}
+async function itunesTopSongs(country = COUNTRY, limit = 25) {
+  const rss = await fetchJson(`${ITUNES}/${country.toLowerCase()}/rss/topsongs/limit=${limit}/json`, {}, 8000);
+  const entries = rss?.feed?.entry || [];
+  const ids = entries.map(e => e?.id?.attributes?.['im:id']).filter(Boolean);
+  if (!ids.length) return [];
+  const looked = await itunesLookup(ids, 'song');
+  const byId = new Map(looked.filter(r => r.trackId).map(r => [String(r.trackId), r]));
+  // preserve chart order; fall back to RSS metadata when lookup misses
+  return ids.map((id, i) => {
+    const hit = byId.get(String(id));
+    if (hit) return { ...normalizeItunesSong(hit), chartRank: i + 1 };
+    const e = entries[i];
+    const imgs = e?.['im:image'] || [];
+    const img = (imgs[2] || imgs[1] || imgs[0])?.label || '';
+    return {
+      id: `itunes:${id}`, source: 'itunes', sourceId: String(id), title: e?.['im:name']?.label || 'Unknown',
+      artist: { id: '', name: e?.['im:artist']?.label || 'Unknown', image: img },
+      artists: [], album: { id: '', name: '', image: img, year: '' }, duration: 30,
+      streamUrl: '', streams: {}, previewUrl: '', image: img,
+      thumbnails: { small: img, medium: img, large: img }, genre: [], isPreview: true, chartRank: i + 1,
+    };
+  }).filter(t => t.streamUrl || t.previewUrl);
+}
+async function itunesTopAlbums(country = COUNTRY, limit = 12) {
+  const rss = await fetchJson(`${ITUNES}/${country.toLowerCase()}/rss/topalbums/limit=${limit}/json`, {}, 8000);
+  return (rss?.feed?.entry || []).map(e => {
+    const id = e?.id?.attributes?.['im:id'];
+    const imgs = e?.['im:image'] || [];
+    const img = (imgs[2] || imgs[1] || imgs[0])?.label || '';
+    const hi = img.replace('170x170bb', '600x600bb');
+    return { id: `itunes:al:${id}`, source: 'itunes', sourceId: String(id), type: 'album', name: e?.['im:name']?.label || 'Unknown', artist: e?.['im:artist']?.label || '', image: hi, thumbnails: { small: img, medium: img, large: hi }, year: (e?.['im:releaseDate']?.label || '').slice(0, 4), songCount: 0 };
+  }).filter(a => a.sourceId && a.sourceId !== 'undefined');
+}
+async function audioDbArtist(name) {
+  try {
+    const j = await fetchJson(`https://www.theaudiodb.com/api/v1/json/${AUDIODB_KEY}/search.php?s=${encodeURIComponent(name)}`, {}, 8000);
+    return j?.artists?.[0] || null;
+  } catch { return null; }
+}
+
+// ---------- routes ----------
+app.get('/api/health', (req, res) => res.json({ ok: true, service: 'soundwave', time: new Date().toISOString() }));
+
+app.get('/api/sources', async (req, res) => {
+  const probes = {
+    saavn: (async () => { await saavnFetch('/search/songs?query=test&limit=1'); return 'ok'; })(),
+    itunes: fetchJson(`${ITUNES}/search?term=test&media=music&limit=1`, {}, 8000).then(() => 'ok'),
+    deezer: fetchJson(`${DEEZER}/search?q=test&limit=1`, {}, 8000).then(() => 'ok'),
+    lyrics: fetchJson('https://api.lyrics.ovh/v1/Coldplay/Yellow', {}, 8000).then(() => 'ok'),
+    audiodb: fetchJson(`https://www.theaudiodb.com/api/v1/json/${AUDIODB_KEY}/search.php?s=coldplay`, {}, 8000).then(() => 'ok'),
+  };
+  const out = {};
+  await Promise.all(Object.entries(probes).map(async ([k, p]) => {
+    try { out[k] = await p; } catch (e) { out[k] = `down: ${e.message.slice(0, 80)}`; }
+  }));
+  res.json(out);
+});
+
+app.get('/api/home', async (req, res) => {
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    const [trendingSaavn, chartsIN, chartsUS, newAlbums, topSongsUS, chill, workout, playlists, deezerChart] = await Promise.allSettled([
+      saavnSearchSongs('trending hindi hits 2026', 20),
+      itunesTopSongs('IN', 25),
+      itunesTopSongs('US', 15),
+      itunesTopAlbums('IN', 12),
+      itunesSearchSongs('top global hits 2026', 12, 'US'),
+      itunesSearchSongs('chill lofi vibes', 15),
+      itunesSearchSongs('workout energetic pump', 15),
+      saavnSearchPlaylists('bollywood hits', 10),
+      fetchJson(`${DEEZER}/chart/0/tracks?limit=15`, {}, 8000).then(j => (j?.data || []).map(normalizeDeezerTrack).filter(Boolean)),
+    ]);
+    const V = (r) => (r.status === 'fulfilled' ? r.value : []);
+    const charts = dedupe([...V(chartsIN), ...V(chartsUS)]);
+    const trendingNow = dedupe([...V(trendingSaavn), ...V(chartsIN).slice(0, 12), ...V(topSongsUS)]);
+    const artistMap = new Map();
+    [...V(chartsIN), ...V(chartsUS)].forEach(t => {
+      const a = t.artist;
+      if (a?.id && !artistMap.has(a.id)) artistMap.set(a.id, { id: a.id, source: t.source, sourceId: a.id.split(':').pop(), type: 'artist', name: a.name, image: t.image, thumbnails: t.thumbnails, role: '' });
+    });
+    const payload = {
+      hero: trendingNow.slice(0, 5),
+      trendingNow: trendingNow.slice(0, 18),
+      charts: [...charts, ...V(deezerChart)].slice(0, 25),
+      newReleases: V(newAlbums),
+      topArtists: [...artistMap.values()].slice(0, 14),
+      mood: { chill: V(chill), workout: V(workout) },
+      featuredPlaylists: V(playlists),
+    };
+    setCache(req.originalUrl, payload);
+    res.json(payload);
+  } catch (e) {
+    console.error('home error', e.message);
+    res.status(502).json({ error: 'Failed to load home feed', detail: e.message });
+  }
+});
+
+app.get('/api/search', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  const type = (req.query.type || 'all').toLowerCase();
+  if (!q) return res.json({ songs: [], albums: [], artists: [], playlists: [] });
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    let songs = [], albums = [], artists = [], playlists = [];
+    if (type === 'all' || type === 'songs') {
+      const [a, b, c] = await Promise.allSettled([saavnSearchSongs(q, 20), itunesSearchSongs(q, 20), deezerSearchTracks(q, 12)]);
+      songs = dedupe([...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(c.status === 'fulfilled' ? c.value : [])]);
+    }
+    if (type === 'all' || type === 'albums') {
+      const [a, b] = await Promise.allSettled([saavnSearchAlbums(q, 10), itunesSearchAlbums(q, 10)]);
+      albums = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : [])];
+    }
+    if (type === 'all' || type === 'artists') {
+      const [a, b] = await Promise.allSettled([saavnSearchArtists(q, 8), itunesSearchArtists(q, 8)]);
+      artists = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : [])];
+    }
+    if (type === 'all' || type === 'playlists') {
+      const [a] = await Promise.allSettled([saavnSearchPlaylists(q, 10)]);
+      playlists = a.status === 'fulfilled' ? a.value : [];
+    }
+    const payload = { songs, albums, artists, playlists };
+    setCache(req.originalUrl, payload);
+    res.json(payload);
+  } catch (e) {
+    res.status(502).json({ error: 'Search failed', detail: e.message });
+  }
+});
+
+app.get('/api/song/:source/:id', async (req, res) => {
+  const { source, id } = req.params;
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    if (source === 'saavn') {
+      const j = await saavnFetch(`/songs/${encodeURIComponent(id)}`);
+      const track = normalizeSaavnSong(j?.data?.[0] || j?.data);
+      if (!track) return res.status(404).json({ error: 'Song not found' });
+      if (!track.streamUrl) {
+        const fb = await itunesSearchSongs(`${track.title} ${track.artist?.name}`, 3).catch(() => []);
+        if (fb[0]?.streamUrl) { track.previewUrl = fb[0].streamUrl; track.streamUrl = fb[0].streamUrl; track.fallbackSource = 'itunes'; }
+      }
+      setCache(req.originalUrl, track);
+      return res.json(track);
+    }
+    if (source === 'deezer') {
+      const track = normalizeDeezerTrack(await fetchJson(`${DEEZER}/track/${encodeURIComponent(id)}`));
+      if (!track) return res.status(404).json({ error: 'Song not found' });
+      setCache(req.originalUrl, track);
+      return res.json(track);
+    }
+    if (source === 'itunes') {
+      const results = await itunesLookup(id, 'song');
+      const track = normalizeItunesSong(results.find(r => r.trackId) || results[0]);
+      if (!track) return res.status(404).json({ error: 'Song not found' });
+      setCache(req.originalUrl, track);
+      return res.json(track);
+    }
+    res.status(400).json({ error: 'Unknown source' });
+  } catch (e) { res.status(502).json({ error: 'Failed to resolve song', detail: e.message }); }
+});
+
+app.get('/api/album/:source/:id', async (req, res) => {
+  const { source, id } = req.params;
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    if (source === 'saavn') {
+      const j = await saavnFetch(`/albums/${encodeURIComponent(id)}`);
+      const d = j?.data || {};
+      const payload = { ...normalizeSaavnAlbum(d), description: d.description || '', songs: (d.songs || []).map(normalizeSaavnSong).filter(Boolean) };
+      setCache(req.originalUrl, payload);
+      return res.json(payload);
+    }
+    if (source === 'itunes') {
+      const results = await itunesLookup(id, 'song');
+      const col = results.find(r => r.wrapperType === 'collection') || {};
+      const songs = results.filter(r => r.wrapperType === 'track').map(normalizeItunesSong).filter(t => t && t.streamUrl);
+      const payload = { ...(normalizeItunesAlbum({ collectionId: id, collectionName: col.collectionName, artistName: col.artistName, artworkUrl100: col.artworkUrl100, releaseDate: col.releaseDate, trackCount: col.trackCount }) || { id: `itunes:al:${id}`, name: col.collectionName || 'Album', image: itunesArt(col.artworkUrl100, 600) }), description: '', songs };
+      setCache(req.originalUrl, payload);
+      return res.json(payload);
+    }
+    if (source === 'deezer') {
+      const j = await fetchJson(`${DEEZER}/album/${encodeURIComponent(id)}`);
+      const songs = (j?.tracks?.data || []).map(t => normalizeDeezerTrack({ ...t, artist: t.artist || j.artist, album: { id: j.id, title: j.title, cover_xl: j.cover_xl, cover_big: j.cover_big } })).filter(Boolean);
+      const payload = { ...normalizeDeezerAlbum(j), description: '', songs };
+      setCache(req.originalUrl, payload);
+      return res.json(payload);
+    }
+    res.status(400).json({ error: 'Unknown source' });
+  } catch (e) { res.status(502).json({ error: 'Failed to load album', detail: e.message }); }
+});
+
+app.get('/api/artist/:source/:id', async (req, res) => {
+  const { source, id } = req.params;
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    let payload = null;
+    if (source === 'saavn') {
+      const j = await saavnFetch(`/artists/${encodeURIComponent(id)}`);
+      const d = j?.data || {};
+      payload = {
+        ...normalizeSaavnArtist(d), bio: d.bio || '',
+        topSongs: (d.topSongs || []).map(normalizeSaavnSong).filter(Boolean),
+        topAlbums: (d.topAlbums || []).map(normalizeSaavnAlbum).filter(Boolean),
+        similar: (d.similarArtists || []).map(normalizeSaavnArtist).filter(Boolean),
+      };
+    } else if (source === 'itunes') {
+      const [songsRes, albumsRes] = await Promise.all([
+        fetchJson(`${ITUNES}/lookup?id=${encodeURIComponent(id)}&entity=song&limit=25&sort=popularity&country=${COUNTRY}`, {}, 10000).catch(() => ({ results: [] })),
+        fetchJson(`${ITUNES}/lookup?id=${encodeURIComponent(id)}&entity=album&limit=12&country=${COUNTRY}`, {}, 10000).catch(() => ({ results: [] })),
+      ]);
+      const songsAll = songsRes?.results || [];
+      const artistMeta = songsAll.find(r => r.wrapperType === 'artist') || (albumsRes?.results || []).find(r => r.wrapperType === 'artist') || {};
+      const topSongs = songsAll.filter(r => r.wrapperType === 'track').map(normalizeItunesSong).filter(t => t && t.streamUrl);
+      payload = {
+        id: `itunes:ar:${id}`, source: 'itunes', sourceId: String(id), type: 'artist',
+        name: artistMeta.artistName || topSongs[0]?.artist?.name || 'Artist',
+        image: topSongs[0]?.image || '', bio: '',
+        topSongs,
+        topAlbums: (albumsRes?.results || []).filter(r => r.wrapperType === 'collection').map(normalizeItunesAlbum).filter(Boolean),
+        similar: [],
+      };
+    } else if (source === 'deezer') {
+      const [a, top] = await Promise.all([
+        fetchJson(`${DEEZER}/artist/${encodeURIComponent(id)}`),
+        fetchJson(`${DEEZER}/artist/${encodeURIComponent(id)}/top?limit=10`).catch(() => ({ data: [] })),
+      ]);
+      payload = { ...normalizeDeezerArtist(a), bio: '', topSongs: (top?.data || []).map(normalizeDeezerTrack).filter(Boolean), topAlbums: [], similar: [] };
+    } else return res.status(400).json({ error: 'Unknown source' });
+
+    // Enrichment: AudioDB (free) + LastFM (optional key)
+    if (payload?.name) {
+      const adb = await audioDbArtist(payload.name);
+      if (adb) {
+        payload.bio = payload.bio || adb.strBiographyEN || '';
+        payload.image = payload.image || adb.strArtistThumb || adb.strArtistFanart || '';
+        payload.fanart = adb.strArtistFanart || '';
+        payload.formedYear = adb.intFormedYear || '';
+        payload.genre = adb.strGenre || '';
+      }
+      if (LASTFM_KEY) {
+        try {
+          const lf = await fetchJson(`https://ws.audioscrobbler.com/2.0/?method=artist.getinfo&artist=${encodeURIComponent(payload.name)}&api_key=${LASTFM_KEY}&format=json`, {}, 8000);
+          const info = lf?.artist;
+          if (info) {
+            payload.bio = payload.bio || (info.bio?.summary || '').replace(/<[^>]*>/g, '');
+            if (!payload.similar?.length && info.similar?.artist) {
+              payload.similar = info.similar.artist.slice(0, 8).map(x => ({ id: `lastfm:ar:${x.name}`, source: 'lastfm', sourceId: x.name, type: 'artist', name: x.name, image: x.image?.[3]?.['#text'] || '' }));
+            }
+            payload.tags = (info.tags?.tag || []).map(t => t.name);
+          }
+        } catch {}
+      }
+    }
+    setCache(req.originalUrl, payload);
+    res.json(payload);
+  } catch (e) { res.status(502).json({ error: 'Failed to load artist', detail: e.message }); }
+});
+
+app.get('/api/playlist/:source/:id', async (req, res) => {
+  const { source, id } = req.params;
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    if (source === 'saavn') {
+      const j = await saavnFetch(`/playlists/${encodeURIComponent(id)}`);
+      const d = j?.data || {};
+      const payload = { ...normalizeSaavnPlaylist(d), description: d.description || '', songs: (d.songs || []).map(normalizeSaavnSong).filter(Boolean) };
+      setCache(req.originalUrl, payload);
+      return res.json(payload);
+    }
+    if (source === 'deezer') {
+      const j = await fetchJson(`${DEEZER}/playlist/${encodeURIComponent(id)}`);
+      const payload = {
+        id: `deezer:pl:${j.id}`, source: 'deezer', sourceId: String(j.id), type: 'playlist',
+        name: j.title, description: j.description || '', image: j.picture_xl || j.picture_big || '',
+        songs: (j?.tracks?.data || []).map(normalizeDeezerTrack).filter(Boolean),
+      };
+      setCache(req.originalUrl, payload);
+      return res.json(payload);
+    }
+    res.status(400).json({ error: 'Unknown source' });
+  } catch (e) { res.status(502).json({ error: 'Failed to load playlist', detail: e.message }); }
+});
+
+app.get('/api/charts', async (req, res) => {
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    const [inSongs, usSongs, inAlbums, dz] = await Promise.allSettled([
+      itunesTopSongs('IN', 25), itunesTopSongs('US', 15), itunesTopAlbums('IN', 12),
+      fetchJson(`${DEEZER}/chart/0/tracks?limit=15`, {}, 8000).then(j => (j?.data || []).map(normalizeDeezerTrack).filter(Boolean)),
+    ]);
+    const V = (r) => (r.status === 'fulfilled' ? r.value : []);
+    const tracks = dedupe([...V(inSongs), ...V(dz), ...V(usSongs)]);
+    const artistMap = new Map();
+    V(inSongs).forEach(t => { if (t.artist?.id && !artistMap.has(t.artist.id)) artistMap.set(t.artist.id, { id: t.artist.id, source: t.source, sourceId: t.artist.id.split(':').pop(), type: 'artist', name: t.artist.name, image: t.image, thumbnails: t.thumbnails, role: '' }); });
+    const payload = { tracks, albums: V(inAlbums), artists: [...artistMap.values()], playlists: [] };
+    setCache(req.originalUrl, payload);
+    res.json(payload);
+  } catch (e) { res.status(502).json({ error: 'Failed to load charts', detail: e.message }); }
+});
+
+app.get('/api/radio', async (req, res) => {
+  const seed = (req.query.seed || 'top hits').trim();
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    const [a, b, c] = await Promise.allSettled([
+      itunesSearchSongs(seed, 20), saavnSearchSongs(seed, 15), deezerSearchTracks(seed, 10),
+    ]);
+    const songs = dedupe([...(b.status === 'fulfilled' ? b.value : []), ...(a.status === 'fulfilled' ? a.value : []), ...(c.status === 'fulfilled' ? c.value : [])]);
+    for (let i = songs.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1));[songs[i], songs[k]] = [songs[k], songs[i]]; }
+    const payload = { seed, songs };
+    setCache(req.originalUrl, payload);
+    res.json(payload);
+  } catch (e) { res.status(502).json({ error: 'Radio failed', detail: e.message }); }
+});
+
+app.get('/api/lyrics', async (req, res) => {
+  const { saavnId, artist, title } = req.query;
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  let result = { lyrics: null, source: null };
+  try {
+    if (saavnId) {
+      const j = await saavnFetch(`/lyrics/${encodeURIComponent(saavnId)}`).catch(() => null);
+      const lyr = j?.data?.lyrics;
+      if (lyr) result = { lyrics: lyr.replace(/<br\s*\/?>/gi, '\n'), source: 'saavn' };
+    }
+    if (!result.lyrics && artist && title) {
+      const j = await fetchJson(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`, {}, 10000).catch(() => null);
+      if (j?.lyrics) result = { lyrics: j.lyrics, source: 'lyrics.ovh' };
+    }
+    setCache(req.originalUrl, result);
+    res.json(result);
+  } catch (e) { res.json(result); }
+});
+
+app.get('/api/stream', async (req, res) => {
+  const url = req.query.url;
+  if (!url || !/^https?:\/\//.test(url)) return res.status(400).json({ error: 'Missing url' });
+  try {
+    const upstream = await fetch(url, { headers: { 'User-Agent': 'SoundWave/1.0', ...(req.headers.range ? { Range: req.headers.range } : {}) } });
+    if (!upstream.ok && upstream.status !== 206) return res.status(502).json({ error: 'Upstream stream failed' });
+    res.status(upstream.status);
+    upstream.headers.forEach((v, k) => {
+      if (['content-type', 'content-length', 'content-range', 'accept-ranges'].includes(k.toLowerCase())) res.setHeader(k, v);
+    });
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg');
+    const reader = upstream.body.getReader();
+    req.on('close', () => { try { reader.cancel(); } catch {} });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!res.write(value)) await new Promise(r => res.once('drain', r));
+    }
+    res.end();
+  } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'Stream proxy failed', detail: e.message }); }
+});
+
+// Serve production client build (npm run build) from the same process
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const distDir = path.join(__dirname, '../client/dist');
+if (fs.existsSync(distDir)) {
+  app.use(express.static(distDir));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
+    res.sendFile(path.join(distDir, 'index.html'));
+  });
+  console.log('   Serving client build from ../client/dist');
+}
+
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🎵 SoundWave server on http://localhost:${PORT}`);
+  console.log(`   JioSaavn mirrors: ${SAAVN_BASES.join(', ')}`);
+  console.log(`   iTunes country: ${COUNTRY} · LastFM: ${LASTFM_KEY ? 'configured' : 'not configured (optional)'}`);
+});
