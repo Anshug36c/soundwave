@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
-import { streamFor } from '../services/musicApi';
+import { api, streamFor } from '../services/musicApi';
 import * as studio from '../audio/studio';
 
 // Singleton audio element (plain playback). WebAudio routing is permanent per
@@ -12,6 +12,32 @@ function getAudio() {
     audio.preload = 'auto';
   }
   return audio;
+}
+
+// Instant-preview race state (module scope — survives element recreation)
+let playMode = 'full'; // 'preview' | 'full'
+let fullUrl = '';
+let bgAudio = null;
+function cleanupBg() {
+  if (bgAudio) {
+    try { bgAudio.pause(); bgAudio.removeAttribute('src'); bgAudio.load(); } catch { /* noop */ }
+    bgAudio = null;
+  }
+}
+/** Swap preview -> full MP3 at the same position once the full file can play. */
+function trySwapToFull() {
+  if (playMode !== 'preview' || !fullUrl || !bgAudio) return;
+  const el = getAudio();
+  let buffered = 0;
+  try { if (bgAudio.buffered.length) buffered = bgAudio.buffered.end(bgAudio.buffered.length - 1); } catch { /* noop */ }
+  if (bgAudio.readyState < 3 && buffered < 8) return;
+  const t = el.currentTime || 0;
+  if (t > 26) return; // let the preview finish — ended handler takes full from 0
+  playMode = 'full';
+  el.src = fullUrl;
+  try { el.currentTime = t; } catch { /* noop */ }
+  el.play().catch(() => {});
+  cleanupBg();
 }
 
 /** Smooth volume ramp (crossfade / sleep fade-out). */
@@ -42,6 +68,16 @@ function onPlay() { useStore.getState().setPlaying(true); }
 function onPause() { const el = getAudio(); if (!el.ended) useStore.getState().setPlaying(false); }
 let recentErrors = [];
 function onError() {
+  // preview failed (no Tidal match etc.) — fall through to the full MP3
+  if (playMode === 'preview' && fullUrl) {
+    playMode = 'full';
+    const el = getAudio();
+    el.src = fullUrl;
+    el.currentTime = 0;
+    el.play().catch(() => {});
+    cleanupBg();
+    return;
+  }
   const s = useStore.getState();
   // guard: if everything is failing, stop instead of skip-looping forever
   const now = Date.now();
@@ -57,6 +93,16 @@ function onError() {
   s.next();
 }
 function onEnded() {
+  // preview finished before full was ready — start the full MP3 from 0
+  if (playMode === 'preview' && fullUrl) {
+    playMode = 'full';
+    const el = getAudio();
+    el.src = fullUrl;
+    el.currentTime = 0;
+    el.play().catch(() => {});
+    cleanupBg();
+    return;
+  }
   const el = getAudio();
   const { repeat, next, index, queue } = useStore.getState();
   if (repeat === 'one') { el.currentTime = 0; el.play().catch(() => {}); return; }
@@ -108,9 +154,10 @@ function recreateAudio() {
 }
 
 /**
- * Core audio engine (DJPunjab-only):
- * - all streams are same-origin (/api/djp-audio) so Studio EQ needs no proxy
- * - crossfade, sleep fade-out, preloads next track
+ * Core audio engine:
+ * - instant FLAC preview first (when enabled), auto-swaps to full MP3 at same
+ *   position as soon as it can play — falls back to full-only on any failure
+ * - all streams same-origin; crossfade, sleep fade-out, preloads next track
  * - MediaSession OS controls, keyboard shortcuts
  */
 export function useAudioEngine() {
@@ -142,6 +189,9 @@ export function useAudioEngine() {
   // load track
   useEffect(() => {
     const el = getAudio();
+    cleanupBg();
+    playMode = 'full';
+    fullUrl = '';
     if (!track) { el.pause(); el.removeAttribute('src'); el.load(); return; }
     let cancelled = false;
     (async () => {
@@ -168,7 +218,22 @@ export function useAudioEngine() {
           el.volume = 0; // fade-in from silence on fresh loads too
         }
         el.dataset.trackId = track.id;
-        el.src = url;
+        fullUrl = url;
+        const wantPreview = st.instantPreview && track.title && track.artist?.name;
+        if (wantPreview) {
+          // race: preview plays instantly, full MP3 swaps in when ready
+          playMode = 'preview';
+          el.src = api.tidalPreview(track.title, track.artist.name);
+          bgAudio = new Audio();
+          bgAudio.preload = 'auto';
+          bgAudio.src = url;
+          bgAudio.addEventListener('canplaythrough', trySwapToFull);
+          bgAudio.addEventListener('progress', trySwapToFull);
+          try { bgAudio.load(); } catch { /* noop */ }
+        } else {
+          playMode = 'full';
+          el.src = url;
+        }
         el.currentTime = 0;
         if (useStore.getState().isPlaying) { try { await el.play(); } catch { /* noop */ } }
         if (st.crossfade && !st.muted) fadeVolume(el, st.volume, 600);
@@ -197,12 +262,12 @@ export function useAudioEngine() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [track?.id]);
 
-  // Studio toggle: recreate element (routing is permanent), keep position
+  // Studio toggle: recreate element (routing is permanent), keep position + mode
   useEffect(() => {
     const el = getAudio();
     if (!track || !el.src) return;
     const st = useStore.getState();
-    const direct = streamFor(track, st.quality) || '';
+    const direct = playMode === 'preview' ? el.src : (streamFor(track, st.quality) || '');
     if (!direct) return;
     const t = el.currentTime || 0;
     const wasPlaying = !el.paused;

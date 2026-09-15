@@ -19,6 +19,7 @@ export const useStore = create(
       showFullPlayer: false,
       showQueue: false,
       sleepTimerMin: 0,
+      instantPreview: true, // instant FLAC preview, then auto-switch to full MP3
 
       playTracks: (tracks, startIndex = 0) => {
         const list = (tracks || []).filter(Boolean);
@@ -79,6 +80,7 @@ export const useStore = create(
       setShowFullPlayer: (v) => set({ showFullPlayer: v }),
       setShowQueue: (v) => set({ showQueue: v }),
       setSleepTimer: (min) => set({ sleepTimerMin: min }),
+      setInstantPreview: (v) => set({ instantPreview: v }),
 
       // ---------- library ----------
       liked: {},            // id -> track
@@ -190,6 +192,7 @@ export const useStore = create(
         studioOn: s.studioOn, eqEnabled: s.eqEnabled, eqGains: s.eqGains,
         eqPreset: s.eqPreset, eqPreamp: s.eqPreamp, normalizeOn: s.normalizeOn,
         profile: s.profile, searchHistory: s.searchHistory, volume: s.volume,
+        instantPreview: s.instantPreview,
       }),
     }
   )

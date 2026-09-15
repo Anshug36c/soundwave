@@ -8,8 +8,10 @@ export function Img({ src, alt, className = '' }) {
   );
 }
 
-export function SourceBadge() {
-  return <span className="sticker ml-1 text-[9px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap bg-green-500/20 text-green-400">FULL</span>;
+const SRC_TAG = { djp: 'DJP', dj: 'DJJ', mrj: 'MRJ' };
+export function SourceBadge({ track }) {
+  const tag = SRC_TAG[track?.source] ? `${SRC_TAG[track.source]} · ` : '';
+  return <span className="sticker ml-1 text-[9px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap bg-green-500/20 text-green-400">{tag}FULL</span>;
 }
 
 export function SongRow({ track, index, context, showIndex = true, onRemove }) {
