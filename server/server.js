@@ -64,10 +64,11 @@ const AUDIO_TTL = 60 * 60 * 1000;
 const AUDIO_MAX = 24;
 
 function djpScore(slug, words) {
-  const s = ` ${String(slug || '').toLowerCase().replace(/-/g, ' ')} `;
+  const s = ` ${fold(slug).replace(/-/g, ' ')} `;
   let score = 0;
   for (const w of words) {
     if (s.includes(` ${w} `)) score += 3;
+    else if (s.includes(` ${w}`)) score += 2;
     else if (s.includes(w)) score += 1;
     else score -= 2;
   }
@@ -79,8 +80,11 @@ function prettySlug(slug) {
 function slugifyName(n) {
   return String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
+function fold(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
 function queryWords(q) {
-  return String(q || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 1);
+  return fold(q).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 1);
 }
 
 const djpPageCache = new Map(); // url -> { data, time } (shared by all sources)
@@ -195,7 +199,7 @@ function normalizeDjpSong(id, pg) {
     artists: [], album: { id: '', name: '', image: pg.cover || '' },
     duration: pg.duration || 0, image: pg.cover || '',
     streamUrl: `/api/djp-audio?id=${id}`, previewUrl: '', isPreview: false,
-    codec: 'mp3', quality: pg.quality, explicit: false,
+    codec: 'mp3', quality: pg.quality, explicit: false, year: '', language: '',
   };
 }
 
@@ -502,7 +506,7 @@ function normalizeDjSong(slug, pg) {
     artists: [], album: { id: '', name: '', image: pg.cover || '' },
     duration: pg.duration || 0, image: pg.cover || '',
     streamUrl: `/api/audio?src=dj&id=${encodeURIComponent(slug)}`, previewUrl: '', isPreview: false,
-    codec: 'mp3', quality, explicit: false,
+    codec: 'mp3', quality, explicit: false, year: '', language: '',
   };
 }
 
@@ -516,7 +520,7 @@ function normalizeDjTrack(tr, cover) {
     artists: [], album: { id: '', name: '', image: cover || '' },
     duration: tr.duration || 0, image: cover || '',
     streamUrl: `/api/audio?src=dj&id=t:${tr.numId}`, previewUrl: '', isPreview: false,
-    codec: 'mp3', quality: '320', explicit: false,
+    codec: 'mp3', quality: '320', explicit: false, year: '', language: '',
   };
 }
 
@@ -742,7 +746,7 @@ function normalizeMrjSong(id, pg) {
     artists: [], album: { id: '', name: '', image: pg.cover || '' },
     duration: pg.duration || 0, image: pg.cover || '',
     streamUrl: `/api/audio?src=mrj&id=${id}`, previewUrl: '', isPreview: false,
-    codec: 'mp3', quality: pg.quality || '320', explicit: false,
+    codec: 'mp3', quality: pg.quality || '320', explicit: false, year: '', language: '',
   };
 }
 
@@ -914,7 +918,7 @@ function normalizeSaavnSong(item) {
     artists: [], album: { id: '', name: '', image: img },
     duration: parseInt(item.duration || item.more_info?.duration || '0', 10) || 0, image: img,
     streamUrl: `/api/audio?src=saavn&id=${encodeURIComponent(token)}`, previewUrl: '', isPreview: false,
-    codec: 'aac', quality: '320', explicit: !!item.isExplicit,
+    codec: 'aac', quality: '320', explicit: !!item.isExplicit, year: item.year || '', language: (item.language || '').toLowerCase(),
   };
 }
 async function saavnSearchSongs(q, limit = 8, enrich = true) {
@@ -1459,38 +1463,226 @@ app.get('/api/sources', async (req, res) => {
   res.json(out);
 });
 
+
+// ---------------- smart search: suggest + fuzzy + NL + filters ----------------
+function lev2(a, b) {
+  if (a === b) return 0;
+  const la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > 2) return 3;
+  let prev = [], cur = [];
+  for (let j = 0; j <= lb; j++) prev[j] = j;
+  for (let i = 1; i <= la; i++) {
+    cur[0] = i;
+    let rowMin = 99;
+    for (let j = 1; j <= lb; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (cur[j] < rowMin) rowMin = cur[j];
+    }
+    if (rowMin > 2) return 3;
+    [prev, cur] = [cur, prev];
+  }
+  return prev[lb];
+}
+async function warmMaps() {
+  const race = (p) => Promise.race([p.catch(() => new Map()), new Promise(r => setTimeout(() => r(new Map()), 800))]);
+  const [a, b, c] = await Promise.all([race(djpLoadIndex()), race(djLoadIndex()), race(mrjLoadIndex())]);
+  return [['djp', a], ['dj', b], ['mrj', c]];
+}
+function scoreSuggestText(padded, tokens) {
+  const words = padded.split(' ').filter(Boolean);
+  let score = 0;
+  for (const t of tokens) {
+    if (padded.includes(` ${t} `)) score += 3;
+    else if (words.some(w => w.startsWith(t))) score += 2;
+    else if (padded.includes(t)) score += 1;
+    else if (t.length >= 4) {
+      const cand = words.filter(w => w.length >= 4 && w.slice(0, 2) === t.slice(0, 2));
+      if (cand.some(w => lev2(w, t) <= 2)) score += 1;
+      else score -= 4;
+    }
+    else score -= 4;
+  }
+  return score;
+}
+async function scanSuggest(q, limit = 8) {
+  const tokens = queryWords(q);
+  if (!tokens.length) return { songs: [], albums: [] };
+  const maps = await warmMaps();
+  const out = [];
+  const seen = new Set();
+  for (const [src, map] of maps) {
+    if (!map?.size) continue;
+    for (const [, e] of map) {
+      const text = fold(String(e.slug || '').replace(/-/g, ' '));
+      if (!text || seen.has(text)) continue;
+      const score = scoreSuggestText(` ${text} `, tokens);
+      if (score <= 0) continue;
+      seen.add(text);
+      const pretty = prettySlug(e.slug).slice(0, 60);
+      out.push({ score, kind: e.album ? 'album' : 'song', text: pretty, q: pretty, source: src });
+    }
+  }
+  out.sort((a, b) => b.score - a.score);
+  return { songs: out.filter(o => o.kind === 'song').slice(0, limit), albums: out.filter(o => o.kind === 'album').slice(0, Math.max(2, limit >> 1)) };
+}
+async function suggestCorrection(q) {
+  const { songs, albums } = await scanSuggest(q, 3);
+  const top = [...songs, ...albums].sort((a, b) => b.score - a.score)[0];
+  if (!top) return '';
+  return fold(top.q) === fold(q) ? '' : top.q;
+}
+const suggestArtists = new Map();
+['ap dhillon', 'diljit dosanjh', 'karan aujla', 'shubh', 'guru randhawa', 'jasmine sandlas', 'tulsi kumar', 'prem dhillon', 'sidhu moose wala', 'amrit maan', 'jordan sandhu', 'nimrat khaira'].forEach(n => suggestArtists.set(n, { name: n.replace(/\b\w/g, c => c.toUpperCase()), image: '' }));
+function addSuggestArtist(name, image) {
+  const k = fold(name).trim();
+  if (!k || k === 'unknown' || suggestArtists.size > 500) return;
+  if (!suggestArtists.has(k)) suggestArtists.set(k, { name, image: image || '' });
+}
+app.get('/api/suggest', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  const limit = Math.min(parseInt(req.query.limit || '8', 10) || 8, 12);
+  if (q.length < 2) return res.json({ songs: [], albums: [], artists: [] });
+  try {
+    const { songs, albums } = await scanSuggest(q, limit);
+    const fq = fold(q);
+    const artists = [...suggestArtists.values()]
+      .filter(a => fold(a.name).includes(fq))
+      .slice(0, 4).map(a => ({ kind: 'artist', text: a.name, q: a.name, image: a.image || '' }));
+    res.json({ songs, albums, artists });
+  } catch (e) { res.json({ songs: [], albums: [], artists: [] }); }
+});
+
+const MOODS = ['sad', 'happy', 'upbeat', 'chill', 'relax', 'calm', 'energetic', 'energy', 'workout', 'gym', 'running', 'party', 'dance', 'sleep', 'study', 'focus', 'romantic', 'angry', 'loud', 'soft', 'meditation', 'morning', 'night', 'drive', 'driving', 'road trip', 'travel', 'rain', 'rainy', 'wedding'];
+const FILLER = /\b(songs?|music|tracks?|tunes?|hits?|numbers?|please|for me|for|by|me|some|any|play|playing|listen|listening|to|the|a)\b/gi;
+function parseNL(input) {
+  const original = String(input || '').trim();
+  const nl = { original };
+  const mLike = original.match(/(?:songs?\s+that\s+sound\s+like|sounds?\s+like|similar\s+to|like)\s+(.+)/i);
+  if (mLike && mLike[1].trim().length > 1) {
+    nl.mode = 'similar';
+    nl.ref = mLike[1].replace(FILLER, ' ').replace(/\s+/g, ' ').trim();
+    return nl;
+  }
+  const mDec = fold(original).match(/\b(19[0-9]0s|20[0-4]0s|90s|80s|70s)\b/);
+  const mYr = fold(original).match(/\b((?:19|20)\d{2})\b/);
+  if (mDec) { let d = mDec[1]; if (/^\d0s$/.test(d)) d = '19' + d; nl.year = d; }
+  else if (mYr) nl.year = mYr[1];
+  if (/\b(new|latest|fresh)\b/i.test(original) && /(song|music|release|hit|drop)/i.test(original)) {
+    nl.note = 'For the newest drops, check the New Drops rail on Home.';
+  }
+  let q = original;
+  const mBy = q.match(/^(?:play\s+)?(?:songs?\s+)?by\s+(.+)/i);
+  if (mBy) q = mBy[1];
+  q = q.replace(/^(play|listen to)\s+/i, '');
+  const mood = MOODS.find(m => new RegExp(`\\b${m}\\w*\\b`).test(fold(q)));
+  let cleaned = q.replace(FILLER, ' ').replace(/\s+/g, ' ').trim();
+  cleaned = cleaned.replace(/\b(19\d{2}|20[0-2]\d|19[0-9]0s|20[0-4]0s|90s|80s|70s)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+  if (cleaned && cleaned.toLowerCase() !== original.toLowerCase()) nl.cleaned = cleaned;
+  if (mood) {
+    const cap = mood.replace(/\b\w/g, c => c.toUpperCase());
+    let stripped = cleaned;
+    for (const m of MOODS) stripped = stripped.replace(new RegExp(`\\b${m}\\w*\\b`, 'gi'), ' ');
+    stripped = stripped.replace(/\s+/g, ' ').trim();
+    if (!stripped) { nl.unsupported = true; nl.mood = cap; nl.cleaned = ''; nl.note = `Mood (“${cap}”) isn't searchable yet — we don't have mood data. Try an artist, song, or year.`; }
+    else { nl.cleaned = stripped; nl.note = ((nl.note ? nl.note + ' ' : '') + `Mood (“${cap}”) isn't searchable yet — showing matches for “${stripped}”.`); }
+  } else if (nl.year && cleaned) nl.note = ((nl.note ? nl.note + ' ' : '') + `Filtered to ${nl.year}.`);
+  else if (nl.year && !cleaned) { nl.unsupported = true; nl.note = 'Year-only browsing isn\'t available yet — add an artist or song title (e.g. “AP Dhillon 2021”).'; }
+  return nl;
+}
+async function nlSimilar(ref) {
+  const lists = await Promise.all([
+    djpSearchSongs(ref, 3).catch(() => []),
+    djSearchSongs(ref, 3).catch(() => []),
+    mrjSearchSongs(ref, 3).catch(() => []),
+    saavnSearchSongs(ref, 3, false).catch(() => []),
+  ]);
+  const hit = mergeTracks(lists)[0];
+  if (!hit?.title) return null;
+  const r = await fetch(`http://127.0.0.1:${PORT}/api/similar?title=${encodeURIComponent(hit.title)}&artist=${encodeURIComponent(hit.artist?.name || '')}&limit=20`, { signal: AbortSignal.timeout(60000) });
+  if (!r.ok) return null;
+  const j = await r.json();
+  if (!j?.songs?.length) return null;
+  return { songs: j.songs, refLabel: `${hit.title} — ${hit.artist?.name || ''}`.trim() };
+}
+function passYear(y, f) {
+  if (!f) return true;
+  const yy = String(y || '').trim();
+  if (!yy) return true;
+  const m4 = yy.match(/(19|20)\d{2}/);
+  const yr = m4 ? parseInt(m4[0], 10) : 0;
+  if (!yr) return true;
+  const dm = String(f).match(/^(19\d0|20[0-4]0)s?$/);
+  if (dm) { const d = parseInt(dm[1], 10); return yr >= d && yr < d + 10; }
+  const ym = String(f).match(/^((?:19|20)\d{2})$/);
+  if (ym) return yr === parseInt(ym[1], 10);
+  return true;
+}
+function passFilters(t, f) {
+  if (!passYear(t.year, f.y)) return false;
+  const d = t.duration || 0;
+  if (f.minD && d < f.minD) return false;
+  if (f.maxD && (!d || d > f.maxD)) return false;
+  if (f.lang && t.language && String(t.language).toLowerCase() !== f.lang) return false;
+  if (f.clean && t.explicit) return false;
+  return true;
+}
+
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').trim();
   const type = (req.query.type || 'all').toLowerCase();
   if (!q) return res.json({ songs: [], albums: [], artists: [] });
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
+  const nl = parseNL(q);
+  if (nl.mode === 'similar' && nl.ref) {
+    const likeRes = await nlSimilar(nl.ref).catch(() => null);
+    if (likeRes?.songs?.length) {
+      nl.refLabel = likeRes.refLabel;
+      const payload = { songs: likeRes.songs, albums: [], artists: [], nl };
+      setCache(req.originalUrl, payload);
+      return res.json(payload);
+    }
+    nl.note = `Couldn't find “${nl.ref}” — showing text matches instead.`;
+    nl.mode = null;
+  }
+  const effQ = nl.unsupported ? '' : (nl.cleaned || q);
+  if (nl.unsupported && !effQ) {
+    const payload = { songs: [], albums: [], artists: [], nl };
+    setCache(req.originalUrl, payload);
+    return res.json(payload);
+  }
+  const yF = (req.query.y || '').trim().toLowerCase();
+  const minD = parseInt(req.query.minD || '0', 10) || 0;
+  const maxD = parseInt(req.query.maxD || '0', 10) || 0;
+  const langF = (req.query.lang || '').trim().toLowerCase();
+  const expF = (req.query.exp || '').trim().toLowerCase();
+  const effY = nl.year || yF;
   try {
     let songs = [], albums = [], artists = [];
     if (type === 'all' || type === 'songs') {
       const [a, b, c, s] = await Promise.all([
-        djpSearchSongs(q, 10).catch(() => []),
-        djSearchSongs(q, 8).catch(() => []),
-        mrjSearchSongs(q, 8).catch(() => []),
-        saavnSearchSongs(q, 8).catch(() => []),
+        djpSearchSongs(effQ, 10).catch(() => []),
+        djSearchSongs(effQ, 8).catch(() => []),
+        mrjSearchSongs(effQ, 8).catch(() => []),
+        saavnSearchSongs(effQ, 8).catch(() => []),
       ]);
       songs = mergeTracks([a, b, c, s]).slice(0, 20);
     }
     if (type === 'all' || type === 'albums') {
       const [a, b, c, s] = await Promise.all([
-        djpSearchAlbums(q, 5).catch(() => []),
-        djSearchAlbums(q, 4).catch(() => []),
-        mrjSearchAlbums(q, 4).catch(() => []),
-        saavnSearchAlbums(q, 4).catch(() => []),
+        djpSearchAlbums(effQ, 5).catch(() => []),
+        djSearchAlbums(effQ, 4).catch(() => []),
+        mrjSearchAlbums(effQ, 4).catch(() => []),
+        saavnSearchAlbums(effQ, 4).catch(() => []),
       ]);
       albums = [...a, ...b, ...c, ...s].slice(0, 12);
     }
     if (type === 'all' || type === 'artists') {
       const [a, b, c, s] = await Promise.all([
-        djpSearchArtists(q, 6).catch(() => []),
-        djSearchArtists(q, 6).catch(() => []),
-        mrjSearchArtists(q, 6).catch(() => []),
-        saavnSearchArtists(q, 6).catch(() => []),
+        djpSearchArtists(effQ, 6).catch(() => []),
+        djSearchArtists(effQ, 6).catch(() => []),
+        mrjSearchArtists(effQ, 6).catch(() => []),
+        saavnSearchArtists(effQ, 6).catch(() => []),
       ]);
       const seen = new Set();
       artists = [...a, ...b, ...c, ...s].filter(ar => {
@@ -1500,7 +1692,17 @@ app.get('/api/search', async (req, res) => {
         return true;
       }).slice(0, 8);
     }
-    const payload = { songs, albums, artists };
+    if (effY || minD || maxD || langF || expF === 'clean') {
+      songs = songs.filter(t => passFilters(t, { y: effY, minD, maxD, lang: langF, clean: expF === 'clean' }));
+      if (effY) albums = albums.filter(a => passYear(a.year, effY));
+    }
+    for (const ar of artists) addSuggestArtist(ar.name, ar.image);
+    let didYouMean = '';
+    if (!nl.unsupported) {
+      const weak = !songs.length || songs.slice(0, 3).every(t => overlapScore(titleTokens(effQ), titleTokens(t.title)) < 0.3);
+      if (weak) didYouMean = await suggestCorrection(effQ).catch(() => '');
+    }
+    const payload = { songs, albums, artists, ...((nl.note || nl.mode || nl.year || nl.unsupported || nl.cleaned) ? { nl } : {}), ...(didYouMean ? { didYouMean } : {}) };
     setCache(req.originalUrl, payload);
     res.json(payload);
   } catch (e) { res.status(502).json({ error: 'Search failed', detail: e.message }); }
@@ -1553,7 +1755,7 @@ app.get('/api/song/:source/:id', async (req, res) => {
     } else if (source === 'dj') {
       if (String(id).startsWith('t:')) {
         const c = djCustom.get(String(id)) || { title: 'Unknown Track', artist: 'Unknown', cover: '', duration: 0 };
-        track = { id: `dj:${id}`, source: 'dj', sourceId: String(id), type: 'track', title: c.title, artist: { id: '', name: c.artist, image: c.cover || '' }, artists: [], album: { id: '', name: '', image: c.cover || '' }, duration: c.duration || 0, image: c.cover || '', streamUrl: `/api/audio?src=dj&id=${id}`, previewUrl: '', isPreview: false, codec: 'mp3', quality: '320', explicit: false };
+        track = { id: `dj:${id}`, source: 'dj', sourceId: String(id), type: 'track', title: c.title, artist: { id: '', name: c.artist, image: c.cover || '' }, artists: [], album: { id: '', name: '', image: c.cover || '' }, duration: c.duration || 0, image: c.cover || '', streamUrl: `/api/audio?src=dj&id=${id}`, previewUrl: '', isPreview: false, codec: 'mp3', quality: '320', explicit: false, year: '', language: '' };
       } else {
         const e = (await djLoadIndex()).get(String(id).toLowerCase());
         if (!e || e.album) return res.status(404).json({ error: 'Song not indexed' });

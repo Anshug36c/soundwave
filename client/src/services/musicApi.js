@@ -13,7 +13,16 @@ async function get(path) {
 export const api = {
   health: () => get('/health'),
   home: () => get('/home'),
-  search: (q, type = 'all') => get(`/search?q=${encodeURIComponent(q)}&type=${type}`),
+  search: (q, type = 'all', f = {}) => {
+    const p = new URLSearchParams({ q, type });
+    if (f.y) p.set('y', f.y);
+    if (f.minD) p.set('minD', f.minD);
+    if (f.maxD) p.set('maxD', f.maxD);
+    if (f.lang) p.set('lang', f.lang);
+    if (f.exp) p.set('exp', f.exp);
+    return get(`/search?${p.toString()}`);
+  },
+  suggest: (q, limit = 8) => get(`/suggest?q=${encodeURIComponent(q)}&limit=${limit}`),
   song: (source, id) => get(`/song/${source}/${encodeURIComponent(id)}`),
   album: (source, id) => get(`/album/${source}/${encodeURIComponent(id)}`),
   artist: (source, id) => get(`/artist/${source}/${encodeURIComponent(id)}`),
