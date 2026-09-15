@@ -5,8 +5,9 @@ services:
     name: soundwave
     runtime: node
     plan: free
-    buildCommand: npm --prefix server install && npm --prefix client install && npm --prefix client run build
+    buildCommand: npm --prefix server install --include=dev && npm --prefix client install --include=dev && npm --prefix client run build
     startCommand: npm --prefix server start
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production

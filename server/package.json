@@ -4,6 +4,7 @@
   "description": "SoundWave backend — unified music API aggregator",
   "type": "module",
   "main": "server.js",
+  "engines": { "node": ">=18" },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"
