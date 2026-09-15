@@ -14,10 +14,41 @@ function getAudio() {
   return audio;
 }
 
+// ---------- single-owner playback control ----------
+// Every play()/pause() decision flows through syncPlayback with a monotonically
+// increasing token, so overlapping async play() promises can never fight each
+// other (the old play/pause flicker). Stale promise outcomes are ignored.
+let playToken = 0;
+function syncPlayback() {
+  const el = getAudio();
+  const st = useStore.getState();
+  const t = ++playToken;
+  if (!st.isPlaying) {
+    try { el.pause(); } catch { /* noop */ }
+    return;
+  }
+  if (!el.src) return;
+  if (!el.paused && !el.ended) return; // already playing — don't re-issue play()
+  let p = null;
+  try { p = el.play(); } catch { /* noop */ }
+  if (p && typeof p.then === 'function') {
+    p.then(() => {
+      // a newer decision superseded us while play() was in flight
+      if (t !== playToken && useStore.getState().isPlaying === false) {
+        try { getAudio().pause(); } catch { /* noop */ }
+      }
+    }).catch(() => {
+      // only the latest decision may flip UI state; stale rejections are noise
+      if (t === playToken) useStore.getState().setPlaying(false);
+    });
+  }
+}
+
 // Instant-preview race state (module scope — survives element recreation)
 let playMode = 'full'; // 'preview' | 'full'
 let fullUrl = '';
 let bgAudio = null;
+let swapping = false;
 function cleanupBg() {
   if (bgAudio) {
     try { bgAudio.pause(); bgAudio.removeAttribute('src'); bgAudio.load(); } catch { /* noop */ }
@@ -26,18 +57,23 @@ function cleanupBg() {
 }
 /** Swap preview -> full MP3 at the same position once the full file can play. */
 function trySwapToFull() {
-  if (playMode !== 'preview' || !fullUrl || !bgAudio) return;
+  if (swapping || playMode !== 'preview' || !fullUrl || !bgAudio) return;
   const el = getAudio();
   let buffered = 0;
   try { if (bgAudio.buffered.length) buffered = bgAudio.buffered.end(bgAudio.buffered.length - 1); } catch { /* noop */ }
   if (bgAudio.readyState < 3 && buffered < 8) return;
   const t = el.currentTime || 0;
   if (t > 26) return; // let the preview finish — ended handler takes full from 0
+  swapping = true;
   playMode = 'full';
   el.src = fullUrl;
-  try { el.currentTime = t; } catch { /* noop */ }
-  el.play().catch(() => {});
+  // currentTime must be set AFTER metadata is ready, else the track restarts at 0
+  const applyTime = () => { try { el.currentTime = t; } catch { /* noop */ } };
+  if (el.readyState >= 1) applyTime();
+  else el.addEventListener('loadedmetadata', applyTime, { once: true });
   cleanupBg();
+  syncPlayback();
+  swapping = false;
 }
 
 /** Smooth volume ramp (crossfade / sleep fade-out). */
@@ -65,7 +101,7 @@ function onLoaded() {
   useStore.getState().setTime(el.currentTime, el.duration || 0);
 }
 function onPlay() { useStore.getState().setPlaying(true); }
-function onPause() { const el = getAudio(); if (!el.ended) useStore.getState().setPlaying(false); }
+function onPause() { const el = getAudio(); if (!el.ended && el.readyState > 0) useStore.getState().setPlaying(false); }
 let recentErrors = [];
 function onError() {
   // preview failed (no Tidal match etc.) — fall through to the full MP3
@@ -74,8 +110,8 @@ function onError() {
     const el = getAudio();
     el.src = fullUrl;
     el.currentTime = 0;
-    el.play().catch(() => {});
     cleanupBg();
+    syncPlayback();
     return;
   }
   const s = useStore.getState();
@@ -99,13 +135,13 @@ function onEnded() {
     const el = getAudio();
     el.src = fullUrl;
     el.currentTime = 0;
-    el.play().catch(() => {});
     cleanupBg();
+    syncPlayback();
     return;
   }
   const el = getAudio();
   const { repeat, next, index, queue } = useStore.getState();
-  if (repeat === 'one') { el.currentTime = 0; el.play().catch(() => {}); return; }
+  if (repeat === 'one') { el.currentTime = 0; syncPlayback(); return; }
   if (index >= queue.length - 1 && repeat === 'off') { useStore.getState().setPlaying(false); return; }
   next();
 }
@@ -155,6 +191,7 @@ function recreateAudio() {
 
 /**
  * Core audio engine:
+ * - single-owner playback (syncPlayback) — no overlapping play() races
  * - instant FLAC preview first (when enabled), auto-swaps to full MP3 at same
  *   position as soon as it can play — falls back to full-only on any failure
  * - all streams same-origin; crossfade, sleep fade-out, preloads next track
@@ -186,13 +223,14 @@ export function useAudioEngine() {
 
   const track = index >= 0 ? queue[index] : null;
 
-  // load track
+  // load track: set src only — syncPlayback (play/pause effect) owns playback
   useEffect(() => {
     const el = getAudio();
     cleanupBg();
     playMode = 'full';
     fullUrl = '';
-    if (!track) { el.pause(); el.removeAttribute('src'); el.load(); return; }
+    swapping = false;
+    if (!track) { el.pause(); el.removeAttribute('src'); el.load(); useStore.getState().setPlaying(false); return; }
     let cancelled = false;
     (async () => {
       const url = streamFor(track, quality);
@@ -235,7 +273,7 @@ export function useAudioEngine() {
           el.src = url;
         }
         el.currentTime = 0;
-        if (useStore.getState().isPlaying) { try { await el.play(); } catch { /* noop */ } }
+        syncPlayback();
         if (st.crossfade && !st.muted) fadeVolume(el, st.volume, 600);
         else el.volume = st.muted ? 0 : st.volume;
       }
@@ -281,19 +319,18 @@ export function useAudioEngine() {
         studio.resume();
       } catch { /* plain fallback */ }
     }
-    try { nel.currentTime = t; } catch { /* metadata not ready yet */ }
-    if (wasPlaying) nel.play().catch(() => {});
+    const applyTime = () => { try { nel.currentTime = t; } catch { /* noop */ } };
+    if (nel.readyState >= 1) applyTime();
+    else nel.addEventListener('loadedmetadata', applyTime, { once: true });
+    if (wasPlaying) syncPlayback();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studioOn]);
 
-  // play/pause
+  // play/pause — the single owner of playback decisions
   useEffect(() => {
-    const el = getAudio();
     if (!track) return;
-    if (isPlaying) {
-      studio.resume();
-      el.play().catch(() => useStore.getState().setPlaying(false));
-    } else el.pause();
+    studio.resume();
+    syncPlayback();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying, track?.id]);
 

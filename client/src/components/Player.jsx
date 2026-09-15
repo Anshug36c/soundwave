@@ -203,7 +203,7 @@ export function FullPlayer() {
                 <p><b>Artist:</b> {track.artist?.name}</p>
                 <p><b>Album:</b> {track.album?.name} {track.album?.year && `(${track.album.year})`}</p>
                 <p><b>Duration:</b> {formatTime(track.duration)}</p>
-                <p><b>Source:</b> {({ djp: 'DJPunjab', dj: 'DJJohal', mrj: 'Mr-Jatt' })[track.source] || track.source}{track.mirrors?.length > 1 ? ` (+${track.mirrors.length - 1} mirrors)` : ''} · full MP3</p>
+                <p><b>Source:</b> {({ djp: 'DJPunjab', dj: 'DJJohal', mrj: 'Mr-Jatt', saavn: 'JioSaavn' })[track.source] || track.source}{track.mirrors?.length > 1 ? ` (+${track.mirrors.length - 1} mirrors)` : ''} · full MP3</p>
                 {track.codec && <p><b>Codec:</b> {track.codec.toUpperCase()}{track.quality ? ` · ${track.quality}kbps` : ''}</p>}
                 {track.language && <p><b>Language:</b> {track.language}</p>}
                 {track.playCount > 0 && <p><b>Plays:</b> {Number(track.playCount).toLocaleString()}</p>}

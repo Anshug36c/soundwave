@@ -4,6 +4,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import crypto from 'crypto';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -852,6 +853,134 @@ async function mrjArtistDetail(slug) {
   return { id: `mrj:ar:${slug}`, source: 'mrj', type: 'artist', name, image: songs[0].image || '', topSongs: songs, topAlbums: [], tags: [] };
 }
 
+
+// ---------------- JioSaavn via Rhythmax API (search + decryptable streams) ----------------
+const RTHMX = 'https://rthmx.vercel.app';
+async function rthmx(path) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const r = await fetch(`${RTHMX}${path}`, { signal: ctrl.signal, headers: { 'User-Agent': DJP_UA } });
+    if (!r.ok) throw new Error(`rthmx HTTP ${r.status}`);
+    return await r.json();
+  } finally { clearTimeout(to); }
+}
+let saavnDesWarned = false;
+function saavnDecrypt(enc) {
+  try {
+    const d = crypto.createDecipheriv('des-ecb', Buffer.from('38346591', 'utf8'), null);
+    d.setAutoPadding(true);
+    return d.update(String(enc), 'base64', 'utf8') + d.final('utf8');
+  } catch (e) {
+    if (!saavnDesWarned) { saavnDesWarned = true; console.error('saavn DES unavailable (need --openssl-legacy-provider):', e.message); }
+    return '';
+  }
+}
+function saavnTierUrls(decrypted) {
+  const base = String(decrypted || '').trim();
+  if (!/^https?:\/\//.test(base)) return {};
+  const mk = (q) => base.replace(/_(96|160|320)(\.[a-z0-9]+)(\?.*)?$/i, `_${q}$2$3`);
+  return { 320: mk('320'), 160: mk('160'), 96: mk('96') };
+}
+const saavnUrlCache = new Map(); // token -> { urls, time }
+async function saavnStreamUrls(token) {
+  const hit = saavnUrlCache.get(token);
+  if (hit && Date.now() - hit.time < PAGE_TTL) return hit.urls;
+  const j = await rthmx(`/api/song?token=${encodeURIComponent(token)}`);
+  const enc = j?.more_info?.encrypted_media_url || j?.encrypted_media_url || '';
+  const urls = saavnTierUrls(saavnDecrypt(enc));
+  if (!Object.keys(urls).length) throw new Error('No stream URL');
+  if (saavnUrlCache.size > 300) saavnUrlCache.delete(saavnUrlCache.keys().next().value);
+  saavnUrlCache.set(token, { urls, time: Date.now() });
+  return urls;
+}
+function saavnImage(u, size = 500) { return String(u || '').replace(/150x150|50x50/, `${size}x${size}`); }
+function saavnArtistName(item) {
+  const fromMi = item?.more_info?.artists?.primary;
+  const ia = item?.artists;
+  const fromItem = Array.isArray(ia) ? ia : ia?.primary;
+  const prim = (fromMi?.length ? fromMi : fromItem) || [];
+  if (prim.length) return prim.map(a => a.name).filter(Boolean).join(', ');
+  return String(item?.subtitle || '').split(' - ')[0].trim() || 'Unknown';
+}
+function normalizeSaavnSong(item) {
+  const token = item?.token;
+  if (!token || !item?.title) return null;
+  const name = saavnArtistName(item);
+  const img = saavnImage(item.image);
+  return {
+    id: `saavn:${token}`, source: 'saavn', sourceId: String(token), type: 'track',
+    title: item.title, artist: { id: `saavn:ar:${slugifyName(name)}`, name, image: img },
+    artists: [], album: { id: '', name: '', image: img },
+    duration: parseInt(item.duration || item.more_info?.duration || '0', 10) || 0, image: img,
+    streamUrl: `/api/audio?src=saavn&id=${encodeURIComponent(token)}`, previewUrl: '', isPreview: false,
+    codec: 'aac', quality: '320', explicit: !!item.isExplicit,
+  };
+}
+async function saavnSearchSongs(q, limit = 8, enrich = true) {
+  const j = await rthmx(`/api/songs?q=${encodeURIComponent(q)}`).catch(() => null);
+  let items = (j?.results || []).filter(r => r.type !== 'album' && r.type !== 'artist');
+  const songOnly = items.filter(r => String(r.perma_url || '').includes('/song/'));
+  if (songOnly.length) items = songOnly;
+  items = items.slice(0, limit);
+  const full = enrich ? await Promise.all(items.map(async (it) => {
+    try {
+      const d = await rthmx(`/api/song?token=${encodeURIComponent(it.token)}`);
+      return { ...it, duration: d?.more_info?.duration || it.duration, more_info: d?.more_info || it.more_info };
+    } catch { return it; }
+  })) : items;
+  return full.map(normalizeSaavnSong).filter(Boolean);
+}
+async function saavnSearchAlbums(q, limit = 4) {
+  const j = await rthmx(`/api/albums?q=${encodeURIComponent(q)}`).catch(() => null);
+  const items = (j?.results || j?.albums || []).slice(0, limit);
+  return items.map((a) => a?.token ? ({
+    id: `saavn:al:${a.token}`, source: 'saavn', sourceId: String(a.token), type: 'album',
+    name: a.title || 'Unknown', artist: saavnArtistName(a), image: saavnImage(a.image), year: a.year || '',
+    trackCount: parseInt(a.song_count || a.more_info?.song_count || '0', 10) || 0,
+  }) : null).filter(Boolean);
+}
+async function saavnSearchArtists(q, limit = 6) {
+  const songs = await saavnSearchSongs(q, 10, false).catch(() => []);
+  const seen = new Map();
+  for (const t of songs) {
+    const n = t.artist?.name || '';
+    if (!n || n === 'Unknown') continue;
+    const k = n.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!k || seen.has(k)) continue;
+    seen.set(k, { id: `saavn:ar:${slugifyName(n)}`, source: 'saavn', type: 'artist', name: n, image: t.image || '' });
+    if (seen.size >= limit) break;
+  }
+  return [...seen.values()];
+}
+async function saavnSongDetail(token) {
+  const d = await rthmx(`/api/song?token=${encodeURIComponent(token)}`);
+  if (!d?.token) return null;
+  return normalizeSaavnSong({ ...d, token: d.token, duration: d?.more_info?.duration });
+}
+async function saavnAlbumDetail(token) {
+  const d = await rthmx(`/api/album?token=${encodeURIComponent(token)}`);
+  if (!d) return null;
+  const dal = Array.isArray(d.artists) ? d.artists : (d.artists?.primary || []);
+  const songs = (d.songs || []).map((s) => normalizeSaavnSong({ ...s, image: s.image || d.image })).filter(Boolean);
+  return {
+    id: `saavn:al:${token}`, source: 'saavn', sourceId: String(token), type: 'album',
+    name: d.title || 'Unknown', artist: dal.map(a => a.name).filter(Boolean).join(', ') || songs[0]?.artist?.name || '',
+    image: saavnImage(d.image), year: d.year || '', trackCount: songs.length, description: d.header_desc || '', songs,
+  };
+}
+async function saavnArtistDetail(slug) {
+  const name = prettySlug(slug);
+  const songs = await saavnSearchSongs(name, 20).catch(() => []);
+  const words = name.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2);
+  const mine = songs.filter(t => words.some(w => (t.artist?.name || '').toLowerCase().includes(w)))
+    .sort((a, b) => ((b.artist?.name || '').toLowerCase() === name.toLowerCase()) - ((a.artist?.name || '').toLowerCase() === name.toLowerCase()))
+    .slice(0, 20);
+  if (!mine.length) return null;
+  const best = mine[0].artist?.name || name;
+  return { id: `saavn:ar:${slugifyName(best)}`, source: 'saavn', type: 'artist', name: best, image: mine[0].image || '', topSongs: mine, topAlbums: [], tags: [] };
+}
+
 // ---------------- cross-source merge (dedupes same song, keeps mirrors) ----------------
 function normKey(title, artist) {
   return `${title || ''}|${artist || ''}`.toLowerCase().replace(/[^a-z0-9|]/g, '');
@@ -884,7 +1013,7 @@ function mergeTracks(lists) {
 }
 
 // ---------------- fastest-mirror audio ----------------
-const QUALITY_ORDER = { high: ['320', '128', '48'], medium: ['128', '320', '48'], low: ['48', '128', '320'] };
+const QUALITY_ORDER = { high: ['320', '160', '128', '96', '48'], medium: ['160', '128', '320', '96', '48'], low: ['96', '48', '160', '128', '320'] };
 const cdnMs = new Map(); // host -> EWMA latency ms (self-tuning speed rank)
 function cdnScore(host) { return cdnMs.get(host) ?? 150; }
 function noteCdn(host, ms) {
@@ -926,6 +1055,10 @@ async function resolveMirror(source, sid) {
       const pg = await mrjSongPage(e.url);
       return pg.mp3s && Object.keys(pg.mp3s).length ? { mp3s: pg.mp3s } : null;
     }
+    if (source === 'saavn') {
+      const urls = await saavnStreamUrls(String(sid)).catch(() => null);
+      return urls && Object.keys(urls).length ? { mp3s: urls, type: 'audio/mp4' } : null;
+    }
   } catch { /* unresolvable mirror */ }
   return null;
 }
@@ -964,7 +1097,7 @@ app.get('/api/audio', async (req, res) => {
   const mirrors = [{ source: src, sid: String(sid) }, ...ms].slice(0, 4);
   const key = `${src}:${sid}:${q}`;
   const hit = audioCache.get(key);
-  if (hit && Date.now() - hit.time < AUDIO_TTL) return serveBuf(res, req, hit.buf, true, hit.br);
+  if (hit && Date.now() - hit.time < AUDIO_TTL) return serveBuf(res, req, hit.buf, true, hit.br, hit.type || 'audio/mpeg');
   try {
     const resolved = (await Promise.all(mirrors.map(async m => ({ ...m, r: await resolveMirror(m.source, m.sid) })))).filter(x => x.r);
     if (!resolved.length) return res.status(502).json({ error: 'No working mirror' });
@@ -994,7 +1127,7 @@ app.get('/api/audio', async (req, res) => {
           if (wantRange && up.status !== 206) { clearTimeout(to); continue; } // range-ignoring mirror: skip
           noteCdn(new URL(url).host, Date.now() - t0);
           res.status(up.status);
-          res.setHeader('Content-Type', 'audio/mpeg');
+          res.setHeader('Content-Type', m.r.type || 'audio/mpeg');
           const len = up.headers.get('content-length');
           if (len) res.setHeader('Content-Length', len);
           const cr = up.headers.get('content-range');
@@ -1020,7 +1153,7 @@ app.get('/api/audio', async (req, res) => {
           const expected = len ? parseInt(len, 10) : 0;
           if (chunks && !aborted && received > 100000 && (!expected || received === expected)) {
             if (audioCache.size >= AUDIO_MAX) audioCache.delete(audioCache.keys().next().value);
-            audioCache.set(key, { buf: Buffer.concat(chunks), br, time: Date.now() });
+            audioCache.set(key, { buf: Buffer.concat(chunks), br, time: Date.now(), type: m.r.type || 'audio/mpeg' });
           }
           return;
         } catch { /* next candidate */ }
@@ -1149,7 +1282,8 @@ app.get('/api/sources', async (req, res) => {
   try { const m = await mrjLoadIndex(); out.mrjatt = m.size > 1000 ? 'ok' : 'empty'; out.mrjatt_index = m.size; }
   catch (e) { out.mrjatt = `down: ${e.message}`; }
   out.pendujatt = 'mirror';
-  try { await tidalToken(); out.tidal = 'ok'; } catch (e) { out.tidal = `down: ${e.message}`; }
+  try { const t = await rthmx('/api/songs?q=test'); out.saavn = t?.results ? 'ok' : 'empty'; } catch (e) { out.saavn = `down: ${e.message}`; }
+  try { await tidalToken(); out.tidal = 'ok (preview only)'; } catch (e) { out.tidal = `down: ${e.message}`; }
   out.cdn = Object.fromEntries([...cdnMs.entries()].map(([h, ms]) => [h, Math.round(ms)]));
   out.uptime = Math.round(process.uptime());
   res.json(out);
@@ -1164,29 +1298,32 @@ app.get('/api/search', async (req, res) => {
   try {
     let songs = [], albums = [], artists = [];
     if (type === 'all' || type === 'songs') {
-      const [a, b, c] = await Promise.all([
+      const [a, b, c, s] = await Promise.all([
         djpSearchSongs(q, 10).catch(() => []),
         djSearchSongs(q, 8).catch(() => []),
         mrjSearchSongs(q, 8).catch(() => []),
+        saavnSearchSongs(q, 8).catch(() => []),
       ]);
-      songs = mergeTracks([a, b, c]).slice(0, 20);
+      songs = mergeTracks([a, b, c, s]).slice(0, 20);
     }
     if (type === 'all' || type === 'albums') {
-      const [a, b, c] = await Promise.all([
+      const [a, b, c, s] = await Promise.all([
         djpSearchAlbums(q, 5).catch(() => []),
         djSearchAlbums(q, 4).catch(() => []),
         mrjSearchAlbums(q, 4).catch(() => []),
+        saavnSearchAlbums(q, 4).catch(() => []),
       ]);
-      albums = [...a, ...b, ...c].slice(0, 12);
+      albums = [...a, ...b, ...c, ...s].slice(0, 12);
     }
     if (type === 'all' || type === 'artists') {
-      const [a, b, c] = await Promise.all([
+      const [a, b, c, s] = await Promise.all([
         djpSearchArtists(q, 6).catch(() => []),
         djSearchArtists(q, 6).catch(() => []),
         mrjSearchArtists(q, 6).catch(() => []),
+        saavnSearchArtists(q, 6).catch(() => []),
       ]);
       const seen = new Set();
-      artists = [...a, ...b, ...c].filter(ar => {
+      artists = [...a, ...b, ...c, ...s].filter(ar => {
         const k = (ar.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         if (!k || seen.has(k)) return false;
         seen.add(k);
@@ -1234,7 +1371,7 @@ app.get('/api/home', async (req, res) => {
 
 app.get('/api/song/:source/:id', async (req, res) => {
   const { source, id } = req.params;
-  if (!['djp', 'dj', 'mrj'].includes(source)) return res.status(404).json({ error: 'Unknown source' });
+  if (!['djp', 'dj', 'mrj', 'saavn'].includes(source)) return res.status(404).json({ error: 'Unknown source' });
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
   try {
@@ -1252,10 +1389,13 @@ app.get('/api/song/:source/:id', async (req, res) => {
         if (!e || e.album) return res.status(404).json({ error: 'Song not indexed' });
         track = normalizeDjSong(e.id, await djSongPage(e.url));
       }
-    } else {
+    } else if (source === 'mrj') {
       const e = (await mrjLoadIndex()).get(String(id));
       if (!e || e.album) return res.status(404).json({ error: 'Song not indexed' });
       track = normalizeMrjSong(id, await mrjSongPage(e.url));
+    } else {
+      track = await saavnSongDetail(id).catch(() => null);
+      if (!track) return res.status(404).json({ error: 'Song not found' });
     }
     if (!track) return res.status(404).json({ error: 'Song unavailable' });
     setCache(req.originalUrl, track, 30 * 60 * 1000);
@@ -1265,7 +1405,7 @@ app.get('/api/song/:source/:id', async (req, res) => {
 
 app.get('/api/album/:source/:id', async (req, res) => {
   const { source, id } = req.params;
-  if (!['djp', 'dj', 'mrj'].includes(source)) return res.status(404).json({ error: 'Unknown source' });
+  if (!['djp', 'dj', 'mrj', 'saavn'].includes(source)) return res.status(404).json({ error: 'Unknown source' });
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
   try {
@@ -1296,7 +1436,7 @@ app.get('/api/album/:source/:id', async (req, res) => {
         name: pg.title || 'Unknown Album', artist: pg.artist || songs[0]?.artist?.name || '',
         image: pg.cover || songs[0]?.image || '', year: '', trackCount: songs.length, description: '', songs,
       };
-    } else {
+    } else if (source === 'mrj') {
       const e = (await mrjLoadIndex()).get('al:' + String(id));
       if (!e) return res.status(404).json({ error: 'Album not indexed' });
       const pg = await mrjAlbumPage(e.url);
@@ -1320,6 +1460,9 @@ app.get('/api/album/:source/:id', async (req, res) => {
         artist: pg.single ? (pg.artist || '') : (songs[0]?.artist?.name || ''),
         image: pg.cover || songs[0]?.image || '', year: '', trackCount: songs.length, description: '', songs,
       };
+    } else {
+      payload = await saavnAlbumDetail(id).catch(() => null);
+      if (!payload) return res.status(404).json({ error: 'Album not found' });
     }
     setCache(req.originalUrl, payload, 30 * 60 * 1000);
     res.json(payload);
@@ -1328,11 +1471,11 @@ app.get('/api/album/:source/:id', async (req, res) => {
 
 app.get('/api/artist/:source/:id', async (req, res) => {
   const { source, id } = req.params;
-  if (!['djp', 'dj', 'mrj'].includes(source)) return res.status(404).json({ error: 'Unknown source' });
+  if (!['djp', 'dj', 'mrj', 'saavn'].includes(source)) return res.status(404).json({ error: 'Unknown source' });
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
   try {
-    const data = source === 'djp' ? await djpArtistDetail(id) : source === 'dj' ? await djArtistDetail(id) : await mrjArtistDetail(id);
+    const data = source === 'djp' ? await djpArtistDetail(id) : source === 'dj' ? await djArtistDetail(id) : source === 'mrj' ? await mrjArtistDetail(id) : await saavnArtistDetail(id);
     if (!data) return res.status(404).json({ error: 'Artist not found' });
     setCache(req.originalUrl, data, 15 * 60 * 1000);
     res.json(data);
