@@ -159,7 +159,7 @@ button, a, [role="button"], input[type="range"] { touch-action: manipulation; -w
 #main { overscroll-behavior-y: contain; }
 .sheet-scroll { overscroll-behavior: contain; }
 .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
-.bottomnav-offset { bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
+.bottomnav-offset { bottom: calc(68px + env(safe-area-inset-bottom, 0px)); } /* = mobile strip: 4px progress + 64px bar */
 @media (pointer: coarse) {
   /* iOS auto-zooms inputs under 16px — force readable size on touch */
   input, select, textarea { font-size: 16px !important; }

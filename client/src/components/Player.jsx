@@ -72,7 +72,7 @@ export function MiniPlayer() {
       {/* mobile strip */}
       <div className="md:hidden pb-safe">
         <div className="h-1 bg-white/10"><div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} /></div>
-        <div className="glass bg-black/60 border-t border-soft px-3 py-2 flex items-center gap-3">
+        <div className="glass bg-black/60 border-t border-soft px-2 h-16 flex items-center gap-1">
           <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" aria-label="Open full player">
             <Img src={track.image} alt={track.title} className="w-12 h-12 rounded-md object-cover" />
             <span className="min-w-0">

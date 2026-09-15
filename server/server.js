@@ -993,6 +993,27 @@ function buildAudioUrl(mirrors) {
   const [p, ...rest] = mirrors;
   return `/api/audio?src=${p.source}&id=${encodeURIComponent(p.sourceId)}` + rest.map(m => `&m=${m.source}:${encodeURIComponent(m.sourceId)}`).join('');
 }
+// measured cover quality per provider (px): mrj ~1300, dj ~543, saavn 500, djp 300
+function imgScore(u) {
+  const s = String(u || '');
+  if (!s) return 0;
+  if (s.includes('mr-jatt.im') || s.includes('pendujatt.pro')) return 4;
+  if (s.includes('djjohal.com')) return 3;
+  if (s.includes('saavncdn.com')) return 2;
+  if (s.includes('djpunjab')) return 1;
+  return 0;
+}
+// round-robin interleave so no single provider crowds the others past the cap
+function interleave(lists) {
+  const out = [];
+  for (let i = 0; ; i++) {
+    let any = false;
+    for (const l of lists) { if (l && i < l.length) { out.push(l[i]); any = true; } }
+    if (!any) break;
+  }
+  return out;
+}
+function normName(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim(); }
 function mergeTracks(lists) {
   const seen = new Map();
   const out = [];
@@ -1004,6 +1025,12 @@ function mergeTracks(lists) {
         const m = seen.get(k);
         if (m.mirrors.length < 4 && !m.mirrors.some(x => x.source === t.source && x.sourceId === t.sourceId)) {
           m.mirrors.push({ source: t.source, sourceId: t.sourceId });
+        }
+        // same song on multiple providers: keep the sharpest cover art
+        if (t.image && imgScore(t.image) > imgScore(m.image)) {
+          m.image = t.image;
+          if (m.album) m.album.image = t.image;
+          if (m.artist) m.artist.image = t.image;
         }
         continue;
       }
@@ -1826,24 +1853,6 @@ app.get('/api/search', async (req, res) => {
   const effY = nl.year || yF;
   try {
     let songs = [], albums = [], artists = [];
-    if (type === 'all' || type === 'songs') {
-      const [a, b, c, s] = await Promise.all([
-        djpSearchSongs(effQ, 10).catch(() => []),
-        djSearchSongs(effQ, 8).catch(() => []),
-        mrjSearchSongs(effQ, 8).catch(() => []),
-        saavnSearchSongs(effQ, 8).catch(() => []),
-      ]);
-      songs = mergeTracks([a, b, c, s]).slice(0, 20);
-    }
-    if (type === 'all' || type === 'albums') {
-      const [a, b, c, s] = await Promise.all([
-        djpSearchAlbums(effQ, 5).catch(() => []),
-        djSearchAlbums(effQ, 4).catch(() => []),
-        mrjSearchAlbums(effQ, 4).catch(() => []),
-        saavnSearchAlbums(effQ, 4).catch(() => []),
-      ]);
-      albums = [...a, ...b, ...c, ...s].slice(0, 12);
-    }
     if (type === 'all' || type === 'artists') {
       const [a, b, c, s] = await Promise.all([
         djpSearchArtists(effQ, 6).catch(() => []),
@@ -1858,6 +1867,36 @@ app.get('/api/search', async (req, res) => {
         seen.add(k);
         return true;
       }).slice(0, 8);
+    }
+    // artist query? pull deeper from EVERY provider and rank the artist's songs first
+    const qw = normName(effQ).split(' ').filter(w => w.length > 1);
+    const artistMode = qw.length > 0 && artists.some(ar => {
+      const n = normName(ar.name);
+      return n && qw.every(w => n.includes(w));
+    });
+    if (type === 'all' || type === 'songs') {
+      const L = artistMode ? [18, 14, 14, 12] : [10, 8, 8, 8];
+      const [a, b, c, s] = await Promise.all([
+        djpSearchSongs(effQ, L[0]).catch(() => []),
+        djSearchSongs(effQ, L[1]).catch(() => []),
+        mrjSearchSongs(effQ, L[2]).catch(() => []),
+        saavnSearchSongs(effQ, L[3]).catch(() => []),
+      ]);
+      songs = mergeTracks([interleave([a, b, c, s])]);
+      if (artistMode) {
+        const rank = t => { const n = normName(t.artist?.name); return qw.every(w => n.includes(w)) ? 0 : 1; };
+        songs.sort((x, y) => rank(x) - rank(y));
+      }
+      songs = songs.slice(0, artistMode ? 40 : 20);
+    }
+    if (type === 'all' || type === 'albums') {
+      const [a, b, c, s] = await Promise.all([
+        djpSearchAlbums(effQ, 5).catch(() => []),
+        djSearchAlbums(effQ, 4).catch(() => []),
+        mrjSearchAlbums(effQ, 4).catch(() => []),
+        saavnSearchAlbums(effQ, 4).catch(() => []),
+      ]);
+      albums = [...a, ...b, ...c, ...s].slice(0, 12);
     }
     if (effY || minD || maxD || langF || expF === 'clean') {
       songs = songs.filter(t => passFilters(t, { y: effY, minD, maxD, lang: langF, clean: expF === 'clean' }));
