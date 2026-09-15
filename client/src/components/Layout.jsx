@@ -1,69 +1,82 @@
 import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { useStore } from '../store/useStore';
+import { HomeIcon, SearchIcon, LibraryIcon, PlusIcon, HeartIcon, NoteIcon, ChevronLeftIcon, ChevronRightIcon, MoonIcon, SunIcon, GhostIcon } from './Icons';
 
-const nav = [
-  { to: '/', label: 'Home', icon: '🏠' },
-  { to: '/search', label: 'Search', icon: '🔍' },
-  { to: '/library', label: 'Library', icon: '📚' },
-  { to: '/liked', label: 'Liked', icon: '❤️' },
-];
-
-export function GhostLogo({ size = 26 }) {
+export function WaveLogo({ size = 34 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 2C7.2 2 3.5 5.8 3.5 10.6v7.9l2.4-1.9 2 1.9 2.5-1.9 2 1.9 2.5-1.9 2 1.9 2.4-1.9v-7.9C20.5 5.8 16.8 2 12 2z" fill="#fff" stroke="#141414" strokeWidth="1.8" strokeLinejoin="round" />
-      <circle cx="9" cy="10.5" r="1.3" fill="#141414" />
-      <circle cx="15" cy="10.5" r="1.3" fill="#141414" />
+      <circle cx="12" cy="12" r="10.5" fill="#1db954" />
+      <path d="M8 10.2c2.6-1.5 5.4-1.4 8-.2" stroke="#000" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+      <path d="M8.4 13c2.1-1.2 4.4-1.1 6.6-.2" stroke="#000" strokeWidth="1.6" strokeLinecap="round" fill="none" />
+      <path d="M8.8 15.8c1.7-.9 3.5-.9 5.2-.2" stroke="#000" strokeWidth="1.6" strokeLinecap="round" fill="none" />
     </svg>
   );
 }
 
+const mainNav = [
+  { to: '/', label: 'Home', Icon: HomeIcon },
+  { to: '/search', label: 'Search', Icon: SearchIcon },
+  { to: '/library', label: 'Your Library', Icon: LibraryIcon },
+];
+
 export function Sidebar() {
+  const liked = useStore(s => s.liked);
   const playlists = useStore(s => s.playlists);
   const createPlaylist = useStore(s => s.createPlaylist);
   const toast = useStore(s => s.toast);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
+  const likedCount = Object.keys(liked).length;
 
   return (
-    <aside className="hidden md:flex w-64 shrink-0 flex-col gap-2 p-2 h-full">
-      <div className="card p-4">
-        <Link to="/" className="flex items-center gap-2 text-xl font-extrabold tracking-tight">
-          <span className="w-9 h-9 rounded-2xl bg-accent grid place-items-center shrink-0"><GhostLogo size={26} /></span>
-          SoundWave
+    <aside className="hidden md:flex w-[288px] shrink-0 flex-col gap-2 p-2 h-full">
+      <div className="panel px-3 py-5">
+        <Link to="/" className="flex items-center gap-2.5 px-3 text-[22px] font-extrabold tracking-tight" style={{ color: 'var(--text)' }}>
+          <WaveLogo size={36} /> SoundWave
         </Link>
-        <nav className="mt-4 flex flex-col gap-1" aria-label="Primary">
-          {nav.slice(0, 2).map(n => (
-            <NavLink key={n.to} to={n.to} className={({ isActive }) => `px-3 py-2 rounded-lg font-semibold text-sm ${isActive ? 'bg-accent text-black' : 'text-dim hover:text-white bg-hoverable'}`}>
-              <span className="mr-2">{n.icon}</span>{n.label}
+        <nav className="mt-6 flex flex-col gap-1 px-1" aria-label="Primary">
+          {mainNav.map(({ to, label, Icon }) => (
+            <NavLink key={to} to={to}
+              className={({ isActive }) => `flex items-center gap-4 px-2 py-2.5 text-[15px] font-bold transition-colors ${isActive ? '' : 'text-dim hover:text-white'}`}
+              style={({ isActive }) => isActive ? { color: 'var(--text)' } : undefined}>
+              {({ isActive }) => (<><Icon size={24} active={isActive} />{label}</>)}
             </NavLink>
           ))}
         </nav>
       </div>
-      <div className="card p-4 flex-1 overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <span className="font-bold text-sm text-dim">PLAYLISTS</span>
-          <button onClick={() => setCreating(v => !v)} className="text-xl leading-none px-2 rounded bg-hoverable" aria-label="Create playlist">＋</button>
+      <div className="panel p-3 flex-1 overflow-y-auto min-h-0">
+        <div className="flex items-center justify-between px-2 py-2">
+          <span className="text-[15px] font-bold text-dim">Playlists</span>
+          <button onClick={() => setCreating(v => !v)} className="p-1 rounded-full text-dim hover:text-white transition-colors" aria-label="Create playlist">
+            <PlusIcon size={20} />
+          </button>
         </div>
         {creating && (
-          <form className="mt-2 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (!name.trim()) return; createPlaylist(name.trim()); setName(''); setCreating(false); toast('Playlist created'); }}>
+          <form className="px-2 pb-2 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (!name.trim()) return; createPlaylist(name.trim()); setName(''); setCreating(false); toast('Playlist created'); }}>
             <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Playlist name" className="w-full bg-soft border border-soft rounded-lg px-2 py-1.5 text-sm outline-none" />
-            <button className="btn-accent px-3 text-sm">Add</button>
+            <button className="btn-accent px-3 text-sm shrink-0">Add</button>
           </form>
         )}
-        <nav className="mt-3 flex flex-col gap-1" aria-label="Library">
-          <NavLink to="/library" className={({ isActive }) => `px-3 py-2 rounded-lg text-sm font-semibold ${isActive ? 'bg-accent text-black' : 'text-dim hover:text-white bg-hoverable'}`}>📚 Your Library</NavLink>
-          <NavLink to="/liked" className={({ isActive }) => `px-3 py-2 rounded-lg text-sm font-semibold ${isActive ? 'bg-accent text-black' : 'text-dim hover:text-white bg-hoverable'}`}>❤️ Liked Songs</NavLink>
-        </nav>
-        <div className="mt-3 flex flex-col gap-1">
-          {playlists.map(p => (
-            <NavLink key={p.id} to={`/playlist/${encodeURIComponent(p.id)}`} className="px-3 py-2 rounded-lg text-sm text-dim hover:text-white bg-hoverable truncate">
-              🎵 {p.name} <span className="opacity-60">· {p.tracks.length}</span>
-            </NavLink>
-          ))}
-          {playlists.length === 0 && <p className="text-xs text-dim px-3 py-2">No playlists yet — create one!</p>}
-        </div>
+        <Link to="/liked" className="flex items-center gap-3 px-2 py-2 rounded-md hover:bg-white/5 transition-colors">
+          <span className="w-12 h-12 rounded grid place-items-center shrink-0 bg-gradient-to-br from-indigo-600 via-purple-500 to-purple-300">
+            <HeartIcon size={20} filled className="text-white" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[15px]" style={{ color: 'var(--text)' }}>Liked Songs</span>
+            <span className="block text-[13px] text-dim">Playlist · {likedCount}</span>
+          </span>
+        </Link>
+        {playlists.map(p => (
+          <Link key={p.id} to={`/playlist/${encodeURIComponent(p.id)}`} className="flex items-center gap-3 px-2 py-2 rounded-md hover:bg-white/5 transition-colors">
+            <span className="w-12 h-12 rounded grid place-items-center shrink-0 bg-white/10 text-dim"><NoteIcon size={20} /></span>
+            <span className="min-w-0">
+              <span className="block text-[15px] truncate" style={{ color: 'var(--text)' }}>{p.name}</span>
+              <span className="block text-[13px] text-dim">Playlist · {p.tracks.length}</span>
+            </span>
+          </Link>
+        ))}
+        {playlists.length === 0 && <p className="text-xs text-dim px-3 py-2">No playlists yet — create one!</p>}
       </div>
     </aside>
   );
@@ -76,22 +89,28 @@ export function TopBar() {
   const setTheme = useStore(s => s.setTheme);
   const [q, setQ] = useState('');
   const cycleTheme = () => setTheme(theme === 'dark' ? 'light' : theme === 'light' ? 'snap' : 'dark');
-  const themeIcon = theme === 'dark' ? '☀️' : theme === 'light' ? '👻' : '🌙';
 
   return (
     <header className="sticky top-0 z-20 glass border-b border-soft">
       <div className="flex items-center gap-2 px-4 py-3">
-        <button onClick={() => navigate(-1)} className="w-9 h-9 rounded-full bg-hoverable grid place-items-center" aria-label="Go back">←</button>
-        <button onClick={() => navigate(1)} className="w-9 h-9 rounded-full bg-hoverable grid place-items-center hidden sm:grid" aria-label="Go forward">→</button>
-        <form className="flex-1 max-w-xl" onSubmit={(e) => { e.preventDefault(); if (q.trim()) navigate(`/search?q=${encodeURIComponent(q.trim())}`); }}>
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search songs, artists, albums…" aria-label="Search"
-            className="w-full bg-soft border border-soft rounded-full px-4 py-2 text-sm outline-none focus:border-green-500" />
-        </form>
-        <button onClick={() => window.dispatchEvent(new Event('soundwave:palette'))} className="h-9 px-3 rounded-full bg-hoverable grid place-items-center text-sm font-bold" aria-label="Command palette" title="Command palette (Ctrl+K)">⌘K</button>
-        <button onClick={cycleTheme} className="w-9 h-9 rounded-full bg-hoverable grid place-items-center" aria-label="Cycle theme" title={`Theme: ${theme} (click to change)`}>
-          {themeIcon}
+        <button onClick={() => navigate(-1)} className="w-9 h-9 rounded-full bg-black/50 grid place-items-center text-dim hover:text-white shrink-0" aria-label="Go back">
+          <ChevronLeftIcon size={18} />
         </button>
-        <Link to="/settings" className="w-9 h-9 rounded-full bg-accent grid place-items-center font-bold text-black" aria-label="Profile and settings" title={profile.name}>
+        <button onClick={() => navigate(1)} className="w-9 h-9 rounded-full bg-black/50 place-items-center text-dim hover:text-white shrink-0 hidden sm:grid" aria-label="Go forward">
+          <ChevronRightIcon size={18} />
+        </button>
+        <div className="flex-1 max-w-xl relative">
+          <form onSubmit={(e) => { e.preventDefault(); if (q.trim()) navigate(`/search?q=${encodeURIComponent(q.trim())}`); }}>
+            <SearchIcon size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-dim pointer-events-none" />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="What do you want to listen to?" aria-label="Search"
+              className="w-full bg-soft border border-soft rounded-full pl-10 pr-4 py-2 text-sm outline-none focus:border-green-500" />
+          </form>
+        </div>
+        <button onClick={() => window.dispatchEvent(new Event('soundwave:palette'))} className="h-9 px-3 rounded-full bg-hoverable grid place-items-center text-sm font-bold shrink-0" aria-label="Command palette" title="Command palette (Ctrl+K)">⌘K</button>
+        <button onClick={cycleTheme} className="w-9 h-9 rounded-full bg-hoverable grid place-items-center text-dim hover:text-white shrink-0" aria-label="Cycle theme" title={`Theme: ${theme} (click to change)`}>
+          {theme === 'dark' ? <SunIcon size={18} /> : theme === 'light' ? <GhostIcon size={18} /> : <MoonIcon size={18} />}
+        </button>
+        <Link to="/settings" className="w-9 h-9 rounded-full bg-accent grid place-items-center font-bold text-black shrink-0" aria-label="Profile and settings" title={profile.name}>
           {(profile.name?.[0] || 'G').toUpperCase()}
         </Link>
       </div>
@@ -99,14 +118,25 @@ export function TopBar() {
   );
 }
 
+const tabs = [
+  { to: '/', label: 'Home', Icon: HomeIcon },
+  { to: '/search', label: 'Search', Icon: SearchIcon },
+  { to: '/library', label: 'Library', Icon: LibraryIcon },
+  { to: '/liked', label: 'Liked', Icon: HeartIcon },
+];
+
 export function BottomNav() {
   return (
-    <nav className="md:hidden fixed bottom-[64px] left-0 right-0 z-20 glass border-t border-soft flex justify-around py-2" aria-label="Mobile">
-      {nav.map(n => (
-        <NavLink key={n.to} to={n.to} className={({ isActive }) => `flex flex-col items-center text-[11px] font-semibold px-3 ${isActive ? 'accent' : 'text-dim'}`}>
-          <span className="text-lg">{n.icon}</span>{n.label}
-        </NavLink>
-      ))}
+    <nav className="md:hidden fixed bottom-[64px] left-0 right-0 z-20 glass border-t border-soft" aria-label="Mobile">
+      <div className="grid grid-cols-4 h-14">
+        {tabs.map(({ to, label, Icon }) => (
+          <NavLink key={to} to={to}
+            className={({ isActive }) => `flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold ${isActive ? '' : 'text-dim'}`}
+            style={({ isActive }) => isActive ? { color: 'var(--text)' } : undefined}>
+            {({ isActive }) => (<><Icon size={21} active={isActive} />{label}</>)}
+          </NavLink>
+        ))}
+      </div>
     </nav>
   );
 }

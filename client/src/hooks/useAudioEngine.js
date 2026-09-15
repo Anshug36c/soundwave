@@ -49,6 +49,34 @@ let playMode = 'full'; // 'preview' | 'full'
 let fullUrl = '';
 let bgAudio = null;
 let swapping = false;
+// ---------- prefetch: retained preload pool + server warm for instant next-track starts ----------
+const preloadPool = [];
+function preloadTrack(track, quality) {
+  if (!track?.streamUrl) return;
+  try { api.warm(streamFor(track, quality)); } catch { /* noop */ }
+  try {
+    const a = new Audio();
+    a.preload = 'auto';
+    a.src = streamFor(track, quality);
+    a.load();
+    preloadPool.push(a);
+    const st = useStore.getState();
+    if (st.instantPreview && track.title && track.artist?.name) {
+      try {
+        const p = new Audio();
+        p.preload = 'auto';
+        p.src = api.tidalPreview(track.title, track.artist.name);
+        p.load();
+        preloadPool.push(p);
+      } catch { /* noop */ }
+    }
+    while (preloadPool.length > 8) {
+      const old = preloadPool.shift();
+      try { old.removeAttribute('src'); old.load(); } catch { /* noop */ }
+    }
+  } catch { /* noop */ }
+}
+let deepPrefetchFor = '';
 function cleanupBg() {
   if (bgAudio) {
     try { bgAudio.pause(); bgAudio.removeAttribute('src'); bgAudio.load(); } catch { /* noop */ }
@@ -94,7 +122,16 @@ function fadeVolume(el, to, ms) {
 // ---------- module-scope event handlers (survive element recreation) ----------
 function onTime() {
   const el = getAudio();
-  useStore.getState().setTime(el.currentTime, el.duration || useStore.getState().duration);
+  const st = useStore.getState();
+  st.setTime(el.currentTime, el.duration || st.duration);
+  // late prefetch: long track or seek — make sure next is hot past the halfway mark
+  try {
+    const q = st.queue, t = q[st.index];
+    if (t && el.duration > 30 && el.currentTime > el.duration * 0.55 && deepPrefetchFor !== t.id) {
+      deepPrefetchFor = t.id;
+      [q[st.index + 1], q[st.index + 2]].forEach(n => { if (n) preloadTrack(n, st.quality); });
+    }
+  } catch { /* noop */ }
 }
 function onLoaded() {
   const el = getAudio();
@@ -277,12 +314,12 @@ export function useAudioEngine() {
         if (st.crossfade && !st.muted) fadeVolume(el, st.volume, 600);
         else el.volume = st.muted ? 0 : st.volume;
       }
-      // preload next
-      const q = useStore.getState().queue;
-      const nxt = q[useStore.getState().index + 1];
-      if (nxt?.streamUrl) { const l = new Audio(); l.preload = 'auto'; l.src = streamFor(nxt, quality); }
-      // warm server cache for next track (instant start even on cold browser cache)
-      try { if (nxt?.streamUrl) api.warm(streamFor(nxt, quality)); } catch { /* noop */ }
+      // prefetch next two tracks (browser cache + server warm + preview) for instant starts
+      try {
+        const q = useStore.getState().queue;
+        const ix = useStore.getState().index;
+        [q[ix + 1], q[ix + 2]].forEach(n => { if (n) preloadTrack(n, quality); });
+      } catch { /* noop */ }
       // similar songs for current track (also pre-warmed so they start instantly)
       if (track.title) {
         api.similar(track.title, track.artist?.name || '', 8).then(j => {

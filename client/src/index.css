@@ -2,6 +2,7 @@
 
 :root {
   --bg: #121212;
+  --bg-deep: #0a0a0a;
   --bg-soft: #1a1a1a;
   --bg-card: #181818;
   --bg-hover: #282828;
@@ -12,6 +13,7 @@
   --border: rgba(255, 255, 255, 0.08);
 }
 [data-theme="light"] {
+  --bg-deep: #e7e5de;
   --bg: #f6f6f4;
   --bg-soft: #ffffff;
   --bg-card: #ffffff;
@@ -22,6 +24,7 @@
 }
 /* 👻 Snapchat theme — yellow, chunky, playful */
 [data-theme="snap"] {
+  --bg-deep: #fffc00;
   --bg: #fffc00;
   --bg-soft: #ffffff;
   --bg-card: #ffffff;
@@ -40,7 +43,8 @@ html, body, #root { height: 100%; }
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Nunito', 'Inter', 'Poppins', system-ui, -apple-system, sans-serif;
+  font-family: 'CircularSp', 'Figtree', 'Nunito', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  letter-spacing: -0.01em;
   -webkit-font-smoothing: antialiased;
 }
 [data-theme="snap"] h1, [data-theme="snap"] h2 {
@@ -49,7 +53,8 @@ body {
   letter-spacing: 0.5px;
 }
 *::-webkit-scrollbar { width: 10px; height: 8px; }
-*::-webkit-scrollbar-thumb { background: #535353; border-radius: 8px; }
+*::-webkit-scrollbar-thumb { background: #4d4d4d; border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: #6e6e6e; }
 *::-webkit-scrollbar-track { background: transparent; }
 
 .bg-app { background: var(--bg); }
@@ -63,6 +68,34 @@ body {
 
 .card { background: var(--bg-card); border: var(--bw, 1px) solid var(--border); border-radius: var(--radius, 12px); box-shadow: var(--cshadow, none); transition: transform .18s ease, background .18s ease, box-shadow .18s ease; }
 .card:hover { background: var(--bg-hover); transform: translateY(-3px); box-shadow: var(--cshadow, 0 12px 28px rgba(0,0,0,.35)); }
+.bg-deep { background: var(--bg-deep); }
+/* static container: card look, no hover lift */
+.panel {
+  background: var(--bg-card);
+  border: var(--bw, 1px) solid var(--border);
+  border-radius: var(--radius, 12px);
+  box-shadow: var(--cshadow, none);
+}
+/* media tile: hover tint + reveal play, NO lift */
+.media-card {
+  background: var(--bg-card);
+  border: var(--bw, 1px) solid var(--border, transparent);
+  border-radius: 8px;
+  box-shadow: var(--cshadow, none);
+  transition: background .2s ease;
+}
+.media-card:hover { background: var(--bg-hover); }
+/* bottom player bar */
+.sp-playerbar { background: #000; }
+[data-theme="light"] .sp-playerbar { background: #fff; }
+[data-theme="snap"] .sp-playerbar { background: #fffc00; border-top: 3px solid #141414; }
+/* seek bar: light fill, green + knob on hover */
+.sp-progress { cursor: pointer; }
+.sp-track { background: rgba(128, 128, 128, 0.45); }
+.sp-fill { background: var(--text); transition: background .15s ease; }
+.sp-progress:hover .sp-fill { background: var(--accent); }
+.sp-knob { opacity: 0; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); transition: opacity .15s ease; }
+.sp-progress:hover .sp-knob { opacity: 1; }
 
 .btn-accent { background: var(--accent); color: var(--accent-ink, #000); font-weight: 800; border-radius: 999px; transition: transform .15s ease, background .15s ease; }
 .btn-accent:hover { background: var(--accent-hover); transform: scale(1.04); }

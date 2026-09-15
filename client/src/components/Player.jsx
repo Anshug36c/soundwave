@@ -6,6 +6,39 @@ import { Img, EqIcon } from './Cards';
 import { SimilarSongs } from './SimilarSongs';
 import Equalizer from './Equalizer';
 import Visualizer from './Visualizer';
+import {
+  PlayIcon, PauseIcon, NextIcon, PrevIcon, ShuffleIcon, RepeatIcon, RepeatOneIcon,
+  VolumeIcon, MuteIcon, QueueIcon, ChevronDownIcon, ExpandIcon, MoonIcon,
+  DownloadIcon, ShareIcon, HeartIcon, PlusIcon, NoteIcon, CloseIcon, CheckIcon, MicIcon,
+} from './Icons';
+
+/* Spotify-style seek bar: light fill, green + knob on hover */
+function ProgressBar({ currentTime, duration }) {
+  const pct = duration ? Math.min(100, (currentTime / duration) * 100) : 0;
+  const onSeek = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const p = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1);
+    seekTo(p * (duration || 0));
+  };
+  return (
+    <div className="flex items-center gap-2 w-full">
+      <span className="text-[11px] text-dim w-10 text-right tabular-nums">{formatTime(currentTime)}</span>
+      <div onClick={onSeek} className="sp-progress relative flex-1 h-4 flex items-center" role="slider"
+        aria-label="Seek" aria-valuenow={Math.round(currentTime)} aria-valuemax={Math.round(duration || 0)} tabIndex={0}
+        onKeyDown={e => {
+          if (e.key === 'ArrowRight') seekTo(currentTime + 5);
+          if (e.key === 'ArrowLeft') seekTo(currentTime - 5);
+        }}>
+        <div className="sp-track w-full h-1 rounded-full">
+          <div className="sp-fill h-full rounded-full relative" style={{ width: `${pct}%` }}>
+            <div className="sp-knob absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3 h-3 rounded-full" />
+          </div>
+        </div>
+      </div>
+      <span className="text-[11px] text-dim w-10 tabular-nums">{formatTime(duration)}</span>
+    </div>
+  );
+}
 
 export function MiniPlayer() {
   const queue = useStore(s => s.queue);
@@ -17,25 +50,83 @@ export function MiniPlayer() {
   const currentTime = useStore(s => s.currentTime);
   const duration = useStore(s => s.duration);
   const setShowFullPlayer = useStore(s => s.setShowFullPlayer);
+  const setShowQueue = useStore(s => s.setShowQueue);
+  const shuffle = useStore(s => s.shuffle);
+  const repeat = useStore(s => s.repeat);
+  const toggleShuffle = useStore(s => s.toggleShuffle);
+  const cycleRepeat = useStore(s => s.cycleRepeat);
+  const volume = useStore(s => s.volume);
+  const muted = useStore(s => s.muted);
+  const setVolume = useStore(s => s.setVolume);
+  const setMuted = useStore(s => s.setMuted);
+  const liked = useStore(s => s.liked);
+  const toggleLike = useStore(s => s.toggleLike);
   const track = index >= 0 ? queue[index] : null;
 
   if (!track) return null;
   const pct = duration ? (currentTime / duration) * 100 : 0;
+  const isLiked = !!liked[track.id];
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-30">
-      <div className="h-1 bg-white/10"><div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} /></div>
-      <div className="glass bg-black/60 border-t border-soft px-3 py-2 flex items-center gap-3">
-        <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" aria-label="Open full player">
-          <Img src={track.image} alt={track.title} className="w-12 h-12 rounded-md object-cover" />
-          <span className="min-w-0">
-            <p className="truncate text-sm font-bold flex items-center gap-2">{isPlaying && <EqIcon />}{track.title}</p>
+      {/* mobile strip */}
+      <div className="md:hidden">
+        <div className="h-1 bg-white/10"><div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} /></div>
+        <div className="glass bg-black/60 border-t border-soft px-3 py-2 flex items-center gap-3">
+          <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" aria-label="Open full player">
+            <Img src={track.image} alt={track.title} className="w-12 h-12 rounded-md object-cover" />
+            <span className="min-w-0">
+              <p className="truncate text-sm font-bold flex items-center gap-2">{isPlaying && <EqIcon />}{track.title}</p>
+              <p className="truncate text-xs text-dim">{track.artist?.name}</p>
+            </span>
+          </button>
+          <button onClick={prev} className="px-2 text-dim hover:text-white" aria-label="Previous"><PrevIcon size={22} /></button>
+          <button onClick={togglePlay} className="w-11 h-11 rounded-full btn-accent grid place-items-center" aria-label={isPlaying ? 'Pause' : 'Play'}>{isPlaying ? <PauseIcon size={19} /> : <PlayIcon size={19} />}</button>
+          <button onClick={next} className="px-2 text-dim hover:text-white" aria-label="Next"><NextIcon size={22} /></button>
+        </div>
+      </div>
+      {/* desktop 3-zone bar */}
+      <div className="hidden md:grid grid-cols-[1fr_1.3fr_1fr] items-center h-[88px] px-4 gap-4 sp-playerbar border-t border-soft">
+        <div className="flex items-center gap-3 min-w-0">
+          <Img src={track.image} alt={track.title} className="w-14 h-14 rounded-md object-cover shrink-0" />
+          <div className="min-w-0 max-w-[220px]">
+            <p className="truncate text-sm" style={{ color: 'var(--text)' }}>{track.title}</p>
             <p className="truncate text-xs text-dim">{track.artist?.name}</p>
+          </div>
+          <button onClick={() => toggleLike(track)} aria-label="Like" className={`p-2 ${isLiked ? 'accent' : 'text-dim hover:text-white'}`}>
+            <HeartIcon size={17} filled={isLiked} />
+          </button>
+        </div>
+        <div className="flex flex-col items-center gap-1 max-w-2xl w-full mx-auto">
+          <div className="flex items-center gap-5">
+            <button onClick={toggleShuffle} aria-label="Shuffle" className={`relative p-1 transition-colors ${shuffle ? 'accent' : 'text-dim hover:text-white'}`}>
+              <ShuffleIcon size={17} />
+              {shuffle && <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-accent" />}
+            </button>
+            <button onClick={prev} aria-label="Previous" className="p-1 text-dim hover:text-white transition-colors"><PrevIcon size={20} /></button>
+            <button onClick={togglePlay} aria-label={isPlaying ? 'Pause' : 'Play'} className="w-9 h-9 rounded-full btn-accent grid place-items-center">
+              {isPlaying ? <PauseIcon size={17} /> : <PlayIcon size={17} />}
+            </button>
+            <button onClick={next} aria-label="Next" className="p-1 text-dim hover:text-white transition-colors"><NextIcon size={20} /></button>
+            <button onClick={cycleRepeat} aria-label="Repeat" className={`relative p-1 transition-colors ${repeat !== 'off' ? 'accent' : 'text-dim hover:text-white'}`}>
+              {repeat === 'one' ? <RepeatOneIcon size={17} /> : <RepeatIcon size={17} />}
+              {repeat !== 'off' && <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-accent" />}
+            </button>
+          </div>
+          <ProgressBar currentTime={currentTime} duration={duration} />
+        </div>
+        <div className="flex items-center justify-end gap-1">
+          <button onClick={() => setShowFullPlayer(true)} aria-label="Lyrics" title="Lyrics" className="p-2 text-dim hover:text-white transition-colors"><MicIcon size={17} /></button>
+          <button onClick={() => setShowQueue(true)} aria-label="Queue" title="Queue" className="p-2 text-dim hover:text-white transition-colors"><QueueIcon size={19} /></button>
+          <button onClick={() => setMuted(!muted)} aria-label={muted ? 'Unmute' : 'Mute'} className="p-2 text-dim hover:text-white transition-colors">
+            {muted || volume === 0 ? <MuteIcon size={19} /> : <VolumeIcon size={19} />}
+          </button>
+          <span className="slider-wrap w-24 hidden lg:block">
+            <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} aria-label="Volume"
+              onChange={(e) => setVolume(Number(e.target.value))} className="slider w-full" />
           </span>
-        </button>
-        <button onClick={prev} className="text-xl px-2" aria-label="Previous">⏮</button>
-        <button onClick={togglePlay} className="w-11 h-11 rounded-full btn-accent grid place-items-center text-lg" aria-label={isPlaying ? 'Pause' : 'Play'}>{isPlaying ? '⏸' : '▶'}</button>
-        <button onClick={next} className="text-xl px-2" aria-label="Next">⏭</button>
+          <button onClick={() => setShowFullPlayer(true)} aria-label="Expand player" title="Full screen" className="p-2 text-dim hover:text-white transition-colors"><ExpandIcon size={16} /></button>
+        </div>
       </div>
     </div>
   );
@@ -64,15 +155,15 @@ function AddToPlaylistMenu({ track, onDone }) {
   const toast = useStore(s => s.toast);
   const [name, setName] = useState('');
   return (
-    <div className="card p-3 w-64 max-h-72 overflow-y-auto">
+    <div className="panel p-3 w-64 max-h-72 overflow-y-auto">
       <p className="text-xs font-bold text-dim mb-2">ADD TO PLAYLIST</p>
       {playlists.map(p => (
         <button key={p.id} onClick={() => { addToPlaylist(p.id, track); toast(`Added to ${p.name}`); onDone?.(); }}
-          className="w-full text-left px-2 py-1.5 rounded-lg text-sm bg-hoverable truncate">🎵 {p.name}</button>
+          className="w-full text-left px-2 py-1.5 rounded-lg text-sm bg-hoverable truncate"><NoteIcon size={14} className="inline mr-1.5 -mt-0.5" />{p.name}</button>
       ))}
       <form className="mt-2 flex gap-1" onSubmit={(e) => { e.preventDefault(); if (!name.trim()) return; const id = createPlaylist(name.trim()); addToPlaylist(id, track); toast('Playlist created & song added'); onDone?.(); }}>
         <input value={name} onChange={e => setName(e.target.value)} placeholder="New playlist…" className="flex-1 min-w-0 bg-soft border border-soft rounded-lg px-2 py-1 text-sm outline-none" />
-        <button className="btn-accent px-2 text-sm">＋</button>
+        <button className="btn-accent px-2 py-1 text-sm" aria-label="Create"><PlusIcon size={14} /></button>
       </form>
     </div>
   );
@@ -131,9 +222,9 @@ export function FullPlayer() {
       <div className="absolute inset-0 bg-black/70" />
       <div className="relative max-w-5xl mx-auto px-4 py-6 min-h-full flex flex-col">
         <div className="flex items-center justify-between">
-          <button onClick={() => setShow(false)} className="text-2xl px-2" aria-label="Close player">⌄</button>
-          <p className="text-xs font-bold tracking-widest text-dim">NOW PLAYING · {playLabel}{studioOn ? ' · 🎚️ STUDIO' : ''}</p>
-          <button onClick={() => setShowQueue(true)} className="text-xl px-2" aria-label="Open queue">☰</button>
+          <button onClick={() => setShow(false)} className="text-2xl px-2" aria-label="Close player"><ChevronDownIcon size={22} /></button>
+          <p className="text-xs font-bold tracking-widest text-dim">NOW PLAYING · {playLabel}{studioOn ? ' · STUDIO' : ''}</p>
+          <button onClick={() => setShowQueue(true)} className="text-xl px-2" aria-label="Open queue"><QueueIcon size={21} /></button>
         </div>
         <div className="grid md:grid-cols-2 gap-8 mt-6 items-start">
           <div className="flex flex-col items-center">
@@ -143,9 +234,9 @@ export function FullPlayer() {
             </div>
             <div className="w-full mt-4">
               {studioOn ? <Visualizer /> : (
-                <button onClick={() => { setStudioOn(true); setTab('studio'); toast('Studio sound on 🎚️'); }}
+                <button onClick={() => { setStudioOn(true); setTab('studio'); toast('Studio sound on'); }}
                   className="w-full py-2 rounded-xl text-xs font-bold bg-white/5 border border-dashed border-soft text-dim">
-                  〰️ Turn on Studio sound for a live visualizer + EQ
+                  Turn on Studio sound for a live visualizer + EQ
                 </button>
               )}
             </div>
@@ -157,32 +248,32 @@ export function FullPlayer() {
               <div className="flex justify-between text-xs text-dim mt-1"><span>{formatTime(currentTime)}</span><span>{formatTime(duration)}</span></div>
             </div>
             <div className="flex items-center gap-5 mt-3">
-              <button onClick={toggleShuffle} className={`text-xl ${shuffle ? 'accent' : 'text-dim'}`} aria-label="Shuffle" title="Shuffle">🔀</button>
-              <button onClick={prev} className="text-3xl" aria-label="Previous">⏮</button>
-              <button onClick={togglePlay} className="w-16 h-16 rounded-full btn-accent grid place-items-center text-2xl" aria-label={isPlaying ? 'Pause' : 'Play'}>{isPlaying ? '⏸' : '▶'}</button>
-              <button onClick={next} className="text-3xl" aria-label="Next">⏭</button>
-              <button onClick={cycleRepeat} className={`text-xl ${repeat !== 'off' ? 'accent' : 'text-dim'}`} aria-label="Repeat" title={`Repeat: ${repeat}`}>{repeat === 'one' ? '🔂' : '🔁'}</button>
+              <button onClick={toggleShuffle} className={`text-xl ${shuffle ? 'accent' : 'text-dim'}`} aria-label="Shuffle" title="Shuffle"><ShuffleIcon size={20} /></button>
+              <button onClick={prev} className="text-white/80 hover:text-white" aria-label="Previous"><PrevIcon size={28} /></button>
+              <button onClick={togglePlay} className="w-16 h-16 rounded-full btn-accent grid place-items-center" aria-label={isPlaying ? 'Pause' : 'Play'}>{isPlaying ? <PauseIcon size={26} /> : <PlayIcon size={26} />}</button>
+              <button onClick={next} className="text-white/80 hover:text-white" aria-label="Next"><NextIcon size={28} /></button>
+              <button onClick={cycleRepeat} className={`text-xl ${repeat !== 'off' ? 'accent' : 'text-dim'}`} aria-label="Repeat" title={`Repeat: ${repeat}`}>{repeat === 'one' ? <RepeatOneIcon size={20} /> : <RepeatIcon size={20} />}</button>
             </div>
             <div className="flex items-center gap-2 mt-4 w-full max-w-xs slider-wrap">
-              <button onClick={() => setMuted(!muted)} aria-label="Mute">{muted || volume === 0 ? '🔇' : '🔊'}</button>
+              <button onClick={() => setMuted(!muted)} aria-label="Mute">{muted || volume === 0 ? <MuteIcon size={20} /> : <VolumeIcon size={20} />}</button>
               <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={(e) => setVolume(Number(e.target.value))} className="slider flex-1" aria-label="Volume" />
             </div>
             <div className="flex items-center gap-2 mt-5 flex-wrap justify-center">
-              <button onClick={() => toggleLike(track)} className={`px-4 py-2 rounded-full text-sm font-bold ${isLiked ? 'bg-accent text-black' : 'bg-white/10'}`}>{isLiked ? '♥ Liked' : '♡ Like'}</button>
+              <button onClick={() => toggleLike(track)} className={`px-4 py-2 rounded-full text-sm font-bold inline-flex items-center gap-1.5 ${isLiked ? 'bg-accent text-black' : 'bg-white/10'}`}><HeartIcon size={15} filled={isLiked} />{isLiked ? 'Liked' : 'Like'}</button>
               <div className="relative">
-                <button onClick={() => setShowPlMenu(v => !v)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">＋ Playlist</button>
+                <button onClick={() => setShowPlMenu(v => !v)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5"><PlusIcon size={15} />Playlist</button>
                 {showPlMenu && <div className="absolute bottom-12 left-0 z-10"><AddToPlaylistMenu track={track} onDone={() => setShowPlMenu(false)} /></div>}
               </div>
-              <button onClick={share} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">↗ Share</button>
-              <button onClick={() => { toggleDownload(track); toast(downloads[track.id] ? 'Removed from offline' : 'Saved for offline'); }} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">
-                {downloads[track.id] ? '✓ Offline' : '⬇ Offline'}
+              <button onClick={share} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5"><ShareIcon size={15} />Share</button>
+              <button onClick={() => { toggleDownload(track); toast(downloads[track.id] ? 'Removed from offline' : 'Saved for offline'); }} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5">
+                {downloads[track.id] ? <CheckIcon size={15} /> : <DownloadIcon size={15} />}Offline
               </button>
               <div className="relative">
-                <button onClick={() => setShowSleep(v => !v)} className={`px-4 py-2 rounded-full text-sm font-bold ${sleepTimerMin ? 'bg-accent text-black' : 'bg-white/10'}`}>
-                  ⏾ {sleepTimerMin ? `${sleepTimerMin}m` : 'Sleep'}
+                <button onClick={() => setShowSleep(v => !v)} className={`px-4 py-2 rounded-full text-sm font-bold inline-flex items-center gap-1.5 ${sleepTimerMin ? 'bg-accent text-black' : 'bg-white/10'}`}>
+                  <MoonIcon size={15} />{sleepTimerMin ? `${sleepTimerMin}m` : 'Sleep'}
                 </button>
                 {showSleep && (
-                  <div className="card absolute bottom-12 left-0 p-2 w-40">
+                  <div className="panel absolute bottom-12 left-0 p-2 w-40">
                     {[0, 5, 10, 15, 30, 45, 60].map(m => (
                       <button key={m} onClick={() => { setSleepTimer(m); setShowSleep(false); toast(m ? `Sleep timer: ${m} min` : 'Sleep timer off'); }}
                         className="w-full text-left px-2 py-1.5 rounded-lg text-sm bg-hoverable">{m === 0 ? 'Off' : `${m} minutes`}</button>
@@ -192,9 +283,9 @@ export function FullPlayer() {
               </div>
             </div>
           </div>
-          <div className="card p-4 min-h-[300px]">
+          <div className="panel p-4 min-h-[300px]">
             <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
-              {[['lyrics', 'Lyrics'], ['studio', '🎚️ Studio'], ['info', 'Details']].map(([t, label]) => (
+              {[['lyrics', 'Lyrics'], ['studio', 'Studio'], ['info', 'Details']].map(([t, label]) => (
                 <button key={t} onClick={() => setTab(t)} className={`px-4 py-1.5 rounded-full text-sm font-bold shrink-0 ${tab === t ? 'bg-accent text-black' : 'bg-white/10'}`}>{label}</button>
               ))}
             </div>
@@ -231,10 +322,10 @@ export function QueueDrawer() {
       <div className="absolute inset-0 bg-black/60" onClick={() => setShow(false)} />
       <div className="absolute right-0 top-0 bottom-0 w-full max-w-md bg-soft border-l border-soft p-4 overflow-y-auto fade-up">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-extrabold">Up Next ({queue.length})</h2>
+          <h2 className="text-lg font-extrabold">Queue ({queue.length})</h2>
           <div className="flex gap-2">
             <button onClick={() => { clearQueue(); setShow(false); }} className="text-xs font-bold px-3 py-1.5 rounded-full bg-white/10">Clear</button>
-            <button onClick={() => setShow(false)} className="text-xl px-2" aria-label="Close queue">✕</button>
+            <button onClick={() => setShow(false)} className="text-xl px-2" aria-label="Close queue"><CloseIcon size={18} /></button>
           </div>
         </div>
         <div className="flex flex-col gap-1">
@@ -244,8 +335,8 @@ export function QueueDrawer() {
                 <Img src={t.image} alt="" className="w-10 h-10 rounded object-cover" />
                 <span className="min-w-0"><p className="truncate text-sm font-semibold">{t.title}</p><p className="truncate text-xs text-dim">{t.artist?.name}</p></span>
               </button>
-              {i === index && <span className="text-xs accent font-bold">PLAYING</span>}
-              <button onClick={() => removeFromQueue(i)} className="text-dim px-2" aria-label="Remove from queue">✕</button>
+              {i === index && <EqIcon />}
+              <button onClick={() => removeFromQueue(i)} className="text-dim px-2" aria-label="Remove from queue"><CloseIcon size={14} /></button>
             </div>
           ))}
           {queue.length === 0 && <p className="text-sm text-dim">Queue is empty. Play something!</p>}

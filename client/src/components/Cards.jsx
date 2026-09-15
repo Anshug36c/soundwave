@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useStore } from '../store/useStore';
+import { PlayIcon, HeartIcon, PlusIcon, CloseIcon, NoteIcon, HideIcon } from './Icons';
 import { formatTime } from '../services/musicApi';
 
 export function Img({ src, alt, className = '' }) {
@@ -30,7 +31,14 @@ export function SongRow({ track, index, context, showIndex = true, onRemove }) {
 
   return (
     <div className={`group flex items-center gap-3 px-3 py-2 rounded-lg ${isCurrent ? 'bg-accent/10' : 'bg-hoverable'}`} role="row">
-      <span className="w-6 text-center text-sm text-dim">{showIndex ? (isCurrent && isPlaying ? <EqIcon /> : (index + 1)) : (isCurrent && isPlaying ? <EqIcon /> : '♪')}</span>
+      <span className="w-6 text-center text-sm text-dim shrink-0">
+        {isCurrent && isPlaying ? <EqIcon /> : (
+          <button onClick={() => playTrack(track, context)} aria-label={`Play ${track.title}`}>
+            <span className="group-hover:hidden inline-block">{showIndex ? index + 1 : <NoteIcon size={14} />}</span>
+            <span className="hidden group-hover:inline-block" style={{ color: 'var(--text)' }}><PlayIcon size={12} /></span>
+          </button>
+        )}
+      </span>
       <button onClick={() => playTrack(track, context)} className="relative shrink-0" aria-label={`Play ${track.title}`}>
         <Img src={track.image} alt={track.title} className="w-11 h-11 rounded-md object-cover" />
         <span className="absolute inset-0 grid place-items-center bg-black/50 rounded-md opacity-0 group-hover:opacity-100 text-white">▶</span>
@@ -39,11 +47,11 @@ export function SongRow({ track, index, context, showIndex = true, onRemove }) {
         <p className={`truncate text-sm font-semibold ${isCurrent ? 'accent' : ''}`}>{track.title}</p>
         <p className="truncate text-xs text-dim">{track.artist?.name} <SourceBadge track={track} /></p>
       </button>
-      <button onClick={() => toggleLike(track)} className={`text-lg px-1 ${isLiked ? 'text-green-500' : 'opacity-0 group-hover:opacity-100 text-dim'}`} aria-label="Like">{isLiked ? '♥' : '♡'}</button>
-      <button onClick={() => toggleDislike(track)} className={`px-1 ${isDisliked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 text-dim'}`} aria-label="Dislike" title="Don't recommend this">👎</button>
+      <button onClick={() => toggleLike(track)} className={`px-1 ${isLiked ? 'accent' : 'opacity-0 group-hover:opacity-100 text-dim'}`} aria-label="Like"><HeartIcon size={17} filled={isLiked} /></button>
+      <button onClick={() => toggleDislike(track)} className={`px-1 ${isDisliked ? 'opacity-100 text-red-400' : 'opacity-0 group-hover:opacity-100 text-dim'}`} aria-label="Dislike" title="Don't recommend this"><HideIcon size={17} /></button>
       <span className="text-xs text-dim w-10 text-right">{formatTime(track.duration)}</span>
-      <button onClick={() => addToQueue(track)} className="text-dim opacity-0 group-hover:opacity-100 px-1" aria-label="Add to queue" title="Add to queue">⏭＋</button>
-      {onRemove && <button onClick={onRemove} className="text-dim px-1" aria-label="Remove">✕</button>}
+      <button onClick={() => addToQueue(track)} className="text-dim opacity-0 group-hover:opacity-100 px-1" aria-label="Add to queue" title="Add to queue"><PlusIcon size={17} /></button>
+      {onRemove && <button onClick={onRemove} className="text-dim px-1" aria-label="Remove"><CloseIcon size={14} /></button>}
     </div>
   );
 }
@@ -59,14 +67,14 @@ export function EqIcon() {
 function PlayButton({ onPlay }) {
   return (
     <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onPlay(); }}
-      className="absolute bottom-2 right-2 w-11 h-11 rounded-full btn-accent grid place-items-center text-lg opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all shadow-xl" aria-label="Play">▶</button>
+      className="absolute bottom-2 right-2 w-11 h-11 rounded-full btn-accent grid place-items-center text-lg opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all shadow-xl" aria-label="Play"><PlayIcon size={18} /></button>
   );
 }
 
 export function SongCard({ track, context }) {
   const playTrack = useStore(s => s.playTrack);
   return (
-    <div onClick={() => playTrack(track, context || [track])} className="card group relative p-3 cursor-pointer min-w-[150px] max-w-[190px]" role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && playTrack(track, context || [track])}>
+    <div onClick={() => playTrack(track, context || [track])} className="media-card group relative p-3 cursor-pointer min-w-[150px] max-w-[190px]" role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && playTrack(track, context || [track])}>
       <div className="relative">
         <Img src={track.image} alt={track.title} className="w-full aspect-square rounded-lg object-cover" />
         <PlayButton onPlay={() => playTrack(track, context || [track])} />
@@ -81,7 +89,7 @@ export function AlbumCard({ album }) {
   const [source, kind, ...rest] = String(album.id).split(':');
   const to = `/album/${source}/${rest.join(':') || kind}`;
   return (
-    <Link to={to} className="card group relative p-3 min-w-[150px] max-w-[190px]">
+    <Link to={to} className="media-card group relative p-3 min-w-[150px] max-w-[190px]">
       <Img src={album.image} alt={album.name} className="w-full aspect-square rounded-lg object-cover" />
       <p className="mt-2 truncate text-sm font-bold">{album.name}</p>
       <p className="truncate text-xs text-dim">{album.artist}{album.year ? ` · ${album.year}` : ''}</p>
@@ -93,7 +101,7 @@ export function ArtistCard({ artist }) {
   const [source, kind, ...rest] = String(artist.id).split(':');
   const to = `/artist/${source}/${rest.join(':') || kind}`;
   return (
-    <Link to={to} className="card group p-3 min-w-[140px] max-w-[170px] text-center">
+    <Link to={to} className="media-card group p-3 min-w-[140px] max-w-[170px] text-center">
       <Img src={artist.image} alt={artist.name} className="w-full aspect-square rounded-full object-cover" />
       <p className="mt-2 truncate text-sm font-bold">{artist.name}</p>
       <p className="text-xs text-dim">Artist</p>
@@ -109,7 +117,7 @@ export function PlaylistCard({ playlist, to }) {
   }
   const mosaic = playlist.tracks?.slice(0, 4) || [];
   return (
-    <Link to={link} className="card group p-3 min-w-[150px] max-w-[190px]">
+    <Link to={link} className="media-card group p-3 min-w-[150px] max-w-[190px]">
       {mosaic.length >= 4 ? (
         <div className="grid grid-cols-2 gap-[2px] rounded-lg overflow-hidden aspect-square">
           {mosaic.map(t => <Img key={t.id} src={t.image} alt="" className="w-full h-full object-cover" />)}
@@ -131,7 +139,7 @@ export function SectionRow({ title, subtitle, children, href }) {
           <h2 className="text-xl font-extrabold tracking-tight">{title}</h2>
           {subtitle && <p className="text-xs text-dim">{subtitle}</p>}
         </div>
-        {href && <Link to={href} className="text-xs font-bold text-dim hover:text-white">SEE ALL</Link>}
+        {href && <Link to={href} className="text-xs font-bold text-dim hover:text-white">Show all</Link>}
       </div>
       <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 px-1">{children}</div>
     </section>

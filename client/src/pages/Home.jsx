@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, debounce, formatTime, tasteFiltered } from '../services/musicApi';
 import { useStore } from '../store/useStore';
 import { SongRow, SongCard, AlbumCard, ArtistCard, SectionRow, SkeletonRow, SkeletonList, Img } from '../components/Cards';
+import { ClockIcon, BoltIcon, HeartIcon } from '../components/Icons';
 
 const MOODS = [
   { name: 'AP Dhillon', emoji: '🔥', q: 'ap dhillon' },
@@ -91,11 +92,14 @@ export default function Home() {
   if (!data) return <div className="p-4"><div className="skeleton h-56 rounded-2xl" /><div className="mt-6"><SkeletonRow /></div><div className="mt-6"><SkeletonList /></div></div>;
 
   const hero = data.hero[heroIdx];
+  const hour = new Date().getHours();
+  const greeting = hour < 5 ? 'Up late' : hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   const visibleForYou = tasteFiltered(forYou, disliked, hiddenArtists);
   const visibleTm = tasteFiltered(tm, disliked, hiddenArtists);
 
   return (
     <div className="pb-8">
+      <h1 className="text-2xl font-extrabold tracking-tight mb-4 px-1">{greeting}</h1>
       {/* Hero carousel */}
       {hero && (
         <div className="relative rounded-2xl overflow-hidden hero-gradient border border-soft fade-up">
@@ -150,7 +154,7 @@ export default function Home() {
       {/* Time Machine */}
       <section className="mt-7">
         <div className="flex items-center justify-between px-1 mb-3 flex-wrap gap-2">
-          <h2 className="text-xl font-extrabold tracking-tight">🕰 Time Machine</h2>
+          <h2 className="text-xl font-extrabold tracking-tight flex items-center gap-2"><ClockIcon size={20} />Time Machine</h2>
           <div className="flex gap-1.5">{['80s', '90s', '2000s', '2010s', '2020s'].map(d => (
             <button key={d} onClick={() => setDecade(d)} className={`px-3 py-1 rounded-full text-xs font-bold ${decade === d ? 'bg-accent text-black' : 'bg-white/10'}`}>{d}</button>
           ))}</div>
@@ -192,13 +196,13 @@ export default function Home() {
       <div className="grid md:grid-cols-2 gap-4 mt-7">
         {data.party?.length > 0 && (
           <div className="card p-3">
-            <h3 className="font-extrabold mb-2">⚡ Party Energy</h3>
+            <h3 className="font-extrabold mb-2 flex items-center gap-1.5"><BoltIcon size={16} />Party Energy</h3>
             {data.party.slice(0, 5).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.party} />)}
           </div>
         )}
         {data.romantic?.length > 0 && (
           <div className="card p-3">
-            <h3 className="font-extrabold mb-2">❤️ Romantic</h3>
+            <h3 className="font-extrabold mb-2 flex items-center gap-1.5"><HeartIcon size={16} filled />Romantic</h3>
             {data.romantic.slice(0, 5).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.romantic} />)}
           </div>
         )}

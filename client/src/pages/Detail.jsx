@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { api } from '../services/musicApi';
 import { useStore } from '../store/useStore';
 import { SongRow, AlbumCard, SkeletonList, Img } from '../components/Cards';
+import { PlayIcon, CheckIcon, PlusIcon } from '../components/Icons';
 
 function useLoad(fn, deps) {
   const [data, setData] = useState(null);
@@ -24,7 +25,7 @@ function Header({ image, round, kicker, title, sub, onPlay, extra }) {
         <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">{title}</h1>
         {sub && <p className="text-sm text-dim mt-1">{sub}</p>}
         <div className="flex gap-2 mt-3 flex-wrap">
-          {onPlay && <button onClick={onPlay} className="btn-accent px-6 py-2 text-sm">▶ Play</button>}
+          {onPlay && <button onClick={onPlay} aria-label="Play" className="w-12 h-12 rounded-full btn-accent grid place-items-center shrink-0"><PlayIcon size={20} /></button>}
           {extra}
         </div>
       </div>
@@ -45,8 +46,8 @@ export function AlbumPage() {
     <div className="pb-8">
       <Header image={data.image} kicker="ALBUM" title={data.name} sub={`${data.artist} ${data.year ? `· ${data.year}` : ''} · ${data.songs.length} songs`}
         onPlay={() => playTracks(data.songs, 0)}
-        extra={<button onClick={() => toggleSaveAlbum(data)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">{saved ? '✓ Saved' : '＋ Save'}</button>} />
-      <div className="card p-2 mt-4 flex flex-col">
+        extra={<button onClick={() => toggleSaveAlbum(data)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5">{saved ? <><CheckIcon size={15} />Saved</> : <><PlusIcon size={15} />Save</>}</button>} />
+      <div className="panel p-2 mt-4 flex flex-col">
         {data.songs.map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.songs} />)}
       </div>
     </div>
@@ -70,9 +71,9 @@ export function ArtistPage() {
     <div className="pb-8">
       <Header image={data.image} round kicker="ARTIST" title={data.name} sub={(data.topSongs?.length || 0) + ' top songs · full tracks'}
         onPlay={data.topSongs?.length ? () => playTracks(data.topSongs, 0) : null}
-        extra={<span className="flex gap-2"><button onClick={() => toggleFollowArtist(data)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">{following ? '✓ Following' : '＋ Follow'}</button><button onClick={() => isHidden ? unhideArtist(data.name) : hideArtist(data.name)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">{isHidden ? 'Unhide' : 'Hide'}</button></span>} />
+        extra={<span className="flex gap-2"><button onClick={() => toggleFollowArtist(data)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5">{following ? <><CheckIcon size={15} />Following</> : <><PlusIcon size={15} />Follow</>}</button><button onClick={() => isHidden ? unhideArtist(data.name) : hideArtist(data.name)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">{isHidden ? 'Unhide' : 'Hide'}</button></span>} />
       <h2 className="text-xl font-extrabold mt-6 mb-2">Top Songs</h2>
-      <div className="card p-2 flex flex-col">
+      <div className="panel p-2 flex flex-col">
         {(data.topSongs || []).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.topSongs} />)}
         {(!data.topSongs || !data.topSongs.length) && <p className="p-4 text-sm text-dim">No top songs found.</p>}
       </div>
