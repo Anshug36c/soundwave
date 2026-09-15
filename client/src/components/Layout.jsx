@@ -125,9 +125,9 @@ const tabs = [
   { to: '/liked', label: 'Liked', Icon: HeartIcon },
 ];
 
-export function BottomNav() {
+export function BottomNav({ hasPlayer }) {
   return (
-    <nav className="md:hidden fixed bottomnav-offset left-0 right-0 z-20 glass border-t border-soft" aria-label="Mobile">
+    <nav className={`md:hidden fixed left-0 right-0 z-20 glass bg-app border-t border-soft ${hasPlayer ? 'bottomnav-offset' : 'bottom-0 pb-safe'}`} aria-label="Mobile">
       <div className="grid grid-cols-4 h-14">
         {tabs.map(({ to, label, Icon }) => (
           <NavLink key={to} to={to}

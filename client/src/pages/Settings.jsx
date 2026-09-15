@@ -48,16 +48,16 @@ export default function Settings() {
     <div className="pb-8 max-w-2xl">
       <h1 className="text-2xl font-extrabold tracking-tight">Profile & Settings</h1>
 
-      <div className="card p-5 mt-4 flex items-center gap-4">
+      <div className="card p-5 mt-4 flex items-center gap-4 flex-wrap">
         <div className="w-16 h-16 rounded-full bg-accent grid place-items-center text-2xl font-extrabold shrink-0" style={{ color: '#fffc00' }}>
           {(profile.name?.[0] || 'G').toUpperCase()}
         </div>
         <div className="flex-1">
-          <form onSubmit={(e) => { e.preventDefault(); setProfile({ name: name || 'Guest Listener' }); toast('Profile updated'); }} className="flex gap-2">
+          <form onSubmit={(e) => { e.preventDefault(); setProfile({ name: name || 'Guest Listener' }); toast('Profile updated'); }} className="flex gap-2 flex-wrap">
             <input value={name} onChange={e => setName(e.target.value)} className="flex-1 min-w-0 bg-soft border border-soft rounded-lg px-3 py-2 font-bold outline-none" aria-label="Display name" />
             <button className="btn-accent px-4 text-sm">Save</button>
           </form>
-          <div className="flex gap-4 mt-2 text-xs text-dim font-semibold">
+          <div className="flex gap-x-4 gap-y-1 mt-2 text-xs text-dim font-semibold flex-wrap">
             <span>♥ {Object.keys(liked).length} liked</span>
             <span>♪ {playlists.length} playlists</span>
             <span>{Object.keys(followedArtists).length} following</span>

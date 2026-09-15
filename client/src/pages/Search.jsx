@@ -170,7 +170,7 @@ export default function Search() {
             : `Showing matches for “${results.nl.cleaned}”`}
         </div>
       )}
-      {results.didYouMean && q && (
+      {results.didYouMean && q && !loading && results.songs.length === 0 && (
         <div className="mt-4 text-sm">No matches. Did you mean{' '}
           <button onClick={() => submit(results.didYouMean)} className="font-bold text-green-500 underline">{results.didYouMean}</button>?
         </div>

@@ -46,7 +46,7 @@ export default function App() {
           </div>
         </main>
       </div>
-      <BottomNav />
+      <BottomNav hasPlayer={hasPlayer} />
       <MiniPlayer />
       <FullPlayer />
       <QueueDrawer />

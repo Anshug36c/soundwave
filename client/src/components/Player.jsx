@@ -72,7 +72,7 @@ export function MiniPlayer() {
       {/* mobile strip */}
       <div className="md:hidden pb-safe">
         <div className="h-1 bg-white/10"><div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} /></div>
-        <div className="glass bg-black/60 border-t border-soft px-2 h-16 flex items-center gap-1">
+        <div className="glass bg-black/85 border-t border-soft px-2 h-16 flex items-center gap-1">
           <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" aria-label="Open full player">
             <Img src={track.image} alt={track.title} className="w-12 h-12 rounded-md object-cover" />
             <span className="min-w-0">
@@ -219,7 +219,7 @@ export function FullPlayer() {
   return (
     <div className="fixed inset-0 z-40 overflow-y-auto sheet-scroll" role="dialog" aria-label="Now playing">
       <div className="absolute inset-0 hidden sm:block bg-cover bg-center blur-3xl scale-110 opacity-40" style={{ backgroundImage: `url(${track.image})` }} />
-      <div className="absolute inset-0 bg-black/85 sm:bg-black/70" />
+      <div className="absolute inset-0 bg-black sm:bg-black/70" />
       <div className="relative max-w-5xl mx-auto px-4 py-6 min-h-full flex flex-col">
         <div className="flex items-center justify-between">
           <button onClick={() => setShow(false)} className="text-2xl px-2" aria-label="Close player"><ChevronDownIcon size={22} /></button>
@@ -262,7 +262,7 @@ export function FullPlayer() {
               <button onClick={() => toggleLike(track)} className={`px-4 py-2 rounded-full text-sm font-bold inline-flex items-center gap-1.5 ${isLiked ? 'bg-accent text-black' : 'bg-white/10'}`}><HeartIcon size={15} filled={isLiked} />{isLiked ? 'Liked' : 'Like'}</button>
               <div className="relative">
                 <button onClick={() => setShowPlMenu(v => !v)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5"><PlusIcon size={15} />Playlist</button>
-                {showPlMenu && <div className="absolute bottom-12 left-0 z-10"><AddToPlaylistMenu track={track} onDone={() => setShowPlMenu(false)} /></div>}
+                {showPlMenu && <div className="absolute bottom-12 left-1/2 -translate-x-1/2 sm:left-0 sm:translate-x-0 z-10"><AddToPlaylistMenu track={track} onDone={() => setShowPlMenu(false)} /></div>}
               </div>
               <button onClick={share} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5"><ShareIcon size={15} />Share</button>
               <button onClick={() => { toggleDownload(track); toast(downloads[track.id] ? 'Removed from offline' : 'Saved for offline'); }} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5">
@@ -273,7 +273,7 @@ export function FullPlayer() {
                   <MoonIcon size={15} />{sleepTimerMin ? `${sleepTimerMin}m` : 'Sleep'}
                 </button>
                 {showSleep && (
-                  <div className="panel absolute bottom-12 left-0 p-2 w-40">
+                  <div className="panel absolute bottom-12 left-1/2 -translate-x-1/2 sm:left-0 sm:translate-x-0 p-2 w-40">
                     {[0, 5, 10, 15, 30, 45, 60].map(m => (
                       <button key={m} onClick={() => { setSleepTimer(m); setShowSleep(false); toast(m ? `Sleep timer: ${m} min` : 'Sleep timer off'); }}
                         className="w-full text-left px-2 py-1.5 rounded-lg text-sm bg-hoverable">{m === 0 ? 'Off' : `${m} minutes`}</button>
@@ -286,7 +286,7 @@ export function FullPlayer() {
           <div className="panel p-4 min-h-[300px]">
             <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
               {[['lyrics', 'Lyrics'], ['studio', 'Studio'], ['info', 'Details']].map(([t, label]) => (
-                <button key={t} onClick={() => setTab(t)} className={`px-4 py-1.5 rounded-full text-sm font-bold shrink-0 ${tab === t ? 'bg-accent text-black' : 'bg-white/10'}`}>{label}</button>
+                <button key={t} onClick={() => setTab(t)} className={`px-4 py-1.5 rounded-full text-sm font-bold shrink-0 border ${tab === t ? 'bg-accent text-black border-transparent' : 'bg-white/10 border-soft'}`}>{label}</button>
               ))}
             </div>
             {tab === 'lyrics' ? <Lyrics track={track} /> : tab === 'studio' ? <Equalizer /> : (

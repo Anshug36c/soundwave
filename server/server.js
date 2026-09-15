@@ -1,6 +1,7 @@
 // SoundWave server — Punjabi multi-source backend (DJPunjab + DJJohal + Mr-Jatt/PenduJatt)
 // with fastest-mirror audio + instant Tidal FLAC previews.
 import express from 'express';
+import compression from 'compression';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -8,7 +9,35 @@ import crypto from 'crypto';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-app.use(express.json());
+app.set('trust proxy', 1);
+app.use(compression());
+app.use(express.json({ limit: '256kb' }));
+
+// ---------------- scale guards: rate limits + API timeouts ----------------
+// generous per-IP sliding windows (abuse shield, not a user cap)
+const rateBuckets = new Map(); // key -> { t, n }
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of rateBuckets) if (now - v.t > 120000) rateBuckets.delete(k);
+}, 60000).unref();
+app.use('/api', (req, res, next) => {
+  const audio = req.path === '/audio' || req.path === '/djp-audio';
+  const key = `${req.ip || 'x'}:${audio ? 'a' : 'm'}`;
+  const max = audio ? 600 : 240;
+  const now = Date.now();
+  let b = rateBuckets.get(key);
+  if (!b || now - b.t > 60000) { b = { t: now, n: 0 }; rateBuckets.set(key, b); }
+  if (++b.n > max) { res.setHeader('Retry-After', '30'); return res.status(429).json({ error: 'Too many requests, slow down' }); }
+  next();
+});
+// hard timeout for metadata APIs (audio/preview streams legitimately run long)
+const SLOW_API = new Set(['/audio', '/djp-audio', '/tidal-preview']);
+app.use('/api', (req, res, next) => {
+  if (SLOW_API.has(req.path)) return next();
+  const to = setTimeout(() => { if (!res.headersSent) res.status(503).json({ error: 'Upstream slow, try again' }); }, 55000);
+  res.on('finish', () => clearTimeout(to));
+  next();
+});
 
 // ---------------- tiny TTL cache ----------------
 const cache = new Map(); // key -> { v, t, ttl }
@@ -27,22 +56,48 @@ function setCache(key, val, ttl = 5 * 60 * 1000) {
 const DJP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36';
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// outbound concurrency guard: many users x deep fan-out must not pile up sockets
+// or trip provider rate limits — metadata fetches queue here instead.
+const OUT_GLOBAL = 48, OUT_PER_HOST = 8;
+let outActive = 0;
+const outQueue = [];
+const outHostActive = new Map();
+function outHost(url) { try { return new URL(url).host; } catch { return ''; } }
+async function outAcquire(url) {
+  const host = outHost(url);
+  while (outActive >= OUT_GLOBAL || (outHostActive.get(host) || 0) >= OUT_PER_HOST) {
+    await new Promise(r => outQueue.push(r));
+  }
+  outActive++;
+  outHostActive.set(host, (outHostActive.get(host) || 0) + 1);
+}
+function outRelease(url) {
+  const host = outHost(url);
+  outActive = Math.max(0, outActive - 1);
+  outHostActive.set(host, Math.max(0, (outHostActive.get(host) || 1) - 1));
+  const w = outQueue.shift();
+  if (w) w();
+}
+
 /** GET text with retries (reliability first). */
 async function fetchText(url, { timeout = 20000, referer = null } = {}) {
   let lastErr = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), timeout);
-    try {
-      const r = await fetch(url, {
-        signal: ctrl.signal,
-        headers: { 'User-Agent': DJP_UA, ...(referer ? { Referer: referer } : {}), Accept: 'text/html,*/*' },
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return await r.text();
-    } catch (e) { lastErr = e; await sleep(400 * (attempt + 1)); }
-    finally { clearTimeout(to); }
-  }
+  await outAcquire(url);
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), timeout);
+      try {
+        const r = await fetch(url, {
+          signal: ctrl.signal,
+          headers: { 'User-Agent': DJP_UA, ...(referer ? { Referer: referer } : {}), Accept: 'text/html,*/*' },
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return await r.text();
+      } catch (e) { lastErr = e; await sleep(400 * (attempt + 1)); }
+      finally { clearTimeout(to); }
+    }
+  } finally { outRelease(url); }
   throw lastErr;
 }
 
@@ -50,18 +105,19 @@ async function fetchText(url, { timeout = 20000, referer = null } = {}) {
 async function fetchBuf(url, timeout = 90000, referer = null) {
   const ctrl = new AbortController();
   const to = setTimeout(() => ctrl.abort(), timeout);
+  await outAcquire(url);
   try {
     const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': DJP_UA, ...(referer ? { Referer: referer } : {}) } });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const ab = await r.arrayBuffer();
     return Buffer.from(ab);
-  } finally { clearTimeout(to); }
+  } finally { outRelease(url); clearTimeout(to); }
 }
 
 const INDEX_TTL = 6 * 3600 * 1000;
 const PAGE_TTL = 6 * 3600 * 1000;
 const AUDIO_TTL = 60 * 60 * 1000;
-const AUDIO_MAX = 24;
+const AUDIO_MAX = 16;
 
 function djpScore(slug, words) {
   const s = ` ${fold(slug).replace(/-/g, ' ')} `;
@@ -102,6 +158,7 @@ function pageCacheSet(url, data) {
 async function headDuration(url, kbps) {
   if (!url || !kbps) return 0;
   try {
+    await outAcquire(url);
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), 8000);
     try {
@@ -109,7 +166,7 @@ async function headDuration(url, kbps) {
       const cr = h.headers.get('content-range') || '';
       const len = parseInt(cr.split('/')[1] || h.headers.get('content-length') || '0', 10);
       if (len > 100000) return Math.round((len * 8) / (kbps * 1000));
-    } finally { clearTimeout(to); }
+    } finally { clearTimeout(to); outRelease(url); }
   } catch { /* unknown */ }
   return 0;
 }
@@ -1495,14 +1552,14 @@ app.get('/api/audio', async (req, res) => {
           res.setHeader('X-Audio-Mirror', m.source);
           if (recovered) res.setHeader('X-Audio-Recovered', '1');
           const reader = up.body.getReader();
-          const chunks = up.status === 200 ? [] : null;
+          let chunks = up.status === 200 ? [] : null;
           let received = 0, aborted = false;
           req.on('close', () => { aborted = true; clearTimeout(to); try { reader.cancel(); } catch {} });
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
             received += value.length;
-            if (chunks) chunks.push(value);
+            if (chunks) { if (received > 20 * 1024 * 1024) chunks = null; else chunks.push(value); }
             if (!res.write(value)) await new Promise(r => res.once('drain', r));
           }
           clearTimeout(to);
@@ -1904,7 +1961,7 @@ app.get('/api/search', async (req, res) => {
     }
     for (const ar of artists) addSuggestArtist(ar.name, ar.image);
     let didYouMean = '';
-    if (!nl.unsupported) {
+    if (!nl.unsupported && !artistMode) {
       const weak = !songs.length || songs.slice(0, 3).every(t => overlapScore(titleTokens(effQ), titleTokens(t.title)) < 0.3);
       if (weak) didYouMean = await suggestCorrection(effQ).catch(() => '');
     }
@@ -2114,9 +2171,14 @@ app.get('/api/djp-audio', async (req, res) => {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, '../client/dist');
 if (fs.existsSync(distDir)) {
-  app.use(express.static(distDir));
+  app.use(express.static(distDir, {
+    maxAge: '1y',
+    immutable: true,
+    setHeaders: (res, file) => { if (file.endsWith('index.html')) res.setHeader('Cache-Control', 'no-cache'); },
+  }));
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api/')) return next();
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(distDir, 'index.html'));
   });
   console.log('   Serving client build from ../client/dist');

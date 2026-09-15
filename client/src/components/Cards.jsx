@@ -30,7 +30,7 @@ export function SongRow({ track, index, context, showIndex = true, onRemove }) {
   const isDisliked = !!disliked[track.id];
 
   return (
-    <div className={`group flex items-center gap-3 px-3 py-2 rounded-lg ${isCurrent ? 'bg-accent/10' : 'bg-hoverable'}`} role="row">
+    <div className={`group flex items-center gap-2 px-2 sm:gap-3 sm:px-3 py-2 rounded-lg ${isCurrent ? 'bg-accent/10' : 'bg-hoverable'}`} role="row">
       <span className="w-6 text-center text-sm text-dim shrink-0">
         {isCurrent && isPlaying ? <EqIcon /> : (
           <button onClick={() => playTrack(track, context)} aria-label={`Play ${track.title}`}>
@@ -40,7 +40,7 @@ export function SongRow({ track, index, context, showIndex = true, onRemove }) {
         )}
       </span>
       <button onClick={() => playTrack(track, context)} className="relative shrink-0" aria-label={`Play ${track.title}`}>
-        <Img src={track.image} alt={track.title} className="w-11 h-11 rounded-md object-cover" />
+        <Img src={track.image} alt={track.title} className="w-10 h-10 sm:w-11 sm:h-11 rounded-md object-cover" />
         <span className="absolute inset-0 grid place-items-center bg-black/50 rounded-md opacity-0 group-hover:opacity-100 text-white">▶</span>
       </button>
       <button onClick={() => playTrack(track, context)} className="flex-1 min-w-0 text-left">
@@ -49,8 +49,8 @@ export function SongRow({ track, index, context, showIndex = true, onRemove }) {
       </button>
       <button onClick={() => toggleLike(track)} className={`px-1.5 py-1 ${isLiked ? 'accent' : 'text-dim md:opacity-0 md:group-hover:opacity-100'}`} aria-label="Like"><HeartIcon size={17} filled={isLiked} /></button>
       <button onClick={() => toggleDislike(track)} className={`px-1.5 py-1 ${isDisliked ? 'text-red-400' : 'text-dim md:opacity-0 md:group-hover:opacity-100'}`} aria-label="Dislike" title="Don't recommend this"><HideIcon size={17} /></button>
-      <span className="text-xs text-dim w-10 text-right">{formatTime(track.duration)}</span>
-      <button onClick={() => addToQueue(track)} className="text-dim px-1.5 py-1 md:opacity-0 md:group-hover:opacity-100" aria-label="Add to queue" title="Add to queue"><PlusIcon size={17} /></button>
+      <span className="hidden min-[400px]:block text-xs text-dim w-10 text-right shrink-0">{formatTime(track.duration)}</span>
+      <button onClick={() => addToQueue(track)} className="hidden min-[400px]:block text-dim px-1.5 py-1 md:opacity-0 md:group-hover:opacity-100" aria-label="Add to queue" title="Add to queue"><PlusIcon size={17} /></button>
       {onRemove && <button onClick={onRemove} className="text-dim px-1" aria-label="Remove"><CloseIcon size={14} /></button>}
     </div>
   );
