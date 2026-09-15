@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { SongRow, AlbumCard, ArtistCard, PlaylistCard } from '../components/Cards';
+import { PlayIcon, ShareIcon, PlusIcon, DownloadIcon, NoteIcon, PencilIcon } from '../components/Icons';
 
 export function LikedSongs() {
   const liked = useStore(s => s.liked);
@@ -12,13 +13,13 @@ export function LikedSongs() {
 
   return (
     <div className="pb-8">
-      <div className="flex items-center gap-5 hero-gradient rounded-2xl p-6 border border-soft">
-        <div className="w-32 h-32 rounded-2xl grid place-items-center text-6xl shrink-0" style={{ background: 'linear-gradient(135deg,#450af5,#c4efd9)' }}>♥</div>
+      <div className="flex items-center gap-4 p-4 sm:gap-5 sm:p-6 hero-gradient rounded-2xl border border-soft flex-wrap">
+        <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl grid place-items-center text-5xl sm:text-6xl shrink-0" style={{ background: 'linear-gradient(135deg,#450af5,#c4efd9)' }}>♥</div>
         <div>
           <p className="text-xs font-bold tracking-widest">PLAYLIST</p>
-          <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">Liked Songs</h1>
+          <h1 className="text-2xl sm:text-3xl md:text-5xl font-extrabold tracking-tight">Liked Songs</h1>
           <p className="text-sm text-dim mt-1">{songs.length} songs</p>
-          {songs.length > 0 && <button onClick={() => playTracks(sorted, 0)} className="btn-accent px-6 py-2.5 text-sm mt-3">▶ Play all</button>}
+          {songs.length > 0 && <button onClick={() => playTracks(sorted, 0)} className="btn-accent px-6 py-2.5 text-sm mt-3 inline-flex items-center gap-1.5"><PlayIcon size={15} />Play all</button>}
         </div>
       </div>
       <div className="flex justify-end mt-4">
@@ -53,12 +54,12 @@ export function LocalPlaylist() {
   const mosaic = pl.tracks.slice(0, 4);
   return (
     <div className="pb-8">
-      <div className="flex items-center gap-5 hero-gradient rounded-2xl p-6 border border-soft flex-wrap">
+      <div className="flex items-center gap-4 p-4 sm:gap-5 sm:p-6 hero-gradient rounded-2xl border border-soft flex-wrap">
         {mosaic.length >= 4 ? (
-          <div className="grid grid-cols-2 gap-[2px] w-32 h-32 rounded-2xl overflow-hidden shrink-0">
+          <div className="grid grid-cols-2 gap-[2px] w-28 h-28 sm:w-32 sm:h-32 rounded-2xl overflow-hidden shrink-0">
             {mosaic.map(t => <img key={t.id} src={t.image} alt="" className="w-full h-full object-cover" />)}
           </div>
-        ) : <div className="w-32 h-32 rounded-2xl bg-soft grid place-items-center text-5xl shrink-0">🎵</div>}
+        ) : <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-2xl bg-soft grid place-items-center shrink-0"><NoteIcon size={40} className="text-dim" /></div>}
         <div className="min-w-0">
           <p className="text-xs font-bold tracking-widest">PLAYLIST · {pl.isPublic ? 'PUBLIC' : 'PRIVATE'}</p>
           {editing ? (
@@ -70,21 +71,21 @@ export function LocalPlaylist() {
             </form>
           ) : (
             <>
-              <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">{pl.name}</h1>
+              <h1 className="text-2xl sm:text-3xl md:text-5xl font-extrabold tracking-tight">{pl.name}</h1>
               {pl.description && <p className="text-sm text-dim">{pl.description}</p>}
               <p className="text-sm text-dim mt-1">{pl.tracks.length} songs</p>
             </>
           )}
           <div className="flex gap-2 mt-3 flex-wrap">
-            {pl.tracks.length > 0 && <button onClick={() => playTracks(pl.tracks, 0)} className="btn-accent px-6 py-2 text-sm">▶ Play</button>}
-            {!editing && <button onClick={() => { setName(pl.name); setDesc(pl.description || ''); setEditing(true); }} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">✎ Edit</button>}
-            <button onClick={async () => { try { await navigator.clipboard.writeText(location.href); toast('Playlist link copied'); } catch {} }} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">↗ Share</button>
+            {pl.tracks.length > 0 && <button onClick={() => playTracks(pl.tracks, 0)} className="btn-accent px-6 py-2 text-sm inline-flex items-center gap-1.5"><PlayIcon size={15} />Play</button>}
+            {!editing && <button onClick={() => { setName(pl.name); setDesc(pl.description || ''); setEditing(true); }} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5"><PencilIcon size={15} />Edit</button>}
+            <button onClick={async () => { try { await navigator.clipboard.writeText(location.href); toast('Playlist link copied'); } catch {} }} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5"><ShareIcon size={15} />Share</button>
           </div>
         </div>
       </div>
       <div className="card p-2 mt-4 flex flex-col">
         {pl.tracks.map((t, i) => <SongRow key={t.id} track={t} index={i} context={pl.tracks} onRemove={() => removeFromPlaylist(pl.id, t.id)} />)}
-        {pl.tracks.length === 0 && <p className="p-6 text-sm text-dim text-center">Empty playlist — add songs from the full player (＋ Playlist).</p>}
+        {pl.tracks.length === 0 && <p className="p-6 text-sm text-dim text-center">Empty playlist — add songs from the full player.</p>}
       </div>
       <button onClick={() => { if (confirm('Delete this playlist?')) { deletePlaylist(pl.id); history.back(); } }} className="mt-4 text-sm font-bold text-red-500">Delete playlist</button>
     </div>
@@ -114,11 +115,11 @@ export default function Library() {
         <h1 className="text-2xl font-extrabold tracking-tight">Your Library</h1>
         <div className="flex gap-2">
           <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter library…" className="bg-soft border border-soft rounded-full px-4 py-1.5 text-sm outline-none" aria-label="Filter library" />
-          <button onClick={() => { const n = prompt('Playlist name:'); if (n?.trim()) { createPlaylist(n.trim()); toast('Playlist created'); } }} className="btn-accent px-4 py-1.5 text-sm">＋ New</button>
+          <button onClick={() => { const n = prompt('Playlist name:'); if (n?.trim()) { createPlaylist(n.trim()); toast('Playlist created'); } }} className="btn-accent px-4 py-2 text-sm inline-flex items-center gap-1"><PlusIcon size={15} />New</button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-5">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-5 [&>*]:min-w-0 [&>*]:max-w-none">
         <PlaylistCard playlist={{ id: '__liked__', name: 'Liked Songs', tracks: likedSongs, image: '' }} to="/liked" />
         {matchPlaylists.map(p => <PlaylistCard key={p.id} playlist={p} />)}
       </div>
@@ -132,7 +133,7 @@ export default function Library() {
           <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">{Object.values(followedArtists).map(a => <ArtistCard key={a.id} artist={a} />)}</div></>
       )}
       {offlineSongs.length > 0 && (
-        <><h2 className="text-xl font-extrabold mt-8 mb-3">⬇ Offline Songs ({offlineSongs.length})</h2>
+        <><h2 className="text-xl font-extrabold mt-8 mb-3"><DownloadIcon size={19} className="inline -mt-0.5 mr-1" />Offline Songs ({offlineSongs.length})</h2>
           <div className="card p-2 flex flex-col">{offlineSongs.map((t, i) => <SongRow key={t.id} track={t} index={i} context={offlineSongs} />)}</div></>
       )}
       <div className="flex items-center justify-between mt-8 mb-3">
@@ -141,7 +142,7 @@ export default function Library() {
       </div>
       <div className="card p-2 flex flex-col">
         {history.slice(0, 20).map((t, i) => <SongRow key={t.id} track={t} index={i} context={history} />)}
-        {history.length === 0 && <p className="p-6 text-sm text-dim text-center">Nothing yet — go play something! 🎧</p>}
+        {history.length === 0 && <p className="p-6 text-sm text-dim text-center">Nothing yet — go play something!</p>}
       </div>
     </div>
   );

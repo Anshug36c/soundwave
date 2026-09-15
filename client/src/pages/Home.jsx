@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, debounce, formatTime, tasteFiltered } from '../services/musicApi';
 import { useStore } from '../store/useStore';
 import { SongRow, SongCard, AlbumCard, ArtistCard, SectionRow, SkeletonRow, SkeletonList, Img } from '../components/Cards';
-import { ClockIcon, BoltIcon, HeartIcon } from '../components/Icons';
+import { ClockIcon, BoltIcon, HeartIcon, PlayIcon, ChevronRightIcon } from '../components/Icons';
 
 const MOODS = [
   { name: 'AP Dhillon', emoji: '🔥', q: 'ap dhillon' },
@@ -104,20 +104,20 @@ export default function Home() {
       {hero && (
         <div className="relative rounded-2xl overflow-hidden hero-gradient border border-soft fade-up">
           <div className="absolute inset-0 bg-cover bg-center opacity-30 blur-xl scale-110" style={{ backgroundImage: `url(${hero.image})` }} />
-          <div className="relative flex items-center gap-5 p-6">
-            <Img src={hero.image} alt={hero.title} className="w-36 h-36 md:w-48 md:h-48 rounded-2xl object-cover shadow-2xl" />
+          <div className="relative flex items-center gap-4 p-4 sm:gap-5 sm:p-6">
+            <Img src={hero.image} alt={hero.title} className="w-28 h-28 sm:w-36 sm:h-36 md:w-48 md:h-48 rounded-2xl object-cover shadow-2xl shrink-0" />
             <div className="min-w-0">
               <p className="text-xs font-bold tracking-widest accent">FEATURED · LATEST DROP</p>
-              <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight truncate">{hero.title}</h1>
+              <h1 className="text-xl sm:text-2xl md:text-4xl font-extrabold tracking-tight truncate">{hero.title}</h1>
               <p className="text-dim font-semibold">{hero.artist?.name}</p>
-              <div className="flex gap-2 mt-4">
-                <button onClick={() => playTracks(data.newDrops, heroIdx % data.newDrops.length)} className="btn-accent px-6 py-2.5 text-sm">▶ Play</button>
-                <button onClick={() => setHeroIdx((heroIdx + 1) % data.hero.length)} className="px-5 py-2.5 rounded-full text-sm font-bold bg-white/10">Next →</button>
+              <div className="flex gap-2 mt-3 sm:mt-4 flex-wrap">
+                <button onClick={() => playTracks(data.newDrops, heroIdx % data.newDrops.length)} className="btn-accent px-5 sm:px-6 py-2.5 text-sm inline-flex items-center gap-1.5"><PlayIcon size={15} />Play</button>
+                <button onClick={() => setHeroIdx((heroIdx + 1) % data.hero.length)} className="px-4 sm:px-5 py-2.5 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1">Next<ChevronRightIcon size={15} /></button>
               </div>
             </div>
           </div>
           <div className="relative flex gap-1.5 justify-center pb-3">
-            {data.hero.map((_, i) => <button key={i} onClick={() => setHeroIdx(i)} aria-label={`Slide ${i + 1}`} className={`h-1.5 rounded-full transition-all ${i === heroIdx ? 'w-6 bg-accent' : 'w-1.5 bg-white/30'}`} />)}
+            {data.hero.map((_, i) => <button key={i} onClick={() => setHeroIdx(i)} aria-label={`Slide ${i + 1}`} className="p-1.5"><span className={`block h-1.5 rounded-full transition-all ${i === heroIdx ? 'w-6 bg-accent' : 'w-1.5 bg-white/30'}`} /></button>)}
           </div>
         </div>
       )}
@@ -142,7 +142,7 @@ export default function Home() {
             <p className="text-xs text-dim font-semibold">Mixed from your recent plays{seeds[0] ? ` · latest: ${seeds[0].t}` : ''}</p></div>
           <label className="flex items-center gap-2 text-[11px] font-bold text-dim">Familiar
             <input type="range" min="0" max="100" value={discoverMix} onChange={e => setDiscoverMix(+e.target.value)}
-              className="w-32 accent-green-500" aria-label="Discovery mix" />Adventurous</label>
+              className="w-28 sm:w-32 accent-green-500" aria-label="Discovery mix" />Adventurous</label>
         </div>
         <div className="card p-2 flex flex-col">
           {forYouLoading && <SkeletonList count={4} />}
@@ -155,8 +155,8 @@ export default function Home() {
       <section className="mt-7">
         <div className="flex items-center justify-between px-1 mb-3 flex-wrap gap-2">
           <h2 className="text-xl font-extrabold tracking-tight flex items-center gap-2"><ClockIcon size={20} />Time Machine</h2>
-          <div className="flex gap-1.5">{['80s', '90s', '2000s', '2010s', '2020s'].map(d => (
-            <button key={d} onClick={() => setDecade(d)} className={`px-3 py-1 rounded-full text-xs font-bold ${decade === d ? 'bg-accent text-black' : 'bg-white/10'}`}>{d}</button>
+          <div className="flex gap-1.5 flex-wrap">{['80s', '90s', '2000s', '2010s', '2020s'].map(d => (
+            <button key={d} onClick={() => setDecade(d)} className={`px-3.5 py-1.5 rounded-full text-xs font-bold ${decade === d ? 'bg-accent text-black' : 'bg-white/10'}`}>{d}</button>
           ))}</div>
         </div>
         <div className="card p-2 flex flex-col">
@@ -167,7 +167,7 @@ export default function Home() {
       </section>
 
       {data.newDrops?.length > 0 && (
-        <SectionRow title="🆕 New Drops" subtitle="Fresh off DJPunjab · full tracks">
+        <SectionRow title="New Drops" subtitle="Fresh off DJPunjab · full tracks">
           {data.newDrops.map(t => <SongCard key={t.id} track={t} context={data.newDrops} />)}
         </SectionRow>
       )}

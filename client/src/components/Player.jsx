@@ -70,7 +70,7 @@ export function MiniPlayer() {
   return (
     <div className="fixed bottom-0 left-0 right-0 z-30">
       {/* mobile strip */}
-      <div className="md:hidden">
+      <div className="md:hidden pb-safe">
         <div className="h-1 bg-white/10"><div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} /></div>
         <div className="glass bg-black/60 border-t border-soft px-3 py-2 flex items-center gap-3">
           <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" aria-label="Open full player">
@@ -80,9 +80,9 @@ export function MiniPlayer() {
               <p className="truncate text-xs text-dim">{track.artist?.name}</p>
             </span>
           </button>
-          <button onClick={prev} className="px-2 text-dim hover:text-white" aria-label="Previous"><PrevIcon size={22} /></button>
+          <button onClick={prev} className="p-2.5 text-dim hover:text-white" aria-label="Previous"><PrevIcon size={22} /></button>
           <button onClick={togglePlay} className="w-11 h-11 rounded-full btn-accent grid place-items-center" aria-label={isPlaying ? 'Pause' : 'Play'}>{isPlaying ? <PauseIcon size={19} /> : <PlayIcon size={19} />}</button>
-          <button onClick={next} className="px-2 text-dim hover:text-white" aria-label="Next"><NextIcon size={22} /></button>
+          <button onClick={next} className="p-2.5 text-dim hover:text-white" aria-label="Next"><NextIcon size={22} /></button>
         </div>
       </div>
       {/* desktop 3-zone bar */}
@@ -217,9 +217,9 @@ export function FullPlayer() {
   };
 
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto" role="dialog" aria-label="Now playing">
-      <div className="absolute inset-0 bg-cover bg-center blur-3xl scale-110 opacity-40" style={{ backgroundImage: `url(${track.image})` }} />
-      <div className="absolute inset-0 bg-black/70" />
+    <div className="fixed inset-0 z-40 overflow-y-auto sheet-scroll" role="dialog" aria-label="Now playing">
+      <div className="absolute inset-0 hidden sm:block bg-cover bg-center blur-3xl scale-110 opacity-40" style={{ backgroundImage: `url(${track.image})` }} />
+      <div className="absolute inset-0 bg-black/85 sm:bg-black/70" />
       <div className="relative max-w-5xl mx-auto px-4 py-6 min-h-full flex flex-col">
         <div className="flex items-center justify-between">
           <button onClick={() => setShow(false)} className="text-2xl px-2" aria-label="Close player"><ChevronDownIcon size={22} /></button>
@@ -229,7 +229,7 @@ export function FullPlayer() {
         <div className="grid md:grid-cols-2 gap-8 mt-6 items-start">
           <div className="flex flex-col items-center">
             <div className={`relative ${isPlaying ? 'animate-spin-slow' : 'paused-spin animate-spin-slow'}`}>
-              <Img src={track.image} alt={track.title} className="w-64 h-64 md:w-80 md:h-80 rounded-full object-cover shadow-2xl border-8 border-black/60" />
+              <Img src={track.image} alt={track.title} className="w-64 md:w-80 max-w-[70vw] aspect-square h-auto rounded-full object-cover shadow-2xl border-8 border-black/60" />
               <div className="absolute inset-0 grid place-items-center"><div className="w-16 h-16 rounded-full bg-black/80 border-4 border-white/20" /></div>
             </div>
             <div className="w-full mt-4">
@@ -248,11 +248,11 @@ export function FullPlayer() {
               <div className="flex justify-between text-xs text-dim mt-1"><span>{formatTime(currentTime)}</span><span>{formatTime(duration)}</span></div>
             </div>
             <div className="flex items-center gap-5 mt-3">
-              <button onClick={toggleShuffle} className={`text-xl ${shuffle ? 'accent' : 'text-dim'}`} aria-label="Shuffle" title="Shuffle"><ShuffleIcon size={20} /></button>
-              <button onClick={prev} className="text-white/80 hover:text-white" aria-label="Previous"><PrevIcon size={28} /></button>
+              <button onClick={toggleShuffle} className={`p-2 ${shuffle ? 'accent' : 'text-dim'}`} aria-label="Shuffle" title="Shuffle"><ShuffleIcon size={20} /></button>
+              <button onClick={prev} className="p-2 text-white/80 hover:text-white" aria-label="Previous"><PrevIcon size={28} /></button>
               <button onClick={togglePlay} className="w-16 h-16 rounded-full btn-accent grid place-items-center" aria-label={isPlaying ? 'Pause' : 'Play'}>{isPlaying ? <PauseIcon size={26} /> : <PlayIcon size={26} />}</button>
-              <button onClick={next} className="text-white/80 hover:text-white" aria-label="Next"><NextIcon size={28} /></button>
-              <button onClick={cycleRepeat} className={`text-xl ${repeat !== 'off' ? 'accent' : 'text-dim'}`} aria-label="Repeat" title={`Repeat: ${repeat}`}>{repeat === 'one' ? <RepeatOneIcon size={20} /> : <RepeatIcon size={20} />}</button>
+              <button onClick={next} className="p-2 text-white/80 hover:text-white" aria-label="Next"><NextIcon size={28} /></button>
+              <button onClick={cycleRepeat} className={`p-2 ${repeat !== 'off' ? 'accent' : 'text-dim'}`} aria-label="Repeat" title={`Repeat: ${repeat}`}>{repeat === 'one' ? <RepeatOneIcon size={20} /> : <RepeatIcon size={20} />}</button>
             </div>
             <div className="flex items-center gap-2 mt-4 w-full max-w-xs slider-wrap">
               <button onClick={() => setMuted(!muted)} aria-label="Mute">{muted || volume === 0 ? <MuteIcon size={20} /> : <VolumeIcon size={20} />}</button>
@@ -320,7 +320,7 @@ export function QueueDrawer() {
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-label="Queue">
       <div className="absolute inset-0 bg-black/60" onClick={() => setShow(false)} />
-      <div className="absolute right-0 top-0 bottom-0 w-full max-w-md bg-soft border-l border-soft p-4 overflow-y-auto fade-up">
+      <div className="absolute right-0 top-0 bottom-0 w-full max-w-md bg-soft border-l border-soft p-4 overflow-y-auto fade-up sheet-scroll">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-extrabold">Queue ({queue.length})</h2>
           <div className="flex gap-2">

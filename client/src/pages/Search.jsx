@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api, debounce, tasteFiltered } from '../services/musicApi';
 import { useStore } from '../store/useStore';
 import { SongRow, AlbumCard, ArtistCard, SkeletonList } from '../components/Cards';
+import { MicIcon, SlidersIcon, NoteIcon, DiscIcon, ClockIcon, BoltIcon } from '../components/Icons';
 
 const TABS = ['Songs', 'Albums', 'Artists'];
 const TRENDING = ['AP Dhillon', 'Diljit Dosanjh', 'Guru Randhawa', 'Jasmine Sandlas', 'Tulsi Kumar', 'Karan Aujla', 'Shubh', 'Prem Dhillon'];
@@ -103,34 +104,34 @@ export default function Search() {
             onFocus={() => { if (hasSuggest) setShowSuggest(true); }}
             onKeyDown={e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') setShowSuggest(false); }}
             onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
-            placeholder="Songs, artists, albums — try “songs like Desires”" autoFocus
+            placeholder="Songs, artists, albums — try “songs like Desires”" enterKeyHint="search"
             className="w-full bg-soft border border-soft rounded-2xl px-5 py-3.5 text-base outline-none focus:border-green-500 font-semibold" aria-label="Search music" />
           {voiceSupported && (
             <button onClick={startVoice} title="Voice search"
-              className={`shrink-0 w-12 rounded-2xl border border-soft text-lg ${listening ? 'bg-red-500/80 text-white animate-pulse' : 'bg-soft'}`}
-              aria-label="Voice search">🎙</button>
+              className={`shrink-0 w-12 rounded-2xl border border-soft grid place-items-center ${listening ? 'bg-red-500/80 text-white animate-pulse' : 'bg-soft text-dim'}`}
+              aria-label="Voice search"><MicIcon size={20} /></button>
           )}
           <button onClick={() => setShowFilters(!showFilters)} title="Filters"
-            className={`shrink-0 w-12 rounded-2xl border text-lg ${showFilters || filtersActive ? 'border-green-500 bg-green-500/10' : 'border-soft bg-soft'}`}
-            aria-label="Search filters">🎚{filtersActive && <span className="text-green-500 text-xs">●</span>}</button>
+            className={`shrink-0 w-12 rounded-2xl border grid place-items-center relative ${showFilters || filtersActive ? 'border-green-500 bg-green-500/10' : 'border-soft bg-soft text-dim'}`}
+            aria-label="Search filters"><SlidersIcon size={20} />{filtersActive && <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-green-500" />}</button>
         </div>
 
         {showSuggest && hasSuggest && (
-          <div className="absolute z-30 left-0 right-0 mt-2 card p-2 max-h-80 overflow-y-auto">
+          <div className="absolute z-30 left-0 right-0 mt-2 panel p-2 max-h-80 overflow-y-auto sheet-scroll">
             {suggest.songs.length > 0 && <p className="px-3 pt-1 text-[11px] font-extrabold text-dim tracking-wide">SONGS</p>}
             {suggest.songs.map((s, i) => (
               <button key={`s${i}`} onMouseDown={e => e.preventDefault()} onClick={() => submit(s.q)}
-                className="w-full text-left px-3 py-2 rounded-lg bg-hoverable text-sm font-semibold truncate">🎵 {s.text}</button>
+                className="w-full text-left px-3 py-2.5 rounded-lg bg-hoverable text-sm font-semibold truncate"><NoteIcon size={14} className="inline mr-1.5 -mt-0.5" />{s.text}</button>
             ))}
             {suggest.artists.length > 0 && <p className="px-3 pt-2 text-[11px] font-extrabold text-dim tracking-wide">ARTISTS</p>}
             {suggest.artists.map((s, i) => (
               <button key={`a${i}`} onMouseDown={e => e.preventDefault()} onClick={() => submit(s.q)}
-                className="w-full text-left px-3 py-2 rounded-lg bg-hoverable text-sm font-semibold truncate">🎤 {s.text}</button>
+                className="w-full text-left px-3 py-2.5 rounded-lg bg-hoverable text-sm font-semibold truncate"><MicIcon size={14} className="inline mr-1.5 -mt-0.5" />{s.text}</button>
             ))}
             {suggest.albums.length > 0 && <p className="px-3 pt-2 text-[11px] font-extrabold text-dim tracking-wide">ALBUMS</p>}
             {suggest.albums.map((s, i) => (
               <button key={`l${i}`} onMouseDown={e => e.preventDefault()} onClick={() => submit(s.q)}
-                className="w-full text-left px-3 py-2 rounded-lg bg-hoverable text-sm font-semibold truncate">💿 {s.text}</button>
+                className="w-full text-left px-3 py-2.5 rounded-lg bg-hoverable text-sm font-semibold truncate"><DiscIcon size={14} className="inline mr-1.5 -mt-0.5" />{s.text}</button>
             ))}
           </div>
         )}
@@ -164,8 +165,8 @@ export default function Search() {
 
       {(results.nl?.note || results.nl?.mode === 'similar' || results.nl?.cleaned) && q && (
         <div className="mt-4 px-4 py-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-sm font-semibold">
-          {results.nl.mode === 'similar' ? `🎧 Songs like ${results.nl.refLabel || results.nl.ref}`
-            : results.nl.note ? `ℹ️ ${results.nl.note}`
+          {results.nl.mode === 'similar' ? `Songs like ${results.nl.refLabel || results.nl.ref}`
+            : results.nl.note ? `${results.nl.note}`
             : `Showing matches for “${results.nl.cleaned}”`}
         </div>
       )}
@@ -181,11 +182,11 @@ export default function Search() {
             <div className="mb-6">
               <div className="flex justify-between items-center mb-2"><h3 className="font-extrabold">Recent searches</h3>
                 <button onClick={clearSearchHistory} className="text-xs font-bold text-dim">CLEAR</button></div>
-              <div className="flex flex-wrap gap-2">{searchHistory.map(h => <button key={h} onClick={() => submit(h)} className="card px-4 py-2 text-sm font-semibold">🕐 {h}</button>)}</div>
+              <div className="flex flex-wrap gap-2">{searchHistory.map(h => <button key={h} onClick={() => submit(h)} className="card px-4 py-2 text-sm font-semibold inline-flex items-center gap-1.5"><ClockIcon size={15} />{h}</button>)}</div>
             </div>
           )}
           <h3 className="font-extrabold mb-2">Trending searches</h3>
-          <div className="flex flex-wrap gap-2">{TRENDING.map(t => <button key={t} onClick={() => submit(t)} className="card px-4 py-2 text-sm font-semibold">🔥 {t}</button>)}</div>
+          <div className="flex flex-wrap gap-2">{TRENDING.map(t => <button key={t} onClick={() => submit(t)} className="card px-4 py-2 text-sm font-semibold inline-flex items-center gap-1.5"><BoltIcon size={15} />{t}</button>)}</div>
         </div>
       )}
 
@@ -209,11 +210,11 @@ export default function Search() {
         );
       })()}
       {!loading && q && tab === 'Albums' && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4">{results.albums.map(a => <AlbumCard key={a.id} album={a} />)}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4 [&>*]:min-w-0 [&>*]:max-w-none">{results.albums.map(a => <AlbumCard key={a.id} album={a} />)}
           {results.albums.length === 0 && <p className="p-4 text-sm text-dim col-span-full">No albums found.</p>}</div>
       )}
       {!loading && q && tab === 'Artists' && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4">{results.artists.map(a => <ArtistCard key={a.id} artist={a} />)}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4 [&>*]:min-w-0 [&>*]:max-w-none">{results.artists.map(a => <ArtistCard key={a.id} artist={a} />)}
           {results.artists.length === 0 && <p className="p-4 text-sm text-dim col-span-full">No artists found.</p>}</div>
       )}
     </div>

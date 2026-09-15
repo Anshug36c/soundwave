@@ -75,3 +75,8 @@ export const HideIcon = ({ active, ...p }) => (
   <S {...p}><circle cx="12" cy="12" r="8.5" /><path d="M8.5 12h7" /></S>
 );
 export const BoltIcon = (p) => <S {...p} filled><path d="M13 2L5 13.5h5L10 22l8-11.5h-5z" /></S>;
+export const SlidersIcon = (p) => <S {...p}><path d="M4 7h10m4 0h2M4 17h4m4 0h8" /><circle cx="16" cy="7" r="2.2" /><circle cx="10" cy="17" r="2.2" /></S>;
+export const DiscIcon = (p) => <S {...p}><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="2.5" /></S>;
+export const PencilIcon = (p) => <S {...p}><path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 0 1 3 3L8 19l-4 1z" /></S>;
+export const GearIcon = (p) => <S {...p}><circle cx="12" cy="12" r="3" /><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2-1.2L14.2 3h-4L9.7 5.7a7 7 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5.3 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2 1.2l.4 2.7h4l.4-2.7a7 7 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z" /></S>;
+export const ChartIcon = (p) => <S {...p}><path d="M4 20V4" /><path d="M4 20h16" /><path d="M8 15l3-4 3 2 4-6" /></S>;

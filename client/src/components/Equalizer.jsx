@@ -24,10 +24,10 @@ export default function Equalizer() {
     <div className="flex flex-col gap-4">
       <div className="p-3 rounded-xl bg-white/5 border border-soft flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <p className="font-extrabold text-sm">🎚️ Studio sound</p>
+          <p className="font-extrabold text-sm">Studio sound</p>
           <p className="text-xs text-dim">Routes audio through the server for EQ + visualizer. Uses more data.</p>
         </div>
-        <button onClick={() => { setStudioOn(!studioOn); toast(studioOn ? 'Studio sound off' : 'Studio sound on 🎚️'); }}
+        <button onClick={() => { setStudioOn(!studioOn); toast(studioOn ? 'Studio sound off' : 'Studio sound on'); }}
           className={`px-5 py-1.5 rounded-full text-sm font-bold ${studioOn ? 'bg-accent text-black' : 'bg-white/10'}`}>
           {studioOn ? 'ON' : 'OFF'}
         </button>

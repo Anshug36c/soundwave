@@ -106,7 +106,7 @@ export function TopBar() {
               className="w-full bg-soft border border-soft rounded-full pl-10 pr-4 py-2 text-sm outline-none focus:border-green-500" />
           </form>
         </div>
-        <button onClick={() => window.dispatchEvent(new Event('soundwave:palette'))} className="h-9 px-3 rounded-full bg-hoverable grid place-items-center text-sm font-bold shrink-0" aria-label="Command palette" title="Command palette (Ctrl+K)">⌘K</button>
+        <button onClick={() => window.dispatchEvent(new Event('soundwave:palette'))} className="h-9 px-3 rounded-full bg-hoverable hidden sm:grid place-items-center text-sm font-bold shrink-0" aria-label="Command palette" title="Command palette (Ctrl+K)">⌘K</button>
         <button onClick={cycleTheme} className="w-9 h-9 rounded-full bg-hoverable grid place-items-center text-dim hover:text-white shrink-0" aria-label="Cycle theme" title={`Theme: ${theme} (click to change)`}>
           {theme === 'dark' ? <SunIcon size={18} /> : theme === 'light' ? <GhostIcon size={18} /> : <MoonIcon size={18} />}
         </button>
@@ -127,7 +127,7 @@ const tabs = [
 
 export function BottomNav() {
   return (
-    <nav className="md:hidden fixed bottom-[64px] left-0 right-0 z-20 glass border-t border-soft" aria-label="Mobile">
+    <nav className="md:hidden fixed bottomnav-offset left-0 right-0 z-20 glass border-t border-soft" aria-label="Mobile">
       <div className="grid grid-cols-4 h-14">
         {tabs.map(({ to, label, Icon }) => (
           <NavLink key={to} to={to}

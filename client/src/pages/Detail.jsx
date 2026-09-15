@@ -18,11 +18,11 @@ function useLoad(fn, deps) {
 
 function Header({ image, round, kicker, title, sub, onPlay, extra }) {
   return (
-    <div className="flex items-center gap-5 hero-gradient rounded-2xl p-6 border border-soft flex-wrap">
-      <Img src={image} alt={title} className={`w-36 h-36 object-cover shadow-2xl shrink-0 ${round ? 'rounded-full' : 'rounded-2xl'}`} />
+    <div className="flex items-center gap-4 p-4 sm:gap-5 sm:p-6 hero-gradient rounded-2xl border border-soft flex-wrap">
+      <Img src={image} alt={title} className={`w-28 h-28 sm:w-36 sm:h-36 object-cover shadow-2xl shrink-0 ${round ? 'rounded-full' : 'rounded-2xl'}`} />
       <div className="min-w-0">
         <p className="text-xs font-bold tracking-widest">{kicker}</p>
-        <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">{title}</h1>
+        <h1 className="text-2xl sm:text-3xl md:text-5xl font-extrabold tracking-tight">{title}</h1>
         {sub && <p className="text-sm text-dim mt-1">{sub}</p>}
         <div className="flex gap-2 mt-3 flex-wrap">
           {onPlay && <button onClick={onPlay} aria-label="Play" className="w-12 h-12 rounded-full btn-accent grid place-items-center shrink-0"><PlayIcon size={20} /></button>}

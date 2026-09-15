@@ -30,7 +30,7 @@ export default function App() {
       <Sidebar />
       <div className="flex-1 min-w-0 flex flex-col h-full">
         <TopBar />
-        <main className={`flex-1 overflow-y-auto px-4 md:px-6 py-4 ${hasPlayer ? 'pb-36 md:pb-28' : 'pb-24 md:pb-8'}`} id="main">
+        <main className={`flex-1 overflow-y-auto px-4 md:px-6 py-4 ${hasPlayer ? 'pb-40 md:pb-28' : 'pb-24 md:pb-8'}`} id="main">
           <div className="max-w-6xl mx-auto">
             <Routes>
               <Route path="/" element={<Home />} />

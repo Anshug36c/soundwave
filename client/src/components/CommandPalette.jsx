@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { api, debounce } from '../services/musicApi';
+import { PlayIcon, PauseIcon, NextIcon, PrevIcon, ShuffleIcon, RepeatIcon, HeartIcon, SlidersIcon, QueueIcon, SunIcon, MoonIcon, HomeIcon, SearchIcon, ChartIcon, LibraryIcon, GearIcon, NoteIcon, ClockIcon } from './Icons';
 
 /** Fuzzy subsequence score (Monochrome-style Ctrl+K palette, dependency-free). */
 function fuzzy(query, text) {
@@ -57,29 +58,29 @@ export default function CommandPalette() {
   const cycleTheme = () => s.setTheme(s.theme === 'dark' ? 'light' : s.theme === 'light' ? 'snap' : 'dark');
 
   const actions = [
-    { icon: s.isPlaying ? '⏸' : '▶', label: s.isPlaying ? 'Pause' : 'Play', run: () => s.togglePlay() },
-    { icon: '⏭', label: 'Next track', run: () => s.next() },
-    { icon: '⏮', label: 'Previous track', run: () => s.prev() },
-    { icon: '🔀', label: `${s.shuffle ? 'Disable' : 'Enable'} shuffle`, run: () => s.toggleShuffle() },
-    { icon: '🔁', label: `Repeat: ${s.repeat} (cycle)`, run: () => s.cycleRepeat() },
-    ...(track ? [{ icon: '♥', label: `${s.liked[track.id] ? 'Unlike' : 'Like'} "${track.title}"`, run: () => s.toggleLike(track) }] : []),
-    { icon: '🎚️', label: `${s.studioOn ? 'Disable' : 'Enable'} Studio sound`, run: () => s.setStudioOn(!s.studioOn) },
-    { icon: '☰', label: 'Open queue', run: () => s.setShowQueue(true) },
-    { icon: '🎨', label: `Theme: ${s.theme} (cycle)`, run: cycleTheme },
-    { icon: '⏾', label: 'Sleep timer settings', run: () => { navigate('/settings'); } },
+    { icon: s.isPlaying ? <PauseIcon size={17} /> : <PlayIcon size={17} />, label: s.isPlaying ? 'Pause' : 'Play', run: () => s.togglePlay() },
+    { icon: <NextIcon size={17} />, label: 'Next track', run: () => s.next() },
+    { icon: <PrevIcon size={17} />, label: 'Previous track', run: () => s.prev() },
+    { icon: <ShuffleIcon size={17} />, label: `${s.shuffle ? 'Disable' : 'Enable'} shuffle`, run: () => s.toggleShuffle() },
+    { icon: <RepeatIcon size={17} />, label: `Repeat: ${s.repeat} (cycle)`, run: () => s.cycleRepeat() },
+    ...(track ? [{ icon: <HeartIcon size={17} filled={!!s.liked[track.id]} />, label: `${s.liked[track.id] ? 'Unlike' : 'Like'} "${track.title}"`, run: () => s.toggleLike(track) }] : []),
+    { icon: <SlidersIcon size={17} />, label: `${s.studioOn ? 'Disable' : 'Enable'} Studio sound`, run: () => s.setStudioOn(!s.studioOn) },
+    { icon: <QueueIcon size={17} />, label: 'Open queue', run: () => s.setShowQueue(true) },
+    { icon: <SunIcon size={17} />, label: `Theme: ${s.theme} (cycle)`, run: cycleTheme },
+    { icon: <MoonIcon size={17} />, label: 'Sleep timer settings', run: () => { navigate('/settings'); } },
   ];
   const pages = [
-    { icon: '🏠', label: 'Go to Home', run: () => navigate('/') },
-    { icon: '🔍', label: 'Go to Search', run: () => navigate('/search') },
-    { icon: '📈', label: 'Go to Charts', run: () => navigate('/charts') },
-    { icon: '📚', label: 'Go to Library', run: () => navigate('/library') },
-    { icon: '❤️', label: 'Go to Liked Songs', run: () => navigate('/liked') },
-    { icon: '⚙️', label: 'Go to Settings', run: () => navigate('/settings') },
+    { icon: <HomeIcon size={17} />, label: 'Go to Home', run: () => navigate('/') },
+    { icon: <SearchIcon size={17} />, label: 'Go to Search', run: () => navigate('/search') },
+    { icon: <ChartIcon size={17} />, label: 'Go to Charts', run: () => navigate('/charts') },
+    { icon: <LibraryIcon size={17} />, label: 'Go to Library', run: () => navigate('/library') },
+    { icon: <HeartIcon size={17} />, label: 'Go to Liked Songs', run: () => navigate('/liked') },
+    { icon: <GearIcon size={17} />, label: 'Go to Settings', run: () => navigate('/settings') },
   ];
 
   const groups = [];
   if (live.length) groups.push({ title: searching ? 'Searching…' : 'Top results — play instantly', items: live.map(t => ({
-    icon: '🎵', label: t.title, sub: t.artist?.name, run: () => s.playTracks(live, live.findIndex(x => x.id === t.id)),
+    icon: <NoteIcon size={17} />, label: t.title, sub: t.artist?.name, run: () => s.playTracks(live, live.findIndex(x => x.id === t.id)),
   })) });
   const match = (list) => list
     .map(a => ({ ...a, score: q ? fuzzy(q, a.label) : 0 }))
@@ -88,9 +89,9 @@ export default function CommandPalette() {
   const mActions = match(actions);
   const mPages = match(pages);
   const lib = [
-    ...s.playlists.map(p => ({ icon: '🎵', label: `Playlist: ${p.name}`, sub: `${p.tracks.length} tracks`, run: () => navigate(`/playlist/${encodeURIComponent(p.id)}`) })),
-    ...Object.values(s.liked).slice(0, 5).map(t => ({ icon: '♥', label: t.title, sub: t.artist?.name, run: () => s.playTrack(t, Object.values(s.liked)) })),
-    ...s.history.slice(0, 5).map(t => ({ icon: '🕐', label: t.title, sub: t.artist?.name, run: () => s.playTrack(t, s.history) })),
+    ...s.playlists.map(p => ({ icon: <NoteIcon size={17} />, label: `Playlist: ${p.name}`, sub: `${p.tracks.length} tracks`, run: () => navigate(`/playlist/${encodeURIComponent(p.id)}`) })),
+    ...Object.values(s.liked).slice(0, 5).map(t => ({ icon: <HeartIcon size={17} />, label: t.title, sub: t.artist?.name, run: () => s.playTrack(t, Object.values(s.liked)) })),
+    ...s.history.slice(0, 5).map(t => ({ icon: <ClockIcon size={17} />, label: t.title, sub: t.artist?.name, run: () => s.playTrack(t, s.history) })),
   ];
   const mLib = match(lib);
   if (mActions.length) groups.push({ title: 'Actions', items: mActions });
@@ -107,7 +108,7 @@ export default function CommandPalette() {
     <div className="palette-overlay" onClick={() => setOpen(false)} role="dialog" aria-label="Command palette">
       <div className="palette-modal" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 border-b border-soft">
-          <span>🔍</span>
+          <SearchIcon size={17} className="text-dim shrink-0" />
           <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} placeholder="Type a command or search music…"
             className="flex-1 bg-transparent py-3.5 outline-none font-semibold" aria-label="Command palette input"
             onKeyDown={(e) => {
@@ -129,7 +130,7 @@ export default function CommandPalette() {
                   <button key={`${g.title}-${item.label}`} onClick={() => runItem(item)}
                     onMouseEnter={() => setActive(idx)}
                     className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left text-sm ${idx === active ? 'bg-accent text-black' : ''}`}>
-                    <span className="text-base">{item.icon}</span>
+                    <span className="grid place-items-center shrink-0">{item.icon}</span>
                     <span className="font-semibold truncate flex-1">{item.label}</span>
                     {item.sub && <span className={`text-xs truncate max-w-[40%] ${idx === active ? 'text-black/70' : 'text-dim'}`}>{item.sub}</span>}
                   </button>

@@ -5,7 +5,7 @@ import { formatTime } from '../services/musicApi';
 
 export function Img({ src, alt, className = '' }) {
   return (
-    <img src={src || '/icons/icon.svg'} alt={alt || ''} loading="lazy" onError={(e) => { e.currentTarget.src = '/icons/icon.svg'; }} className={className} />
+    <img src={src || '/icons/icon.svg'} alt={alt || ''} loading="lazy" decoding="async" onError={(e) => { e.currentTarget.src = '/icons/icon.svg'; }} className={className} />
   );
 }
 
@@ -47,10 +47,10 @@ export function SongRow({ track, index, context, showIndex = true, onRemove }) {
         <p className={`truncate text-sm font-semibold ${isCurrent ? 'accent' : ''}`}>{track.title}</p>
         <p className="truncate text-xs text-dim">{track.artist?.name} <SourceBadge track={track} /></p>
       </button>
-      <button onClick={() => toggleLike(track)} className={`px-1 ${isLiked ? 'accent' : 'opacity-0 group-hover:opacity-100 text-dim'}`} aria-label="Like"><HeartIcon size={17} filled={isLiked} /></button>
-      <button onClick={() => toggleDislike(track)} className={`px-1 ${isDisliked ? 'opacity-100 text-red-400' : 'opacity-0 group-hover:opacity-100 text-dim'}`} aria-label="Dislike" title="Don't recommend this"><HideIcon size={17} /></button>
+      <button onClick={() => toggleLike(track)} className={`px-1.5 py-1 ${isLiked ? 'accent' : 'text-dim md:opacity-0 md:group-hover:opacity-100'}`} aria-label="Like"><HeartIcon size={17} filled={isLiked} /></button>
+      <button onClick={() => toggleDislike(track)} className={`px-1.5 py-1 ${isDisliked ? 'text-red-400' : 'text-dim md:opacity-0 md:group-hover:opacity-100'}`} aria-label="Dislike" title="Don't recommend this"><HideIcon size={17} /></button>
       <span className="text-xs text-dim w-10 text-right">{formatTime(track.duration)}</span>
-      <button onClick={() => addToQueue(track)} className="text-dim opacity-0 group-hover:opacity-100 px-1" aria-label="Add to queue" title="Add to queue"><PlusIcon size={17} /></button>
+      <button onClick={() => addToQueue(track)} className="text-dim px-1.5 py-1 md:opacity-0 md:group-hover:opacity-100" aria-label="Add to queue" title="Add to queue"><PlusIcon size={17} /></button>
       {onRemove && <button onClick={onRemove} className="text-dim px-1" aria-label="Remove"><CloseIcon size={14} /></button>}
     </div>
   );
@@ -141,7 +141,7 @@ export function SectionRow({ title, subtitle, children, href }) {
         </div>
         {href && <Link to={href} className="text-xs font-bold text-dim hover:text-white">Show all</Link>}
       </div>
-      <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 px-1">{children}</div>
+      <div className="flex gap-3 overflow-x-auto no-scrollbar snap-x pb-2 px-1 [&>*]:snap-start">{children}</div>
     </section>
   );
 }

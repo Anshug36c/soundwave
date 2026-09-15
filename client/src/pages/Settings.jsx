@@ -58,9 +58,9 @@ export default function Settings() {
             <button className="btn-accent px-4 text-sm">Save</button>
           </form>
           <div className="flex gap-4 mt-2 text-xs text-dim font-semibold">
-            <span>❤️ {Object.keys(liked).length} liked</span>
-            <span>🎵 {playlists.length} playlists</span>
-            <span>👥 {Object.keys(followedArtists).length} following</span>
+            <span>♥ {Object.keys(liked).length} liked</span>
+            <span>♪ {playlists.length} playlists</span>
+            <span>{Object.keys(followedArtists).length} following</span>
             <span>▶ {history.length} played</span>
           </div>
         </div>
@@ -82,7 +82,7 @@ export default function Settings() {
       <div className="flex flex-col gap-3 mt-4">
         <Row label="Appearance" desc="Snap (yellow) · Dark · Light">
           <div className="flex gap-2">
-            {[['snap', '👻 Snap'], ['dark', 'Dark'], ['light', 'Light']].map(([v, l]) => <button key={v} onClick={() => setTheme(v)} className={`px-4 py-1.5 rounded-full text-sm font-bold ${theme === v ? 'bg-accent' : 'bg-white/10'}`} style={theme === v ? { color: '#fffc00' } : {}}>{l}</button>)}
+            {[['snap', 'Snap'], ['dark', 'Dark'], ['light', 'Light']].map(([v, l]) => <button key={v} onClick={() => setTheme(v)} className={`px-4 py-1.5 rounded-full text-sm font-bold ${theme === v ? 'bg-accent' : 'bg-white/10'}`} style={theme === v ? { color: '#fffc00' } : {}}>{l}</button>)}
           </div>
         </Row>
         <Row label="Audio quality" desc="High = 320kbps · Medium = 128 · Low = 48 (DJPunjab MP3s, auto-fallback)">
@@ -90,17 +90,17 @@ export default function Settings() {
             {['low', 'medium', 'high'].map(q => <button key={q} onClick={() => { setQuality(q); toast(`Quality: ${q}`); }} className={`px-4 py-1.5 rounded-full text-sm font-bold capitalize ${quality === q ? 'bg-accent' : 'bg-white/10'}`} style={quality === q ? { color: 'var(--accent-ink, #000)' } : {}}>{q}</button>)}
           </div>
         </Row>
-        <Row label="🎚️ Studio sound" desc="10-band EQ + live visualizer + normalize. Find it in the player → Studio tab.">
-          <button onClick={() => { setStudioOn(!studioOn); toast(studioOn ? 'Studio sound off' : 'Studio sound on 🎚️'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${studioOn ? 'bg-accent' : 'bg-white/10'}`} style={studioOn ? { color: 'var(--accent-ink, #000)' } : {}}>{studioOn ? 'ON' : 'OFF'}</button>
+        <Row label="Studio sound" desc="10-band EQ + live visualizer + normalize. Find it in the player → Studio tab.">
+          <button onClick={() => { setStudioOn(!studioOn); toast(studioOn ? 'Studio sound off' : 'Studio sound on'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${studioOn ? 'bg-accent' : 'bg-white/10'}`} style={studioOn ? { color: 'var(--accent-ink, #000)' } : {}}>{studioOn ? 'ON' : 'OFF'}</button>
         </Row>
         <Row label="Crossfade" desc="Smooth fade-out / fade-in between tracks">
           <button onClick={() => { setCrossfade(!crossfade); toast(`Crossfade ${!crossfade ? 'on' : 'off'}`); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${crossfade ? 'bg-accent' : 'bg-white/10'}`} style={crossfade ? { color: 'var(--accent-ink, #000)' } : {}}>{crossfade ? 'ON' : 'OFF'}</button>
         </Row>
-        <Row label="Instant FLAC preview ⚡" desc="Play a 30s FLAC preview instantly, then auto-switch to the full MP3">
-          <button onClick={() => { setInstantPreview(!instantPreview); toast(instantPreview ? 'Instant preview off' : 'Instant preview on ⚡'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${instantPreview ? 'bg-accent' : 'bg-white/10'}`} style={instantPreview ? { color: 'var(--accent-ink, #000)' } : {}}>{instantPreview ? 'ON' : 'OFF'}</button>
+        <Row label="Instant FLAC preview" desc="Play a 30s FLAC preview instantly, then auto-switch to the full MP3">
+          <button onClick={() => { setInstantPreview(!instantPreview); toast(instantPreview ? 'Instant preview off' : 'Instant preview on'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${instantPreview ? 'bg-accent' : 'bg-white/10'}`} style={instantPreview ? { color: 'var(--accent-ink, #000)' } : {}}>{instantPreview ? 'ON' : 'OFF'}</button>
         </Row>
         <Row label="Install app" desc="Add SoundWave to your home screen (PWA)">
-          <button onClick={async () => { if (deferred) { deferred.prompt(); await deferred.userChoice; setDeferred(null); } else toast('Use browser menu → Install/Add to Home Screen'); }} className="btn-accent px-4 py-1.5 text-sm">📲 Install</button>
+          <button onClick={async () => { if (deferred) { deferred.prompt(); await deferred.userChoice; setDeferred(null); } else toast('Use browser menu → Install/Add to Home Screen'); }} className="btn-accent px-4 py-1.5 text-sm">Install</button>
         </Row>
         <Row label="Taste profile" desc={`${Object.keys(liked).length} liked · ${Object.keys(disliked).length} disliked · ${Object.keys(hiddenArtists).length} artists hidden`}>
           <button onClick={resetTaste} className="px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Reset taste</button>
@@ -123,7 +123,7 @@ export default function Settings() {
           }} className="px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Clear offline songs</button>
         </Row>
         <Row label="Keyboard shortcuts" desc="Space play/pause · ←/→ seek · ↑/↓ volume · M mute · N/P next/prev · Ctrl+K palette">
-          <span className="text-xs text-dim font-bold">⌨️ Built-in</span>
+          <span className="text-xs text-dim font-bold">Built-in</span>
         </Row>
       </div>
 
