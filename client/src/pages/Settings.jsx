@@ -19,6 +19,10 @@ export default function Settings() {
   const setFormatPref = useStore(s => s.setFormatPref);
   const preferFull = useStore(s => s.preferFull);
   const setPreferFull = useStore(s => s.setPreferFull);
+  const studioOn = useStore(s => s.studioOn);
+  const setStudioOn = useStore(s => s.setStudioOn);
+  const crossfade = useStore(s => s.crossfade);
+  const setCrossfade = useStore(s => s.setCrossfade);
   const profile = useStore(s => s.profile);
   const setProfile = useStore(s => s.setProfile);
   const history = useStore(s => s.history);
@@ -92,6 +96,12 @@ export default function Settings() {
         <Row label="Prefer full tracks 🔊" desc="Auto-switch previews to full versions (YouTube → Audius/Archive)">
           <button onClick={() => { setPreferFull(!preferFull); toast(preferFull ? 'Full-track upgrade off' : 'Full-track upgrade on 🔊'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${preferFull ? 'bg-accent' : 'bg-white/10'}`} style={preferFull ? { color: 'var(--accent-ink, #000)' } : {}}>{preferFull ? 'ON' : 'OFF'}</button>
         </Row>
+        <Row label="🎚️ Studio sound" desc="10-band EQ + live visualizer + normalize. Streams via proxy (more data). Find it in the player → Studio tab.">
+          <button onClick={() => { setStudioOn(!studioOn); toast(studioOn ? 'Studio sound off' : 'Studio sound on 🎚️'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${studioOn ? 'bg-accent' : 'bg-white/10'}`} style={studioOn ? { color: 'var(--accent-ink, #000)' } : {}}>{studioOn ? 'ON' : 'OFF'}</button>
+        </Row>
+        <Row label="Crossfade" desc="Smooth fade-out / fade-in between tracks">
+          <button onClick={() => { setCrossfade(!crossfade); toast(`Crossfade ${!crossfade ? 'on' : 'off'}`); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${crossfade ? 'bg-accent' : 'bg-white/10'}`} style={crossfade ? { color: 'var(--accent-ink, #000)' } : {}}>{crossfade ? 'ON' : 'OFF'}</button>
+        </Row>
         <Row label="Install app" desc="Add SoundWave to your home screen (PWA)">
           <button onClick={async () => { if (deferred) { deferred.prompt(); await deferred.userChoice; setDeferred(null); } else toast('Use browser menu → Install/Add to Home Screen'); }} className="btn-accent px-4 py-1.5 text-sm">📲 Install</button>
         </Row>
@@ -107,13 +117,14 @@ export default function Settings() {
             } catch { toast('Could not clear cache', 'error'); }
           }} className="px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Clear offline songs</button>
         </Row>
-        <Row label="Keyboard shortcuts" desc="Space play/pause · ←/→ seek · ↑/↓ volume · M mute · N/P next/prev">
+        <Row label="Keyboard shortcuts" desc="Space play/pause · ←/→ seek · ↑/↓ volume · M mute · N/P next/prev · Ctrl+K palette">
           <span className="text-xs text-dim font-bold">⌨️ Built-in</span>
         </Row>
       </div>
 
       <p className="text-xs text-dim mt-6 leading-5">
         SoundWave streams via YouTube Music (full Opus), JioSaavn (full where reachable), Audius + Archive.org (full indie), live radio, iTunes + Deezer (previews/charts), AudioDB/MusicBrainz (artist data) & Lyrics.ovh.
+        Sound upgrades (EQ, visualizer, palette) inspired by the open-source Monochrome player.
         Add <code>LASTFM_API_KEY</code> in <code>.env</code> to enable enriched metadata.
         Made with ♥ as a demo — respect artists & rights holders.
       </p>

@@ -88,6 +88,7 @@ export function TopBar() {
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search songs, artists, albums…" aria-label="Search"
             className="w-full bg-soft border border-soft rounded-full px-4 py-2 text-sm outline-none focus:border-green-500" />
         </form>
+        <button onClick={() => window.dispatchEvent(new Event('soundwave:palette'))} className="h-9 px-3 rounded-full bg-hoverable grid place-items-center text-sm font-bold" aria-label="Command palette" title="Command palette (Ctrl+K)">⌘K</button>
         <button onClick={cycleTheme} className="w-9 h-9 rounded-full bg-hoverable grid place-items-center" aria-label="Cycle theme" title={`Theme: ${theme} (click to change)`}>
           {themeIcon}
         </button>

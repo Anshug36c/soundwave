@@ -4,6 +4,7 @@ import { useStore } from './store/useStore';
 import { useAudioEngine } from './hooks/useAudioEngine';
 import { Sidebar, TopBar, BottomNav, Toasts } from './components/Layout';
 import { MiniPlayer, FullPlayer, QueueDrawer } from './components/Player';
+import CommandPalette from './components/CommandPalette';
 import Home from './pages/Home';
 import Search from './pages/Search';
 import Library, { LikedSongs, LocalPlaylist } from './pages/Library';
@@ -50,6 +51,7 @@ export default function App() {
       <MiniPlayer />
       <FullPlayer />
       <QueueDrawer />
+      <CommandPalette />
       <Toasts />
     </div>
   );

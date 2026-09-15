@@ -3,6 +3,8 @@ import { useStore } from '../store/useStore';
 import { api, formatTime } from '../services/musicApi';
 import { seekTo } from '../hooks/useAudioEngine';
 import { Img, EqIcon } from './Cards';
+import Equalizer from './Equalizer';
+import Visualizer from './Visualizer';
 
 export function MiniPlayer() {
   const queue = useStore(s => s.queue);
@@ -103,6 +105,8 @@ export function FullPlayer() {
   const setShowQueue = useStore(s => s.setShowQueue);
   const activeFormat = useStore(s => s.activeFormat);
   const switchFormat = useStore(s => s.switchFormat);
+  const studioOn = useStore(s => s.studioOn);
+  const setStudioOn = useStore(s => s.setStudioOn);
   const toast = useStore(s => s.toast);
   const [tab, setTab] = useState('lyrics');
   const [showPlMenu, setShowPlMenu] = useState(false);
@@ -129,7 +133,7 @@ export function FullPlayer() {
       <div className="relative max-w-5xl mx-auto px-4 py-6 min-h-full flex flex-col">
         <div className="flex items-center justify-between">
           <button onClick={() => setShow(false)} className="text-2xl px-2" aria-label="Close player">⌄</button>
-          <p className="text-xs font-bold tracking-widest text-dim">NOW PLAYING · {playLabel}</p>
+          <p className="text-xs font-bold tracking-widest text-dim">NOW PLAYING · {playLabel}{studioOn ? ' · 🎚️ STUDIO' : ''}</p>
           <button onClick={() => setShowQueue(true)} className="text-xl px-2" aria-label="Open queue">☰</button>
         </div>
         <div className="grid md:grid-cols-2 gap-8 mt-6 items-start">
@@ -138,7 +142,15 @@ export function FullPlayer() {
               <Img src={track.image || track.thumbnails?.large} alt={track.title} className="w-64 h-64 md:w-80 md:h-80 rounded-full object-cover shadow-2xl border-8 border-black/60" />
               <div className="absolute inset-0 grid place-items-center"><div className="w-16 h-16 rounded-full bg-black/80 border-4 border-white/20" /></div>
             </div>
-            <h1 className="mt-6 text-2xl font-extrabold text-center">{track.title}</h1>
+            <div className="w-full mt-4">
+              {studioOn ? <Visualizer /> : (
+                <button onClick={() => { setStudioOn(true); setTab('studio'); toast('Studio sound on 🎚️'); }}
+                  className="w-full py-2 rounded-xl text-xs font-bold bg-white/5 border border-dashed border-soft text-dim">
+                  〰️ Turn on Studio sound for a live visualizer + EQ
+                </button>
+              )}
+            </div>
+            <h1 className="mt-4 text-2xl font-extrabold text-center">{track.title}</h1>
             <p className="text-dim font-semibold">{track.artist?.name} · {track.album?.name}</p>
             <div className="w-full mt-5 slider-wrap">
               <input data-seeking="1" type="range" min={0} max={duration || 0} step={0.5} value={currentTime}
@@ -182,12 +194,12 @@ export function FullPlayer() {
             </div>
           </div>
           <div className="card p-4 min-h-[300px]">
-            <div className="flex gap-2 mb-3">
-              {['lyrics', 'info'].map(t => (
-                <button key={t} onClick={() => setTab(t)} className={`px-4 py-1.5 rounded-full text-sm font-bold capitalize ${tab === t ? 'bg-accent text-black' : 'bg-white/10'}`}>{t === 'lyrics' ? 'Lyrics' : 'Details'}</button>
+            <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
+              {[['lyrics', 'Lyrics'], ['studio', '🎚️ Studio'], ['info', 'Details']].map(([t, label]) => (
+                <button key={t} onClick={() => setTab(t)} className={`px-4 py-1.5 rounded-full text-sm font-bold shrink-0 ${tab === t ? 'bg-accent text-black' : 'bg-white/10'}`}>{label}</button>
               ))}
             </div>
-            {tab === 'lyrics' ? <Lyrics track={track} /> : (
+            {tab === 'lyrics' ? <Lyrics track={track} /> : tab === 'studio' ? <Equalizer /> : (
               <div className="text-sm flex flex-col gap-2">
                 {track.source === 'ytmusic' && track.formats?.length > 0 && (
                   <div className="mb-2 p-3 rounded-xl bg-violet-500/10 border border-violet-500/30">
