@@ -8,6 +8,18 @@ export function Img({ src, alt, className = '' }) {
   );
 }
 
+export function SourceBadge({ track }) {
+  let cls = 'bg-amber-500/20 text-amber-400', label = 'PREVIEW';
+  if (track.source === 'ytmusic') {
+    cls = 'bg-violet-500/25 text-violet-300';
+    label = track.codec ? track.codec.toUpperCase() : 'YT · OPUS';
+  } else if (!track.isPreview) {
+    cls = 'bg-green-500/20 text-green-400';
+    label = 'FULL';
+  }
+  return <span className={`ml-1 text-[9px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap ${cls}`}>{label}</span>;
+}
+
 export function SongRow({ track, index, context, showIndex = true, onRemove }) {
   const playTrack = useStore(s => s.playTrack);
   const queue = useStore(s => s.queue);
@@ -28,7 +40,7 @@ export function SongRow({ track, index, context, showIndex = true, onRemove }) {
       </button>
       <button onClick={() => playTrack(track, context)} className="flex-1 min-w-0 text-left">
         <p className={`truncate text-sm font-semibold ${isCurrent ? 'accent' : ''}`}>{track.title}</p>
-        <p className="truncate text-xs text-dim">{track.artist?.name}{track.isPreview ? ' · preview' : ''}</p>
+        <p className="truncate text-xs text-dim">{track.artist?.name} <SourceBadge track={track} /></p>
       </button>
       <button onClick={() => toggleLike(track)} className={`text-lg px-1 ${isLiked ? 'text-green-500' : 'opacity-0 group-hover:opacity-100 text-dim'}`} aria-label="Like">{isLiked ? '♥' : '♡'}</button>
       <span className="text-xs text-dim w-10 text-right">{formatTime(track.duration)}</span>
@@ -60,6 +72,7 @@ export function SongCard({ track, context }) {
       <div className="relative">
         <Img src={track.image || track.thumbnails?.medium} alt={track.title} className="w-full aspect-square rounded-lg object-cover" />
         <PlayButton onPlay={() => playTrack(track, context || [track])} />
+        {track.source === 'ytmusic' && <span className="absolute top-2 left-2 text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-violet-600 text-white">OPUS</span>}
       </div>
       <p className="mt-2 truncate text-sm font-bold">{track.title}</p>
       <p className="truncate text-xs text-dim">{track.artist?.name}</p>
@@ -69,7 +82,9 @@ export function SongCard({ track, context }) {
 
 export function AlbumCard({ album }) {
   const [source, kind, ...rest] = String(album.id).split(':');
-  const to = `/album/${source}/${rest.join(':') || kind}`;
+  const to = source === 'ytmusic'
+    ? `/search?q=${encodeURIComponent(`${album.name} ${album.artist || ''}`.trim())}&tab=YouTube`
+    : `/album/${source}/${rest.join(':') || kind}`;
   return (
     <Link to={to} className="card group relative p-3 min-w-[150px] max-w-[190px]">
       <Img src={album.image} alt={album.name} className="w-full aspect-square rounded-lg object-cover" />
@@ -81,7 +96,9 @@ export function AlbumCard({ album }) {
 
 export function ArtistCard({ artist }) {
   const [source, kind, ...rest] = String(artist.id).split(':');
-  const to = source === 'lastfm' ? `/search?q=${encodeURIComponent(artist.name)}` : `/artist/${source}/${rest.join(':') || kind}`;
+  const to = (source === 'lastfm' || source === 'ytmusic')
+    ? `/search?q=${encodeURIComponent(artist.name)}${source === 'ytmusic' ? '&tab=YouTube' : ''}`
+    : `/artist/${source}/${rest.join(':') || kind}`;
   return (
     <Link to={to} className="card group p-3 min-w-[140px] max-w-[170px] text-center">
       <Img src={artist.image} alt={artist.name} className="w-full aspect-square rounded-full object-cover" />

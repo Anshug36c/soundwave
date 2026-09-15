@@ -8,6 +8,7 @@ multiple music APIs, playlists, lyrics, offline mode, and an installable PWA she
 - **Home**: hero carousel, recently played, Made For You, trending, top artists, new releases, charts, mood bubbles
 - **Search**: debounced unified search (JioSaavn full tracks + Deezer previews) with Songs/Albums/Artists/Playlists tabs, history + trending
 - **Player**: persistent mini player + full-screen player (spinning vinyl, lyrics, details), queue, shuffle/repeat, volume, seek, sleep timer, offline save, share, Media Session API (lock-screen controls), keyboard shortcuts
+- **YouTube Music client**: in-browser search + full-track Opus playback (lazy-loaded, zero server needed), per-track format picker (Opus/AAC), format preference in Settings
 - **Library**: liked songs, user playlists (create/rename/delete/reorder/remove, auto mosaic covers), saved albums, followed artists, offline songs, history
 - **Detail pages**: album, artist (bio/tags/similar via LastFM when configured, 📻 radio mode), playlists, global charts
 - **Settings/Profile**: display name, listening stats, top artists, theme (dark/light), audio quality (320kbps), offline cache management

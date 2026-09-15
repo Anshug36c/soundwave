@@ -101,6 +101,8 @@ export function FullPlayer() {
   const sleepTimerMin = useStore(s => s.sleepTimerMin);
   const setSleepTimer = useStore(s => s.setSleepTimer);
   const setShowQueue = useStore(s => s.setShowQueue);
+  const activeFormat = useStore(s => s.activeFormat);
+  const switchFormat = useStore(s => s.switchFormat);
   const toast = useStore(s => s.toast);
   const [tab, setTab] = useState('lyrics');
   const [showPlMenu, setShowPlMenu] = useState(false);
@@ -109,6 +111,7 @@ export function FullPlayer() {
   const track = index >= 0 ? queue[index] : null;
   if (!show || !track) return null;
   const isLiked = !!liked[track.id];
+  const playLabel = track.source === 'ytmusic' ? (activeFormat || 'YOUTUBE MUSIC') : (track.isPreview ? '30s PREVIEW' : 'FULL TRACK');
 
   const share = async () => {
     const url = `${location.origin}/search?q=${encodeURIComponent(track.title + ' ' + track.artist?.name)}`;
@@ -126,7 +129,7 @@ export function FullPlayer() {
       <div className="relative max-w-5xl mx-auto px-4 py-6 min-h-full flex flex-col">
         <div className="flex items-center justify-between">
           <button onClick={() => setShow(false)} className="text-2xl px-2" aria-label="Close player">⌄</button>
-          <p className="text-xs font-bold tracking-widest text-dim">NOW PLAYING{track.isPreview ? ' · 30s PREVIEW' : ''}</p>
+          <p className="text-xs font-bold tracking-widest text-dim">NOW PLAYING · {playLabel}</p>
           <button onClick={() => setShowQueue(true)} className="text-xl px-2" aria-label="Open queue">☰</button>
         </div>
         <div className="grid md:grid-cols-2 gap-8 mt-6 items-start">
@@ -186,11 +189,25 @@ export function FullPlayer() {
             </div>
             {tab === 'lyrics' ? <Lyrics track={track} /> : (
               <div className="text-sm flex flex-col gap-2">
+                {track.source === 'ytmusic' && track.formats?.length > 0 && (
+                  <div className="mb-2 p-3 rounded-xl bg-violet-500/10 border border-violet-500/30">
+                    <p className="text-xs font-bold text-violet-300 mb-2">▶ YOUTUBE MUSIC · AUDIO FORMAT (OPUS = BEST)</p>
+                    <div className="flex flex-wrap gap-2">
+                      {track.formats.map(f => (
+                        <button key={`${f.label}-${f.bitrate}`} onClick={() => { switchFormat(f); toast(f.label); }}
+                          className={`px-3 py-1.5 rounded-full text-xs font-bold ${activeFormat === f.label ? 'bg-violet-500 text-white' : 'bg-white/10'}`}>
+                          {f.label} · {f.container}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <p><b>Title:</b> {track.title}</p>
                 <p><b>Artist:</b> {track.artist?.name}</p>
                 <p><b>Album:</b> {track.album?.name} {track.album?.year && `(${track.album.year})`}</p>
                 <p><b>Duration:</b> {formatTime(track.duration)}</p>
-                <p><b>Source:</b> {track.source}{track.isPreview ? ' (30s preview)' : ' (full track)'}</p>
+                <p><b>Source:</b> {track.source === 'ytmusic' ? 'YouTube Music' : track.source}{track.isPreview ? ' (30s preview)' : ' (full track)'}</p>
+                {track.codec && <p><b>Codec:</b> {track.codec.toUpperCase()}{activeFormat ? ` · playing ${activeFormat}` : ''}</p>}
                 {track.language && <p><b>Language:</b> {track.language}</p>}
                 {track.playCount > 0 && <p><b>Plays:</b> {Number(track.playCount).toLocaleString()}</p>}
               </div>

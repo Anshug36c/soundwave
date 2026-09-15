@@ -1,22 +1,26 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { api, streamFor } from '../services/musicApi';
+import { ytResolve, pickFormat } from '../services/ytmusic';
 
-// Singleton audio element
+// Singleton audio element (no CORS mode — plain playback works with all
+// stream hosts including YouTube's googlevideo URLs)
 let audio = null;
 function getAudio() {
   if (!audio) {
     audio = new Audio();
     audio.preload = 'auto';
-    audio.crossOrigin = 'anonymous';
   }
   return audio;
 }
 
+// failed YouTube format URLs: "trackId|url"
+const failedYtUrls = new Set();
+
 /**
  * Core audio engine:
- * - resolves best stream (saavn full → deezer preview fallback via backend)
- * - error auto-skip to next source/track, preloads next track
+ * - resolves best stream (saavn full → deezer/itunes preview; ytmusic Opus in-browser)
+ * - error auto-skip with format-level fallback for YouTube, preloads next track
  * - MediaSession OS controls, keyboard shortcuts, sleep timer
  */
 export function useAudioEngine() {
@@ -31,9 +35,40 @@ export function useAudioEngine() {
     const onPlay = () => store.getState().setPlaying(true);
     const onPause = () => { if (!el.ended) store.getState().setPlaying(false); };
     const onError = async () => {
-      // try resolving via backend (fallback source), else skip
       const { queue, index, next, toast } = store.getState();
       const t = queue[index];
+      // YouTube Music: walk down remaining formats, then force re-resolve (expiry), then skip
+      if (t?.source === 'ytmusic') {
+        failedYtUrls.add(`${t.id}|${el.src}`);
+        const remaining = (t.formats || []).filter(f => f.url && !failedYtUrls.has(`${t.id}|${f.url}`));
+        if (remaining.length) {
+          const f = remaining.sort((a, b) => b.bitrate - a.bitrate)[0];
+          useStore.setState({ activeFormat: f.label });
+          el.src = f.url;
+          el.play().catch(() => {});
+          return;
+        }
+        if (!t._ytReResolved) {
+          try {
+            const r = await ytResolve(t.sourceId, true);
+            const sel = pickFormat(r.formats, useStore.getState().formatPref);
+            const q = [...useStore.getState().queue];
+            const idx = useStore.getState().index;
+            if (q[idx]?.id === t.id) {
+              q[idx] = { ...t, formats: r.formats, streams: r.streams, streamUrl: sel.url, codec: sel.codec, _ytReResolved: true };
+              useStore.setState({ queue: q });
+            }
+            useStore.setState({ activeFormat: sel.label });
+            el.src = sel.url;
+            el.play().catch(() => {});
+            return;
+          } catch { /* fall through to skip */ }
+        }
+        toast('YouTube stream failed — skipping to next', 'error');
+        next();
+        return;
+      }
+      // try resolving via backend (fallback source), else skip
       if (t && !t._retried) {
         try {
           const [source, ...rest] = String(t.id).split(':');
@@ -103,6 +138,7 @@ export function useAudioEngine() {
   const quality = useStore(s => s.quality);
   const sleepTimerMin = useStore(s => s.sleepTimerMin);
   const currentTime = useStore(s => s.currentTime);
+  const srcNonce = useStore(s => s.srcNonce);
 
   const track = index >= 0 ? queue[index] : null;
 
@@ -110,10 +146,35 @@ export function useAudioEngine() {
   useEffect(() => {
     const el = getAudio();
     if (!track) { el.pause(); el.removeAttribute('src'); el.load(); return; }
+    useStore.setState({ srcOverride: null, activeFormat: null });
     let cancelled = false;
     (async () => {
       let url = streamFor(track, quality);
-      if (!url) {
+      // YouTube Music: resolve Opus streams in-browser
+      if (track.source === 'ytmusic') {
+        useStore.getState().setYtStatus('loading');
+        try {
+          const r = await ytResolve(track.sourceId);
+          if (cancelled) return;
+          const sel = pickFormat(r.formats, useStore.getState().formatPref);
+          if (!sel?.url) throw new Error('No playable YouTube format');
+          const q = [...useStore.getState().queue];
+          const idx = useStore.getState().index;
+          if (q[idx]?.id === track.id) {
+            q[idx] = { ...track, formats: r.formats, streams: r.streams, streamUrl: sel.url, codec: sel.codec };
+            useStore.setState({ queue: q, activeFormat: sel.label });
+          }
+          useStore.getState().setYtStatus('ready');
+          url = sel.url;
+        } catch (e) {
+          if (cancelled) return;
+          useStore.getState().setYtStatus('unavailable');
+          useStore.getState().toast('YouTube Music unavailable on this network', 'error');
+          useStore.getState().next();
+          return;
+        }
+      }
+      if (!url && track.source !== 'ytmusic') {
         // lazy-resolve full detail
         try {
           const [source, ...rest] = String(track.id).split(':');
@@ -137,10 +198,10 @@ export function useAudioEngine() {
       } else if (!url) {
         useStore.getState().toast('No playable stream for this track', 'error');
       }
-      // preload next
+      // preload next (only already-resolved URLs — YTM resolves lazily on play)
       const q = useStore.getState().queue;
       const nxt = q[useStore.getState().index + 1];
-      if (nxt) { const l = new Audio(); l.preload = 'auto'; l.src = streamFor(nxt, quality); }
+      if (nxt?.streamUrl) { const l = new Audio(); l.preload = 'auto'; l.src = streamFor(nxt, quality); }
       // media session
       if ('mediaSession' in navigator && track) {
         try {
@@ -159,6 +220,20 @@ export function useAudioEngine() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [track?.id]);
+
+  // hot-swap stream URL (format picker / preference) without restarting queue position
+  useEffect(() => {
+    if (!srcNonce) return;
+    const { srcOverride, index: idx } = useStore.getState();
+    if (!srcOverride || idx < 0) return;
+    const el = getAudio();
+    const t = el.currentTime || 0;
+    const wasPlaying = !el.paused;
+    el.src = srcOverride.url;
+    try { el.currentTime = t; } catch { /* metadata not ready yet */ }
+    if (wasPlaying) el.play().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcNonce]);
 
   // play/pause
   useEffect(() => {

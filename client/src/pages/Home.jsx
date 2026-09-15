@@ -19,9 +19,16 @@ export default function Home() {
   const history = useStore(s => s.history);
   const playTracks = useStore(s => s.playTracks);
   const [heroIdx, setHeroIdx] = useState(0);
+  const [ytmSongs, setYtmSongs] = useState(null);
 
   useEffect(() => {
     api.home().then(setData).catch(e => setError(e.message));
+  }, []);
+
+  useEffect(() => {
+    import('../services/ytmusic').then(m => m.ytTrending())
+      .then(s => setYtmSongs(s))
+      .catch(() => setYtmSongs([]));
   }, []);
 
   useEffect(() => {
@@ -83,6 +90,12 @@ export default function Home() {
           {data.trendingNow.slice(0, 10).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.trendingNow} />)}
         </div>
       </section>
+
+      {ytmSongs && ytmSongs.length > 0 && (
+        <SectionRow title="▶ YouTube Music" subtitle="Full tracks · Opus quality · plays in your browser">
+          {ytmSongs.map(t => <SongCard key={t.id} track={t} context={ytmSongs} />)}
+        </SectionRow>
+      )}
 
       <SectionRow title="Top Artists" subtitle="Most streamed voices">
         {data.topArtists.map(a => <ArtistCard key={a.id} artist={a} />)}

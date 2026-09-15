@@ -15,6 +15,8 @@ export default function Settings() {
   const setTheme = useStore(s => s.setTheme);
   const quality = useStore(s => s.quality);
   const setQuality = useStore(s => s.setQuality);
+  const formatPref = useStore(s => s.formatPref);
+  const setFormatPref = useStore(s => s.setFormatPref);
   const profile = useStore(s => s.profile);
   const setProfile = useStore(s => s.setProfile);
   const history = useStore(s => s.history);
@@ -78,6 +80,11 @@ export default function Settings() {
         <Row label="Audio quality" desc="High = 320kbps where available">
           <div className="flex gap-2">
             {['low', 'medium', 'high'].map(q => <button key={q} onClick={() => { setQuality(q); toast(`Quality: ${q}`); }} className={`px-4 py-1.5 rounded-full text-sm font-bold capitalize ${quality === q ? 'bg-accent text-black' : 'bg-white/10'}`}>{q}</button>)}
+          </div>
+        </Row>
+        <Row label="YouTube Music format" desc="Opus (WebM) = best quality · Auto picks the best available">
+          <div className="flex gap-2">
+            {[['auto', 'Auto'], ['opus', 'Opus'], ['m4a', 'M4A']].map(([v, l]) => <button key={v} onClick={() => { setFormatPref(v); toast(`YT Music: ${l}`); }} className={`px-4 py-1.5 rounded-full text-sm font-bold ${formatPref === v ? 'bg-accent text-black' : 'bg-white/10'}`}>{l}</button>)}
           </div>
         </Row>
         <Row label="Install app" desc="Add SoundWave to your home screen (PWA)">

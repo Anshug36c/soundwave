@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { pickFormat } from '../services/ytmusic';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -19,6 +20,11 @@ export const useStore = create(
       showFullPlayer: false,
       showQueue: false,
       sleepTimerMin: 0,
+      formatPref: 'auto', // auto | opus | m4a (YouTube Music)
+      srcOverride: null, // { url, label } — hot-swapped stream
+      srcNonce: 0,
+      activeFormat: null,
+      ytStatus: 'idle', // idle | loading | ready | unavailable
 
       playTracks: (tracks, startIndex = 0) => {
         const list = (tracks || []).filter(Boolean);
@@ -79,6 +85,24 @@ export const useStore = create(
       setShowFullPlayer: (v) => set({ showFullPlayer: v }),
       setShowQueue: (v) => set({ showQueue: v }),
       setSleepTimer: (min) => set({ sleepTimerMin: min }),
+      setFormatPref: (pref) => {
+        const s = get();
+        const t = s.queue[s.index];
+        if (t?.source === 'ytmusic' && t.formats?.length) {
+          const f = pickFormat(t.formats, pref);
+          if (f?.url) {
+            set({ formatPref: pref, srcOverride: { url: f.url, label: f.label }, activeFormat: f.label, srcNonce: s.srcNonce + 1 });
+            return;
+          }
+        }
+        set({ formatPref: pref });
+      },
+      switchFormat: (format) => set(s => ({
+        srcOverride: { url: format.url, label: format.label },
+        activeFormat: format.label,
+        srcNonce: s.srcNonce + 1,
+      })),
+      setYtStatus: (v) => set({ ytStatus: v }),
 
       // ---------- library ----------
       liked: {},            // id -> track
@@ -178,6 +202,7 @@ export const useStore = create(
         savedAlbums: s.savedAlbums, history: s.history, downloads: s.downloads,
         theme: s.theme, quality: s.quality, crossfade: s.crossfade, eq: s.eq,
         profile: s.profile, searchHistory: s.searchHistory, volume: s.volume,
+        formatPref: s.formatPref,
       }),
     }
   )
