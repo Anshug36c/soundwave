@@ -449,6 +449,7 @@ app.get('/api/sources', async (req, res) => {
     ytplayer: fetch('https://www.youtube.com/iframe_api', { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(8000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return 'ok'; }),
     mono: monoFetch('/search/?s=test').then(() => 'ok'),
     tidal: tidalSearchSongs('test', 1).then(() => 'ok'),
+    soundcloud: scSearchTracks('test', 1).then(() => 'ok'),
   };
   const out = {};
   await Promise.all(Object.entries(probes).map(async ([k, p]) => {
@@ -496,6 +497,78 @@ app.get('/api/home', async (req, res) => {
     res.status(502).json({ error: 'Failed to load home feed', detail: e.message });
   }
 });
+
+// ---------------- SoundCloud (full free streams via public web client_id) ----------------
+const SC_FALLBACK_CID = 'Pb72ranhoyt6gw7hM7TkzUItXlMWSNSo';
+let scCid = process.env.SC_CLIENT_ID || null, scCidTime = 0;
+async function scClientId(force = false) {
+  if (!force && scCid && Date.now() - scCidTime < 24 * 3600 * 1000) return scCid;
+  try {
+    const html = await (await fetch('https://soundcloud.com/', { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }, signal: AbortSignal.timeout(15000) })).text();
+    const assets = [...new Set([...html.matchAll(/https:\/\/a-v2\.sndcdn\.com\/assets\/[0-9]+-[a-z0-9]+\.js/g)].map(m => m[0]))].slice(0, 10);
+    for (const u of assets) {
+      const js = await (await fetch(u, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) })).text();
+      const m = js.match(/client_id["=:\s]+([a-zA-Z0-9]{20,})/);
+      if (m) { scCid = m[1]; scCidTime = Date.now(); return scCid; }
+    }
+  } catch { /* fall through to fallback */ }
+  if (!scCid) { scCid = SC_FALLBACK_CID; scCidTime = Date.now(); }
+  return scCid;
+}
+async function scFetch(path, timeout = 20000, retry = true) {
+  const cid = await scClientId();
+  const sep = path.includes('?') ? '&' : '?';
+  const r = await fetch(`https://api-v2.soundcloud.com${path}${sep}client_id=${cid}`, { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(timeout) });
+  if (r.status === 401 && retry) { await scClientId(true); return scFetch(path, timeout, false); }
+  if (!r.ok) throw new Error(`SoundCloud HTTP ${r.status} for ${path}`);
+  return r.json();
+}
+function scArt(url, size = 't500x500') { return (url || '').replace('-large', `-${size}`); }
+function normalizeScTrack(t) {
+  if (!t?.id) return null;
+  const u = t.user || {};
+  const snip = t.policy === 'SNIP';
+  return {
+    id: `sc:${t.id}`, source: 'sc', sourceId: String(t.id), type: 'track',
+    title: t.title || 'Unknown',
+    artist: { id: u.id ? `sc:ar:${u.id}` : '', name: u.username || 'Unknown', image: scArt(u.avatar_url, 't300x300') },
+    artists: [], album: { id: '', name: '', image: scArt(t.artwork_url) },
+    duration: Math.round((t.duration || 0) / 1000), image: scArt(t.artwork_url),
+    streamUrl: `/api/sc-audio?id=${t.id}`, previewUrl: snip ? `/api/sc-audio?id=${t.id}` : '',
+    isPreview: snip, genre: t.genre || '', playCount: t.playback_count || 0, explicit: false,
+  };
+}
+function normalizeScUser(u) {
+  if (!u?.id) return null;
+  return { id: `sc:ar:${u.id}`, source: 'sc', sourceId: String(u.id), type: 'artist', name: u.username || 'Unknown', image: scArt(u.avatar_url) };
+}
+function normalizeScPlaylist(pl) {
+  if (!pl?.id) return null;
+  const u = pl.user || {};
+  return { id: `sc:pl:${pl.id}`, source: 'sc', sourceId: String(pl.id), type: 'playlist', name: pl.title || 'Playlist', description: (pl.description || '').slice(0, 300), image: scArt(pl.artwork_url), artist: u.username || '', trackCount: pl.track_count || (pl.tracks || []).length || 0 };
+}
+async function scSearchTracks(q, limit = 10) {
+  const j = await scFetch(`/search/tracks?q=${encodeURIComponent(q)}&limit=${limit}`);
+  return (j?.collection || []).slice(0, limit).map(normalizeScTrack).filter(Boolean);
+}
+async function scSearchPlaylists(q, limit = 6) {
+  const j = await scFetch(`/search/playlists?q=${encodeURIComponent(q)}&limit=${limit}`);
+  return (j?.collection || []).slice(0, limit).map(normalizeScPlaylist).filter(Boolean);
+}
+const scStreamCache = new Map();
+async function scResolveStream(id) {
+  const hit = scStreamCache.get(String(id));
+  if (hit && Date.now() - hit.time < 10 * 60 * 1000) return hit.url;
+  const t = await scFetch(`/tracks/${encodeURIComponent(id)}`);
+  const trs = t?.media?.transcodings || [];
+  const prog = trs.find(x => x?.format?.protocol === 'progressive') || trs.find(x => /progressive/.test(x?.url || ''));
+  if (!prog?.url) throw new Error('No progressive stream');
+  const j = await fetchJson(`${prog.url}?client_id=${await scClientId()}`, {}, 15000);
+  if (!j?.url) throw new Error('Resolve failed');
+  if (scStreamCache.size > 50) scStreamCache.delete(scStreamCache.keys().next().value);
+  scStreamCache.set(String(id), { url: j.url, time: Date.now() });
+  return j.url;
+}
 
 // ---------------- Tidal pipeline from scratch (own tokens, no middleman) ----------------
 const TIDAL_CID = process.env.TIDAL_CLIENT_ID || 'txNoH4kkV41MfH25';
@@ -722,9 +795,9 @@ app.get('/api/search', async (req, res) => {
   try {
     let songs = [], albums = [], artists = [], playlists = [];
     if (type === 'all' || type === 'songs') {
-      const [a, b, c, d, e, f] = await Promise.allSettled([saavnSearchSongs(q, 20), audiusSearch(q, 8), monoSearchSongs(q, 10), tidalSearchSongs(q, 10), itunesSearchSongs(q, 20), deezerSearchTracks(q, 12)]);
+      const [a, b, c, d, e, f, g] = await Promise.allSettled([saavnSearchSongs(q, 20), audiusSearch(q, 8), scSearchTracks(q, 10), monoSearchSongs(q, 10), tidalSearchSongs(q, 10), itunesSearchSongs(q, 20), deezerSearchTracks(q, 12)]);
       // order = quality priority: full tracks first, then HI-RES previews, then standard previews
-      songs = dedupe([...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(c.status === 'fulfilled' ? c.value : []), ...(d.status === 'fulfilled' ? d.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : [])]);
+      songs = dedupe([...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(c.status === 'fulfilled' ? c.value : []), ...(d.status === 'fulfilled' ? d.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : []), ...(g.status === 'fulfilled' ? g.value : [])]);
     }
     if (type === 'all' || type === 'albums') {
       const [a, b, e, f] = await Promise.allSettled([saavnSearchAlbums(q, 10), itunesSearchAlbums(q, 10), monoSearchAlbums(q, 8), tidalSearchAlbums(q, 8)]);
@@ -735,8 +808,8 @@ app.get('/api/search', async (req, res) => {
       artists = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : [])];
     }
     if (type === 'all' || type === 'playlists') {
-      const [a, e, f] = await Promise.allSettled([saavnSearchPlaylists(q, 10), monoSearchPlaylists(q, 6), tidalSearchPlaylists(q, 6)]);
-      playlists = [...(a.status === 'fulfilled' ? a.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : [])];
+      const [a, e, f, g] = await Promise.allSettled([saavnSearchPlaylists(q, 10), monoSearchPlaylists(q, 6), tidalSearchPlaylists(q, 6), scSearchPlaylists(q, 6)]);
+      playlists = [...(a.status === 'fulfilled' ? a.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : []), ...(g.status === 'fulfilled' ? g.value : [])];
     }
     const payload = { songs, albums, artists, playlists };
     setCache(req.originalUrl, payload);
@@ -784,6 +857,12 @@ app.get('/api/song/:source/:id', async (req, res) => {
     }
     if (source === 'tidal') {
       const track = normalizeTidalTrack(await tidalFetch(`/v1/tracks/${encodeURIComponent(id)}/`));
+      if (!track) return res.status(404).json({ error: 'Song not found' });
+      setCache(req.originalUrl, track);
+      return res.json(track);
+    }
+    if (source === 'sc') {
+      const track = normalizeScTrack(await scFetch(`/tracks/${encodeURIComponent(id)}`));
       if (!track) return res.status(404).json({ error: 'Song not found' });
       setCache(req.originalUrl, track);
       return res.json(track);
@@ -913,6 +992,16 @@ app.get('/api/artist/:source/:id', async (req, res) => {
         topAlbums: (albs?.items || []).map(normalizeTidalAlbum).filter(Boolean),
         similar: [],
       };
+    } else if (source === 'sc') {
+      const [u, tr] = await Promise.all([
+        scFetch(`/users/${encodeURIComponent(id)}`),
+        scFetch(`/users/${encodeURIComponent(id)}/tracks?limit=10`).catch(() => ({ collection: [] })),
+      ]);
+      payload = {
+        ...normalizeScUser(u), bio: (u?.description || '').slice(0, 500),
+        topSongs: (tr?.collection || []).map(normalizeScTrack).filter(Boolean),
+        topAlbums: [], similar: [],
+      };
     } else return res.status(400).json({ error: 'Unknown source' });
 
     // Enrichment: AudioDB (free) + LastFM (optional key)
@@ -1009,6 +1098,13 @@ app.get('/api/playlist/:source/:id', async (req, res) => {
       ]);
       const songs = (tr?.items || []).map(normalizeTidalTrack).filter(Boolean);
       const payload = { ...normalizeTidalPlaylist({ uuid: id, title: meta?.title, description: meta?.description, numberOfTracks: meta?.numberOfTracks, squareImage: meta?.squareImage }), description: meta?.description || '', image: songs[0]?.image || '', songs };
+      setCache(req.originalUrl, payload);
+      return res.json(payload);
+    }
+    if (source === 'sc') {
+      const pl = await scFetch(`/playlists/${encodeURIComponent(id)}`);
+      const songs = (pl?.tracks || []).map(normalizeScTrack).filter(Boolean);
+      const payload = { ...normalizeScPlaylist(pl), description: (pl?.description || '').slice(0, 500), songs };
       setCache(req.originalUrl, payload);
       return res.json(payload);
     }
@@ -1117,6 +1213,30 @@ app.get('/api/alternates', async (req, res) => {
     setCache(req.originalUrl, result);
     res.json(result);
   } catch (e) { res.json({ track: null }); }
+});
+
+// SoundCloud audio: resolve progressive MP3 + proxy with Range (seekable, Studio-safe)
+app.get('/api/sc-audio', async (req, res) => {
+  const id = req.query.id;
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+  try {
+    const url = await scResolveStream(id);
+    const up = await fetch(url, { headers: { 'User-Agent': 'SoundWave/1.0', ...(req.headers.range ? { Range: req.headers.range } : {}) } });
+    if (!up.ok && up.status !== 206) return res.status(502).json({ error: 'Upstream audio failed' });
+    res.status(up.status);
+    up.headers.forEach((v, k) => {
+      if (['content-type', 'content-length', 'content-range', 'accept-ranges'].includes(k.toLowerCase())) res.setHeader(k, v);
+    });
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const reader = up.body.getReader();
+    req.on('close', () => { try { reader.cancel(); } catch {} });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!res.write(value)) await new Promise(r => res.once('drain', r));
+    }
+    res.end();
+  } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'SoundCloud audio failed', detail: e.message }); }
 });
 
 // Own Tidal pipeline: CD-quality preview stitched from DASH into one seekable MP4

@@ -10,7 +10,8 @@ export function Img({ src, alt, className = '' }) {
 
 export function SourceBadge({ track }) {
   let cls = 'bg-amber-500/20 text-amber-400', label = 'PREVIEW';
-  if (track.source === 'tidal') { cls = 'bg-teal-400/20 text-teal-300'; label = 'TIDAL·FLAC'; }
+  if (track.source === 'sc' && !track.isPreview) { cls = 'bg-orange-500/20 text-orange-300'; label = 'FULL'; }
+  else if (track.source === 'tidal') { cls = 'bg-teal-400/20 text-teal-300'; label = 'TIDAL·FLAC'; }
   else if (track.source === 'mono') { cls = 'bg-cyan-500/20 text-cyan-300'; label = 'HI-RES·30s'; }
   else if (track.isLive) { cls = 'bg-red-600 text-white'; label = '● LIVE'; }
   else if (track.source === 'ytmusic') {
