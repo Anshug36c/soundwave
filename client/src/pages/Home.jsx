@@ -19,7 +19,6 @@ export default function Home() {
   const history = useStore(s => s.history);
   const playTracks = useStore(s => s.playTracks);
   const [heroIdx, setHeroIdx] = useState(0);
-  const [ytmSongs, setYtmSongs] = useState(null);
   const [underground, setUnderground] = useState(null);
   const [stations, setStations] = useState(null);
   const [concerts, setConcerts] = useState(null);
@@ -29,9 +28,6 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    import('../services/ytmusic').then(m => m.ytTrending())
-      .then(s => setYtmSongs(s))
-      .catch(() => setYtmSongs([]));
     api.underground().then(setUnderground).catch(() => setUnderground([]));
     api.stations().then(setStations).catch(() => setStations([]));
     api.concerts().then(setConcerts).catch(() => setConcerts([]));
@@ -96,12 +92,6 @@ export default function Home() {
           {data.trendingNow.slice(0, 10).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.trendingNow} />)}
         </div>
       </section>
-
-      {ytmSongs && ytmSongs.length > 0 && (
-        <SectionRow title="▶ YouTube Music" subtitle="Full tracks · Opus quality · plays in your browser">
-          {ytmSongs.map(t => <SongCard key={t.id} track={t} context={ytmSongs} />)}
-        </SectionRow>
-      )}
 
       {underground && underground.length > 0 && (
         <SectionRow title="🔥 Underground" subtitle="Full tracks · fresh indie artists on Audius">

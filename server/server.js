@@ -446,10 +446,10 @@ app.get('/api/sources', async (req, res) => {
     audius: audiusFetch('/v1/tracks/trending?limit=1').then(() => 'ok'),
     archive: fetchJson('https://archive.org/advancedsearch.php?q=test&fl[]=identifier&rows=1&output=json', {}, 10000).then(() => 'ok'),
     radio: radioFetch('/json/stations/topvote/1').then(() => 'ok'),
-    ytplayer: fetch('https://www.youtube.com/iframe_api', { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(8000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return 'ok'; }),
     mono: monoFetch('/search/?s=test').then(() => 'ok'),
     tidal: tidalSearchSongs('test', 1).then(() => 'ok'),
     soundcloud: scSearchTracks('test', 1).then(() => 'ok'),
+    djpunjab: djpLoadIndex().then(m => (m.size > 100 ? 'ok' : Promise.reject(new Error('index empty')))),
   };
   const out = {};
   await Promise.all(Object.entries(probes).map(async ([k, p]) => {
@@ -497,6 +497,131 @@ app.get('/api/home', async (req, res) => {
     res.status(502).json({ error: 'Failed to load home feed', detail: e.message });
   }
 });
+
+// ---------------- DJPunjab (full Punjabi/Bollywood MP3s via sitemap index) ----------------
+const DJP_BASE = (process.env.DJP_BASE_URL || 'https://djpunjab.is').replace(/\/$/, '');
+const DJP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+let djpIndex = new Map(), djpUrlToId = new Map(), djpIndexTime = 0, djpIndexPromise = null;
+async function djpLoadIndex(force = false) {
+  if (!force && djpIndex.size && Date.now() - djpIndexTime < 12 * 3600 * 1000) return djpIndex;
+  if (!djpIndexPromise) {
+    djpIndexPromise = (async () => {
+      const xml = await (await fetch(`${DJP_BASE}/sitemap.xml`, { headers: { 'User-Agent': DJP_UA }, signal: AbortSignal.timeout(30000) })).text();
+      const map = new Map(), rev = new Map();
+      for (const m of xml.matchAll(/<loc>([^<]+)<\/loc>/g)) {
+        const url = m[1];
+        const sm = url.match(/\/(single-track|punjabi-music)\/(.+?)-(\d+)\.html$/);
+        if (!sm) continue;
+        const slug = sm[2].replace(/-mp3-song$|-album$/, '');
+        map.set(sm[3], { url, slug, album: /-album-\d+\.html$/.test(url) });
+        rev.set(url, sm[3]);
+      }
+      if (map.size > 100) { djpIndex = map; djpUrlToId = rev; djpIndexTime = Date.now(); }
+      return djpIndex;
+    })().finally(() => { djpIndexPromise = null; });
+  }
+  return djpIndexPromise;
+}
+djpLoadIndex().catch(() => {});
+function djpScore(slug, words) {
+  const s = ` ${slug.replace(/-/g, ' ')} `;
+  let score = 0;
+  for (const w of words) {
+    if (s.includes(` ${w} `)) score += 3;
+    else if (s.includes(w)) score += 1;
+    else score -= 2;
+  }
+  return score;
+}
+const djpPageCache = new Map();
+async function djpFetchHtml(url) {
+  return (await fetch(url, { headers: { 'User-Agent': DJP_UA }, signal: AbortSignal.timeout(20000) })).text();
+}
+async function djpSongPage(url) {
+  const hit = djpPageCache.get(url);
+  if (hit && Date.now() - hit.time < 6 * 3600 * 1000) return hit.data;
+  const html = await djpFetchHtml(url);
+  const mp3s = {};
+  for (const m of html.matchAll(/https:\/\/s\d+\.djpunjab\.is\/data\/(48|128|320)\/\d+\/\d+\/[^"']+\.mp3/gi)) {
+    mp3s[m[1]] = m[0].replace(/&amp;/g, '&');
+  }
+  const file = decodeURIComponent((mp3s['320'] || mp3s['128'] || mp3s['48'] || '').split('/').pop() || '');
+  let title = '', artist = '';
+  const fm = file.replace(/\.mp3$/i, '').split(' - ');
+  if (fm.length >= 2) { artist = fm.pop().trim(); title = fm.join(' - ').trim(); }
+  if (!title) {
+    const t = html.match(/<title>([^<]*)<\/title>/i)?.[1] || '';
+    title = t.replace(/\s*mp3 songs? download djpunjab\s*/gi, '').trim() || 'Unknown';
+  }
+  const cover = html.match(/https:\/\/cover\.djpunjab\.is\/[^"']+\.(?:webp|jpg)/i)?.[0] || '';
+  const data = { mp3: mp3s['320'] || mp3s['128'] || mp3s['48'] || '', quality: mp3s['320'] ? '320' : mp3s['128'] ? '128' : '48', title, artist: artist || 'Unknown', cover };
+  if (djpPageCache.size > 300) djpPageCache.delete(djpPageCache.keys().next().value);
+  djpPageCache.set(url, { data, time: Date.now() });
+  return data;
+}
+async function djpAlbumPage(url) {
+  const hit = djpPageCache.get(url);
+  if (hit && Date.now() - hit.time < 6 * 3600 * 1000) return hit.data;
+  const html = await djpFetchHtml(url);
+  const cover = html.match(/https:\/\/cover\.djpunjab\.is\/[^"']+\.(?:webp|jpg)/i)?.[0] || '';
+  const title = (html.match(/<title>([^<]*)<\/title>/i)?.[1] || '').replace(/\s*mp3 songs? download djpunjab\s*/gi, '').trim();
+  const trackUrls = [...new Set([...html.matchAll(/href="((?:https:\/\/djpunjab\.is)?\/(?:single-track|punjabi-music)\/[^"]*?mp3-song-\d+\.html)"/gi)].map(m => (m[1].startsWith('http') ? m[1] : DJP_BASE + m[1]).replace(/&amp;/g, '&')))];
+  const data = { cover, title, trackUrls, isAlbum: true };
+  if (djpPageCache.size > 300) djpPageCache.delete(djpPageCache.keys().next().value);
+  djpPageCache.set(url, { data, time: Date.now() });
+  return data;
+}
+function prettySlug(slug) {
+  return slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+function normalizeDjpSong(id, pg) {
+  if (!id || !pg?.mp3) return null;
+  return {
+    id: `djp:${id}`, source: 'djp', sourceId: String(id), type: 'track',
+    title: pg.title || 'Unknown',
+    artist: { id: '', name: pg.artist || 'Unknown', image: pg.cover || '' },
+    artists: [], album: { id: '', name: '', image: pg.cover || '' },
+    duration: 0, image: pg.cover || '',
+    streamUrl: `/api/djp-audio?id=${id}`, previewUrl: '', isPreview: false,
+    codec: 'mp3', quality: pg.quality, explicit: false,
+  };
+}
+async function djpSearchSongs(q, limit = 8) {
+  const idx = await djpLoadIndex().catch(() => new Map());
+  if (!idx.size) return [];
+  const words = q.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 1);
+  if (!words.length) return [];
+  const scored = [];
+  for (const [id, e] of idx) {
+    if (e.album) continue;
+    const s = djpScore(e.slug, words);
+    if (s > 0) scored.push([s, id, e]);
+  }
+  scored.sort((a, b) => b[0] - a[0]);
+  const pages = await Promise.all(scored.slice(0, limit).map(([, id, e]) => djpSongPage(e.url).then(pg => ({ id, pg })).catch(() => null)));
+  return pages.filter(Boolean).map(({ id, pg }) => normalizeDjpSong(id, pg)).filter(Boolean);
+}
+async function djpSearchAlbums(q, limit = 5) {
+  const idx = await djpLoadIndex().catch(() => new Map());
+  if (!idx.size) return [];
+  const words = q.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 1);
+  if (!words.length) return [];
+  const scored = [];
+  for (const [id, e] of idx) {
+    if (!e.album) continue;
+    const s = djpScore(e.slug, words);
+    if (s > 0) scored.push([s, id, e]);
+  }
+  scored.sort((a, b) => b[0] - a[0]);
+  const out = [];
+  for (const [, id, e] of scored.slice(0, limit)) {
+    try {
+      const pg = await djpAlbumPage(e.url);
+      out.push({ id: `djp:al:${id}`, source: 'djp', sourceId: String(id), type: 'album', name: pg.title || prettySlug(e.slug), artist: '', image: pg.cover || '', year: '', trackCount: (pg.trackUrls || []).length });
+    } catch { /* skip */ }
+  }
+  return out;
+}
 
 // ---------------- SoundCloud (full free streams via public web client_id) ----------------
 const SC_FALLBACK_CID = 'Pb72ranhoyt6gw7hM7TkzUItXlMWSNSo';
@@ -795,13 +920,13 @@ app.get('/api/search', async (req, res) => {
   try {
     let songs = [], albums = [], artists = [], playlists = [];
     if (type === 'all' || type === 'songs') {
-      const [a, b, c, d, e, f, g] = await Promise.allSettled([saavnSearchSongs(q, 20), audiusSearch(q, 8), scSearchTracks(q, 10), monoSearchSongs(q, 10), tidalSearchSongs(q, 10), itunesSearchSongs(q, 20), deezerSearchTracks(q, 12)]);
+      const [a, b, c, d, e, f, g, h] = await Promise.allSettled([saavnSearchSongs(q, 20), audiusSearch(q, 8), scSearchTracks(q, 10), djpSearchSongs(q, 8), monoSearchSongs(q, 10), tidalSearchSongs(q, 10), itunesSearchSongs(q, 20), deezerSearchTracks(q, 12)]);
       // order = quality priority: full tracks first, then HI-RES previews, then standard previews
-      songs = dedupe([...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(c.status === 'fulfilled' ? c.value : []), ...(d.status === 'fulfilled' ? d.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : []), ...(g.status === 'fulfilled' ? g.value : [])]);
+      songs = dedupe([...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(c.status === 'fulfilled' ? c.value : []), ...(d.status === 'fulfilled' ? d.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : []), ...(g.status === 'fulfilled' ? g.value : []), ...(h.status === 'fulfilled' ? h.value : [])]);
     }
     if (type === 'all' || type === 'albums') {
-      const [a, b, e, f] = await Promise.allSettled([saavnSearchAlbums(q, 10), itunesSearchAlbums(q, 10), monoSearchAlbums(q, 8), tidalSearchAlbums(q, 8)]);
-      albums = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : [])];
+      const [a, b, e, f, h] = await Promise.allSettled([saavnSearchAlbums(q, 10), itunesSearchAlbums(q, 10), monoSearchAlbums(q, 8), tidalSearchAlbums(q, 8), djpSearchAlbums(q, 5)]);
+      albums = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : []), ...(h.status === 'fulfilled' ? h.value : [])];
     }
     if (type === 'all' || type === 'artists') {
       const [a, b, e, f] = await Promise.allSettled([saavnSearchArtists(q, 8), itunesSearchArtists(q, 8), monoSearchArtists(q, 8), tidalSearchArtists(q, 8)]);
@@ -867,6 +992,14 @@ app.get('/api/song/:source/:id', async (req, res) => {
       setCache(req.originalUrl, track);
       return res.json(track);
     }
+    if (source === 'djp') {
+      const e = (await djpLoadIndex()).get(String(id));
+      if (!e) return res.status(404).json({ error: 'Song not indexed' });
+      const track = normalizeDjpSong(id, await djpSongPage(e.url));
+      if (!track) return res.status(404).json({ error: 'Song not found' });
+      setCache(req.originalUrl, track);
+      return res.json(track);
+    }
     res.status(400).json({ error: 'Unknown source' });
   } catch (e) { res.status(502).json({ error: 'Failed to resolve song', detail: e.message }); }
 });
@@ -923,6 +1056,21 @@ app.get('/api/album/:source/:id', async (req, res) => {
       const payload = { ...normalizeTidalAlbum(meta), description: meta?.copyright || '', songs };
       if (!payload.artist && songs[0]) payload.artist = songs[0].artist?.name || '';
       if (!payload.image && songs[0]) payload.image = songs[0].image || '';
+      setCache(req.originalUrl, payload);
+      return res.json(payload);
+    }
+    if (source === 'djp') {
+      const e = (await djpLoadIndex()).get(String(id));
+      if (!e) return res.status(404).json({ error: 'Album not indexed' });
+      const pg = await djpAlbumPage(e.url);
+      const songs = (await Promise.all((pg.trackUrls || []).slice(0, 30).map(async u => {
+        try {
+          const tid = djpUrlToId.get(u) || (u.match(/mp3-song-(\d+)\.html/) || [])[1];
+          if (!tid) return null;
+          return normalizeDjpSong(tid, await djpSongPage(u));
+        } catch { return null; }
+      }))).filter(Boolean);
+      const payload = { id: `djp:al:${id}`, source: 'djp', sourceId: String(id), type: 'album', name: pg.title || prettySlug(e.slug), artist: songs[0]?.artist?.name || '', image: pg.cover || songs[0]?.image || '', year: '', trackCount: songs.length, description: '', songs };
       setCache(req.originalUrl, payload);
       return res.json(payload);
     }
@@ -1202,8 +1350,8 @@ app.get('/api/alternates', async (req, res) => {
   if (cached) return res.json(cached);
   try {
     const q = `${title} ${artist}`.trim();
-    const [au, ar] = await Promise.allSettled([audiusSearch(q, 8), archiveSearch(q, 4)]);
-    const cands = [...(au.status === 'fulfilled' ? au.value : []), ...(ar.status === 'fulfilled' ? ar.value : [])];
+    const [au, ar, dj] = await Promise.allSettled([audiusSearch(q, 8), archiveSearch(q, 4), djpSearchSongs(q, 5)]);
+    const cands = [...(au.status === 'fulfilled' ? au.value : []), ...(ar.status === 'fulfilled' ? ar.value : []), ...(dj.status === 'fulfilled' ? dj.value : [])];
     let best = null, bestScore = 0;
     for (const c of cands) {
       const s = similarityScore(`${title} ${artist}`, `${c.title} ${c.artist?.name || ''}`);
@@ -1213,6 +1361,48 @@ app.get('/api/alternates', async (req, res) => {
     setCache(req.originalUrl, result);
     res.json(result);
   } catch (e) { res.json({ track: null }); }
+});
+
+// DJPunjab audio: download full MP3 once, store in memory cache, serve seekable
+const djpAudioCache = new Map();
+app.get('/api/djp-audio', async (req, res) => {
+  const id = req.query.id;
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+  try {
+    let buf = null;
+    const hit = djpAudioCache.get(String(id));
+    if (hit && Date.now() - hit.time < 30 * 60 * 1000) buf = hit.buf;
+    if (!buf) {
+      const idx = await djpLoadIndex();
+      const e = idx.get(String(id));
+      if (!e) return res.status(404).json({ error: 'Song not indexed' });
+      const pg = await djpSongPage(e.url);
+      if (!pg.mp3) return res.status(502).json({ error: 'No MP3 found' });
+      const up = await fetch(pg.mp3, { headers: { 'User-Agent': DJP_UA, Referer: `${DJP_BASE}/` }, signal: AbortSignal.timeout(120000) });
+      if (!up.ok) throw new Error(`MP3 HTTP ${up.status}`);
+      buf = Buffer.from(await up.arrayBuffer());
+      if (buf.length < 100000) throw new Error('MP3 too small');
+      if (djpAudioCache.size > 4) djpAudioCache.delete(djpAudioCache.keys().next().value);
+      djpAudioCache.set(String(id), { buf, time: Date.now() });
+    }
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=1800');
+    const range = req.headers.range;
+    if (range) {
+      const m = range.match(/bytes=(\d*)-(\d*)/);
+      const start = m?.[1] ? parseInt(m[1], 10) : 0;
+      const end = m?.[2] ? parseInt(m[2], 10) : buf.length - 1;
+      const s = Math.min(start, buf.length - 1), e = Math.min(end, buf.length - 1);
+      if (s > e) return res.status(416).end();
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${s}-${e}/${buf.length}`);
+      res.setHeader('Content-Length', String(e - s + 1));
+      return res.end(buf.subarray(s, e + 1));
+    }
+    res.setHeader('Content-Length', String(buf.length));
+    res.end(buf);
+  } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'DJPunjab audio failed', detail: e.message }); }
 });
 
 // SoundCloud audio: resolve progressive MP3 + proxy with Range (seekable, Studio-safe)
@@ -1425,57 +1615,6 @@ app.get('/api/lyrics', async (req, res) => {
     setCache(req.originalUrl, result);
     res.json(result);
   } catch (e) { res.json(result); }
-});
-
-// ---- YouTube player assets (proxied — YouTube serves these WITHOUT CORS
-// headers, so browsers can't fetch them directly; required for deciphering) ----
-const YT_PLAYER_ID_TTL = 1000 * 60 * 60;
-let ytPlayerIdCache = { id: null, t: 0 };
-app.get('/api/yt/player-id', async (req, res) => {
-  try {
-    if (ytPlayerIdCache.id && Date.now() - ytPlayerIdCache.t < YT_PLAYER_ID_TTL) {
-      return res.json({ playerId: ytPlayerIdCache.id, cached: true });
-    }
-    const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 10000);
-    let r;
-    try {
-      r = await fetch('https://www.youtube.com/iframe_api', { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
-    } finally { clearTimeout(to); }
-    if (!r.ok) return res.status(502).json({ error: `iframe_api HTTP ${r.status}` });
-    const js = await r.text();
-    const i = js.indexOf('player\\/');
-    if (i < 0) return res.status(502).json({ error: 'player id pattern not found' });
-    const id = js.slice(i + 8).split('\\/')[0];
-    if (!/^[A-Za-z0-9_-]+$/.test(id)) return res.status(502).json({ error: 'invalid player id' });
-    ytPlayerIdCache = { id, t: Date.now() };
-    res.json({ playerId: id, cached: false });
-  } catch (e) { res.status(502).json({ error: 'player-id fetch failed', detail: e.message }); }
-});
-
-const ytJsCache = new Map(); // playerId -> base.js text
-app.get('/api/yt/player-js', async (req, res) => {
-  const id = String(req.query.id || '');
-  if (!/^[A-Za-z0-9_-]{4,32}$/.test(id)) return res.status(400).json({ error: 'bad id' });
-  try {
-    if (!ytJsCache.has(id)) {
-      const ctrl = new AbortController();
-      const to = setTimeout(() => ctrl.abort(), 25000);
-      let r;
-      try {
-        r = await fetch(`https://www.youtube.com/s/player/${id}/player_es6.vflset/en_US/base.js`, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
-      } finally { clearTimeout(to); }
-      if (!r.ok) return res.status(502).json({ error: `player js HTTP ${r.status}` });
-      const js = await r.text();
-      if (js.length < 100000) return res.status(502).json({ error: 'unexpected player js' });
-      if (ytJsCache.size > 3) ytJsCache.clear();
-      ytJsCache.set(id, js);
-    }
-    res.setHeader('Content-Type', 'application/javascript');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.send(ytJsCache.get(id));
-  } catch (e) { res.status(502).json({ error: 'player-js fetch failed', detail: e.message }); }
 });
 
 app.get('/api/stream', async (req, res) => {

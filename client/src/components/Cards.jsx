@@ -14,10 +14,7 @@ export function SourceBadge({ track }) {
   else if (track.source === 'tidal') { cls = 'bg-teal-400/20 text-teal-300'; label = 'TIDAL·FLAC'; }
   else if (track.source === 'mono') { cls = 'bg-cyan-500/20 text-cyan-300'; label = 'HI-RES·30s'; }
   else if (track.isLive) { cls = 'bg-red-600 text-white'; label = '● LIVE'; }
-  else if (track.source === 'ytmusic') {
-    cls = 'bg-violet-500/25 text-violet-300';
-    label = track.codec ? track.codec.toUpperCase() : 'YT · OPUS';
-  } else if (!track.isPreview) {
+  else if (!track.isPreview) {
     cls = 'bg-green-500/20 text-green-400';
     label = 'FULL';
   }
@@ -76,7 +73,6 @@ export function SongCard({ track, context }) {
       <div className="relative">
         <Img src={track.image || track.thumbnails?.medium} alt={track.title} className="w-full aspect-square rounded-lg object-cover" />
         <PlayButton onPlay={() => playTrack(track, context || [track])} />
-        {track.source === 'ytmusic' && <span className="absolute top-2 left-2 text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-violet-600 text-white">OPUS</span>}
       </div>
       <p className="mt-2 truncate text-sm font-bold">{track.title}</p>
       <p className="truncate text-xs text-dim">{track.artist?.name}</p>
@@ -86,9 +82,7 @@ export function SongCard({ track, context }) {
 
 export function AlbumCard({ album }) {
   const [source, kind, ...rest] = String(album.id).split(':');
-  const to = source === 'ytmusic'
-    ? `/search?q=${encodeURIComponent(`${album.name} ${album.artist || ''}`.trim())}&tab=YouTube`
-    : `/album/${source}/${rest.join(':') || kind}`;
+  const to = `/album/${source}/${rest.join(':') || kind}`;
   return (
     <Link to={to} className="card group relative p-3 min-w-[150px] max-w-[190px]">
       <Img src={album.image} alt={album.name} className="w-full aspect-square rounded-lg object-cover" />
@@ -100,8 +94,8 @@ export function AlbumCard({ album }) {
 
 export function ArtistCard({ artist }) {
   const [source, kind, ...rest] = String(artist.id).split(':');
-  const to = (source === 'lastfm' || source === 'ytmusic')
-    ? `/search?q=${encodeURIComponent(artist.name)}${source === 'ytmusic' ? '&tab=YouTube' : ''}`
+  const to = source === 'lastfm'
+    ? `/search?q=${encodeURIComponent(artist.name)}`
     : `/artist/${source}/${rest.join(':') || kind}`;
   return (
     <Link to={to} className="card group p-3 min-w-[140px] max-w-[170px] text-center">

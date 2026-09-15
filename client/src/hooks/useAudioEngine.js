@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { api, streamFor } from '../services/musicApi';
-import { ytResolve, pickFormat, ytSearch } from '../services/ytmusic';
 import * as studio from '../audio/studio';
 
 // Singleton audio element (plain playback). WebAudio routing is permanent per
@@ -14,9 +13,6 @@ function getAudio() {
   }
   return audio;
 }
-
-// failed YouTube format URLs: "trackId|url"
-const failedYtUrls = new Set();
 
 // auto-upgrade cache: preview trackId -> full track | null
 const upgradeCache = new Map();
@@ -37,35 +33,10 @@ function fadeVolume(el, to, ms) {
   });
 }
 
-/** Find a FULL version of a preview track: YouTube match first, then server alternates. */
+/** Find a FULL version of a preview track via server alternates (DJPunjab / Audius / Archive). */
 async function upgradeToFull(track) {
   if (upgradeCache.has(track.id)) return upgradeCache.get(track.id);
   const done = (v) => { if (upgradeCache.size > 100) upgradeCache.clear(); upgradeCache.set(track.id, v); return v; };
-  const query = `${track.title} ${track.artist?.name || ''}`.trim();
-  // 1) YouTube Music in-browser match (full Opus) with duration sanity check
-  try {
-    const r = await ytSearch(query);
-    const cands = [...(r.songs || []), ...(r.videos || [])].slice(0, 3);
-    const match = cands.find(c => {
-      if (!c.duration || !track.duration) return true;
-      return Math.abs(c.duration - track.duration) < 90;
-    }) || cands[0];
-    if (match?.sourceId) {
-      const res = await ytResolve(match.sourceId);
-      const sel = pickFormat(res.formats, useStore.getState().formatPref);
-      if (sel?.url) {
-        return done({
-          ...match, id: track.id, title: track.title,
-          artist: track.artist, artists: track.artists || [],
-          album: track.album, image: track.image, thumbnails: track.thumbnails,
-          duration: track.duration || match.duration,
-          formats: res.formats, streams: res.streams, streamUrl: sel.url,
-          codec: sel.codec, isPreview: false, upgradedFrom: track.source,
-        });
-      }
-    }
-  } catch { /* try server alternates */ }
-  // 2) Server alternates (Audius / Archive full matches)
   try {
     const r = await fetch(`/api/alternates?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist?.name || '')}`);
     if (r.ok) {
@@ -94,7 +65,7 @@ async function onError() {
   const store = useStore;
   const { queue, index, next, toast } = store.getState();
   const t = queue[index];
-  // Studio proxy failed (e.g. IP-bound stream): fall back to a FRESH plain element + direct URL
+  // Studio proxy failed: fall back to a FRESH plain element + direct URL
   if (t && el.src.includes('/api/stream') && !t._studioFellBack) {
     const direct = streamFor(t, store.getState().quality) || t.streamUrl || '';
     if (direct) {
@@ -108,37 +79,6 @@ async function onError() {
       toast('Studio bypassed for this stream', 'info');
       return;
     }
-  }
-  // YouTube Music: walk down remaining formats, then force re-resolve (expiry), then skip
-  if (t?.source === 'ytmusic') {
-    failedYtUrls.add(`${t.id}|${el.src}`);
-    const remaining = (t.formats || []).filter(f => f.url && !failedYtUrls.has(`${t.id}|${f.url}`));
-    if (remaining.length) {
-      const f = remaining.sort((a, b) => b.bitrate - a.bitrate)[0];
-      useStore.setState({ activeFormat: f.label });
-      el.src = useStore.getState().studioOn && !t._studioFellBack ? api.streamProxy(f.url) : f.url;
-      el.play().catch(() => {});
-      return;
-    }
-    if (!t._ytReResolved) {
-      try {
-        const r = await ytResolve(t.sourceId, true);
-        const sel = pickFormat(r.formats, useStore.getState().formatPref);
-        const q = [...useStore.getState().queue];
-        const idx = useStore.getState().index;
-        if (q[idx]?.id === t.id) {
-          q[idx] = { ...t, formats: r.formats, streams: r.streams, streamUrl: sel.url, codec: sel.codec, _ytReResolved: true };
-          useStore.setState({ queue: q });
-        }
-        useStore.setState({ activeFormat: sel.label });
-        el.src = useStore.getState().studioOn && !t._studioFellBack ? api.streamProxy(sel.url) : sel.url;
-        el.play().catch(() => {});
-        return;
-      } catch { /* fall through to skip */ }
-    }
-    toast('YouTube stream failed — skipping to next', 'error');
-    next();
-    return;
   }
   // try resolving via backend (same-id-space sources only — never cross-wire ids), else skip
   if (t && !t._retried) {
@@ -217,8 +157,8 @@ function recreateAudio() {
 /**
  * Core audio engine:
  * - Studio mode (WebAudio EQ + visualizer via proxied streams), crossfade, sleep fade-out
- * - auto-upgrades previews to full tracks (YTM Opus → Audius/Archive)
- * - error auto-skip with format-level fallback for YouTube, preloads next track
+ * - auto-upgrades previews to full tracks (DJPunjab / Audius / Archive)
+ * - error auto-skip, preloads next track
  * - MediaSession OS controls, keyboard shortcuts
  */
 export function useAudioEngine() {
@@ -243,7 +183,6 @@ export function useAudioEngine() {
   const quality = useStore(s => s.quality);
   const sleepTimerMin = useStore(s => s.sleepTimerMin);
   const currentTime = useStore(s => s.currentTime);
-  const srcNonce = useStore(s => s.srcNonce);
   const studioOn = useStore(s => s.studioOn);
 
   const track = index >= 0 ? queue[index] : null;
@@ -252,34 +191,9 @@ export function useAudioEngine() {
   useEffect(() => {
     const el = getAudio();
     if (!track) { el.pause(); el.removeAttribute('src'); el.load(); return; }
-    useStore.setState({ srcOverride: null, activeFormat: null });
     let cancelled = false;
     (async () => {
       let url = streamFor(track, quality);
-      // YouTube Music: resolve Opus streams in-browser
-      if (track.source === 'ytmusic') {
-        useStore.getState().setYtStatus('loading');
-        try {
-          const r = await ytResolve(track.sourceId);
-          if (cancelled) return;
-          const sel = pickFormat(r.formats, useStore.getState().formatPref);
-          if (!sel?.url) throw new Error('No playable YouTube format');
-          const q = [...useStore.getState().queue];
-          const idx = useStore.getState().index;
-          if (q[idx]?.id === track.id) {
-            q[idx] = { ...track, formats: r.formats, streams: r.streams, streamUrl: sel.url, codec: sel.codec };
-            useStore.setState({ queue: q, activeFormat: sel.label });
-          }
-          useStore.getState().setYtStatus('ready');
-          url = sel.url;
-        } catch (e) {
-          if (cancelled) return;
-          useStore.getState().setYtStatus('unavailable');
-          useStore.getState().toast('YouTube Music unavailable on this network', 'error');
-          useStore.getState().next();
-          return;
-        }
-      }
       if (!url && ['saavn', 'deezer', 'itunes'].includes(track.source)) {
         // lazy-resolve full detail (same-id-space sources only)
         try {
@@ -295,7 +209,7 @@ export function useAudioEngine() {
         } catch { /* noop */ }
       }
       // Auto-upgrade previews → full tracks (keeps original id so playback continues seamlessly)
-      if (url && useStore.getState().preferFull && track.isPreview && !track.upgradedFrom && track.source !== 'ytmusic' && track.source !== 'radio') {
+      if (url && useStore.getState().preferFull && track.isPreview && !track.upgradedFrom && track.source !== 'radio') {
         const up = await upgradeToFull(track);
         if (cancelled) return;
         if (up?.streamUrl) {
@@ -303,7 +217,7 @@ export function useAudioEngine() {
           const idx2 = useStore.getState().index;
           if (q2[idx2]?.id === track.id) {
             q2[idx2] = up;
-            useStore.setState({ queue: q2, activeFormat: up.codec ? up.codec.toUpperCase() : null });
+            useStore.setState({ queue: q2 });
           }
           url = up.streamUrl;
           if (!upgradeToastShown) { upgradeToastShown = true; useStore.getState().toast('Auto-upgraded to full track 🔊'); }
@@ -340,7 +254,7 @@ export function useAudioEngine() {
         if (st.crossfade && !st.muted) fadeVolume(el, st.volume, 600);
         else el.volume = st.muted ? 0 : st.volume;
       }
-      // preload next (only already-resolved URLs — YTM resolves lazily on play)
+      // preload next (only already-resolved URLs)
       const q = useStore.getState().queue;
       const nxt = q[useStore.getState().index + 1];
       if (nxt?.streamUrl) { const l = new Audio(); l.preload = 'auto'; l.src = streamFor(nxt, quality); }
@@ -388,21 +302,6 @@ export function useAudioEngine() {
     if (wasPlaying) nel.play().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studioOn]);
-
-  // hot-swap stream URL (format picker / preference) without restarting queue position
-  useEffect(() => {
-    if (!srcNonce) return;
-    const { srcOverride, index: idx } = useStore.getState();
-    if (!srcOverride || idx < 0) return;
-    const el = getAudio();
-    const t = el.currentTime || 0;
-    const wasPlaying = !el.paused;
-    const q = useStore.getState().queue[idx];
-    el.src = useStore.getState().studioOn && !q?._studioFellBack ? api.streamProxy(srcOverride.url) : srcOverride.url;
-    try { el.currentTime = t; } catch { /* metadata not ready yet */ }
-    if (wasPlaying) el.play().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srcNonce]);
 
   // play/pause
   useEffect(() => {

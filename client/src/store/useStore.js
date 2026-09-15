@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import { pickFormat } from '../services/ytmusic';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -20,12 +19,7 @@ export const useStore = create(
       showFullPlayer: false,
       showQueue: false,
       sleepTimerMin: 0,
-      formatPref: 'auto', // auto | opus | m4a (YouTube Music)
       preferFull: true, // auto-upgrade previews to full tracks
-      srcOverride: null, // { url, label } — hot-swapped stream
-      srcNonce: 0,
-      activeFormat: null,
-      ytStatus: 'idle', // idle | loading | ready | unavailable
 
       playTracks: (tracks, startIndex = 0) => {
         const list = (tracks || []).filter(Boolean);
@@ -87,28 +81,10 @@ export const useStore = create(
       setShowQueue: (v) => set({ showQueue: v }),
       setSleepTimer: (min) => set({ sleepTimerMin: min }),
       setPreferFull: (v) => set({ preferFull: v }),
-      setFormatPref: (pref) => {
-        const s = get();
-        const t = s.queue[s.index];
-        if (t?.source === 'ytmusic' && t.formats?.length) {
-          const f = pickFormat(t.formats, pref);
-          if (f?.url) {
-            set({ formatPref: pref, srcOverride: { url: f.url, label: f.label }, activeFormat: f.label, srcNonce: s.srcNonce + 1 });
-            return;
-          }
-        }
-        set({ formatPref: pref });
-      },
-      switchFormat: (format) => set(s => ({
-        srcOverride: { url: format.url, label: format.label },
-        activeFormat: format.label,
-        srcNonce: s.srcNonce + 1,
-      })),
-      setYtStatus: (v) => set({ ytStatus: v }),
 
       // ---------- library ----------
       liked: {},            // id -> track
-      playlists: [],        // {id,name,description,coverAuto,trackIds,tracks,isPublic,createdAt}
+      playlists: [],        // {id,name,description,tracks,isPublic,createdAt}
       followedArtists: {},  // id -> artist
       savedAlbums: {},      // id -> album
       history: [],          // recent tracks (dedup, max 100)
@@ -216,7 +192,7 @@ export const useStore = create(
         studioOn: s.studioOn, eqEnabled: s.eqEnabled, eqGains: s.eqGains,
         eqPreset: s.eqPreset, eqPreamp: s.eqPreamp, normalizeOn: s.normalizeOn,
         profile: s.profile, searchHistory: s.searchHistory, volume: s.volume,
-        formatPref: s.formatPref, preferFull: s.preferFull,
+        preferFull: s.preferFull,
       }),
     }
   )
