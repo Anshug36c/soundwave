@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { api, streamFor } from '../services/musicApi';
-import { ytResolve, pickFormat } from '../services/ytmusic';
+import { ytResolve, pickFormat, ytSearch } from '../services/ytmusic';
 
 // Singleton audio element (no CORS mode — plain playback works with all
 // stream hosts including YouTube's googlevideo URLs)
@@ -17,8 +17,54 @@ function getAudio() {
 // failed YouTube format URLs: "trackId|url"
 const failedYtUrls = new Set();
 
+// auto-upgrade cache: preview trackId -> full track | null
+const upgradeCache = new Map();
+let upgradeToastShown = false;
+
+/** Find a FULL version of a preview track: YouTube match first, then server alternates. */
+async function upgradeToFull(track) {
+  if (upgradeCache.has(track.id)) return upgradeCache.get(track.id);
+  const done = (v) => { if (upgradeCache.size > 100) upgradeCache.clear(); upgradeCache.set(track.id, v); return v; };
+  const query = `${track.title} ${track.artist?.name || ''}`.trim();
+  // 1) YouTube Music in-browser match (full Opus) with duration sanity check
+  try {
+    const r = await ytSearch(query);
+    const cands = [...(r.songs || []), ...(r.videos || [])].slice(0, 3);
+    const match = cands.find(c => {
+      if (!c.duration || !track.duration) return true;
+      return Math.abs(c.duration - track.duration) < 90;
+    }) || cands[0];
+    if (match?.sourceId) {
+      const res = await ytResolve(match.sourceId);
+      const sel = pickFormat(res.formats, useStore.getState().formatPref);
+      if (sel?.url) {
+        return done({
+          ...match, id: track.id, title: track.title,
+          artist: track.artist, artists: track.artists || [],
+          album: track.album, image: track.image, thumbnails: track.thumbnails,
+          duration: track.duration || match.duration,
+          formats: res.formats, streams: res.streams, streamUrl: sel.url,
+          codec: sel.codec, isPreview: false, upgradedFrom: track.source,
+        });
+      }
+    }
+  } catch { /* try server alternates */ }
+  // 2) Server alternates (Audius / Archive full matches)
+  try {
+    const r = await fetch(`/api/alternates?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist?.name || '')}`);
+    if (r.ok) {
+      const j = await r.json();
+      if (j.track?.streamUrl) {
+        return done({ ...j.track, id: track.id, upgradedFrom: track.source });
+      }
+    }
+  } catch { /* keep preview */ }
+  return done(null);
+}
+
 /**
  * Core audio engine:
+ * - auto-upgrades previews to full tracks (YTM Opus → Audius/Archive)
  * - resolves best stream (saavn full → deezer/itunes preview; ytmusic Opus in-browser)
  * - error auto-skip with format-level fallback for YouTube, preloads next track
  * - MediaSession OS controls, keyboard shortcuts, sleep timer
@@ -188,6 +234,21 @@ export function useAudioEngine() {
             url = streamFor({ ...track, ...full }, quality);
           }
         } catch { /* noop */ }
+      }
+      // Auto-upgrade previews → full tracks (keeps original id so playback continues seamlessly)
+      if (url && useStore.getState().preferFull && track.isPreview && !track.upgradedFrom && track.source !== 'ytmusic' && track.source !== 'radio') {
+        const up = await upgradeToFull(track);
+        if (cancelled) return;
+        if (up?.streamUrl) {
+          const q2 = [...useStore.getState().queue];
+          const idx2 = useStore.getState().index;
+          if (q2[idx2]?.id === track.id) {
+            q2[idx2] = up;
+            useStore.setState({ queue: q2, activeFormat: up.codec ? up.codec.toUpperCase() : null });
+          }
+          url = up.streamUrl;
+          if (!upgradeToastShown) { upgradeToastShown = true; useStore.getState().toast('Auto-upgraded to full track 🔊'); }
+        }
       }
       if (cancelled) return;
       if (url && el.dataset.trackId !== track.id) {

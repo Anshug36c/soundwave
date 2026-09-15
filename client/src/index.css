@@ -20,13 +20,33 @@
   --text-dim: #5c5c5c;
   --border: rgba(0, 0, 0, 0.08);
 }
+/* 👻 Snapchat theme — yellow, chunky, playful */
+[data-theme="snap"] {
+  --bg: #fffc00;
+  --bg-soft: #ffffff;
+  --bg-card: #ffffff;
+  --bg-hover: #fff3a3;
+  --text: #141414;
+  --text-dim: #6b6b6b;
+  --accent: #141414;
+  --accent-hover: #333333;
+  --border: #141414;
+  --bw: 3px;
+  --cshadow: 5px 5px 0 #141414;
+  --radius: 20px;
+}
 
 html, body, #root { height: 100%; }
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Inter', 'Poppins', system-ui, -apple-system, sans-serif;
+  font-family: 'Nunito', 'Inter', 'Poppins', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+[data-theme="snap"] h1, [data-theme="snap"] h2 {
+  font-family: 'Titan One', 'Nunito', system-ui, sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.5px;
 }
 *::-webkit-scrollbar { width: 10px; height: 8px; }
 *::-webkit-scrollbar-thumb { background: #535353; border-radius: 8px; }
@@ -41,11 +61,31 @@ body {
 .bg-accent { background: var(--accent); }
 .border-soft { border-color: var(--border); }
 
-.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; transition: transform .18s ease, background .18s ease, box-shadow .18s ease; }
-.card:hover { background: var(--bg-hover); transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,.35); }
+.card { background: var(--bg-card); border: var(--bw, 1px) solid var(--border); border-radius: var(--radius, 12px); box-shadow: var(--cshadow, none); transition: transform .18s ease, background .18s ease, box-shadow .18s ease; }
+.card:hover { background: var(--bg-hover); transform: translateY(-3px); box-shadow: var(--cshadow, 0 12px 28px rgba(0,0,0,.35)); }
 
-.btn-accent { background: var(--accent); color: #000; font-weight: 700; border-radius: 999px; transition: transform .15s ease, background .15s ease; }
+.btn-accent { background: var(--accent); color: var(--accent-ink, #000); font-weight: 800; border-radius: 999px; transition: transform .15s ease, background .15s ease; }
 .btn-accent:hover { background: var(--accent-hover); transform: scale(1.04); }
+
+/* snap: black pills get yellow text everywhere */
+[data-theme="snap"] .bg-accent { color: #fffc00 !important; }
+/* snap: keep dark overlays readable (full player + mini player) */
+[data-theme="snap"] [role="dialog"][aria-label="Now playing"],
+[data-theme="snap"] .glass[class*="bg-black"] { color: #fff; }
+[data-theme="snap"] [role="dialog"][aria-label="Now playing"] .text-dim,
+[data-theme="snap"] .glass[class*="bg-black"] .text-dim { color: #cfcfcf; }
+[data-theme="snap"] [role="dialog"][aria-label="Now playing"] .accent,
+[data-theme="snap"] .glass[class*="bg-black"] .accent { color: #fffc00; }
+[data-theme="snap"] [role="dialog"][aria-label="Now playing"] .eq-bar,
+[data-theme="snap"] .glass[class*="bg-black"] .eq-bar { background: #fffc00; }
+[data-theme="snap"] [role="dialog"][aria-label="Now playing"] .btn-accent,
+[data-theme="snap"] .glass[class*="bg-black"] .btn-accent { box-shadow: 0 0 0 3px #fffc00; }
+[data-theme="snap"] [role="dialog"][aria-label="Now playing"] input[type="range"].slider::-webkit-slider-thumb,
+[data-theme="snap"] .glass[class*="bg-black"] input[type="range"].slider::-webkit-slider-thumb { background: #fffc00; }
+[data-theme="snap"] .hero-gradient { background: linear-gradient(180deg, #fff, #ffe45c); }
+[data-theme="snap"] .sticker { border: 2px solid #141414; transform: rotate(-3deg); display: inline-block; }
+[data-theme="snap"] a[href*="/artist/"] img { box-shadow: 0 0 0 3px #fff, 0 0 0 6px #141414; }
+[data-theme="snap"] input[type="range"].slider { background: rgba(0,0,0,.25); }
 
 .glass { backdrop-filter: blur(24px) saturate(1.4); -webkit-backdrop-filter: blur(24px) saturate(1.4); }
 

@@ -1,6 +1,6 @@
 /* SoundWave service worker — app-shell caching + offline audio via Cache Storage */
-const SHELL = 'soundwave-shell-v2';
-const AUDIO = 'soundwave-audio-v2';
+const SHELL = 'soundwave-shell-v3';
+const AUDIO = 'soundwave-audio-v3';
 const SHELL_URLS = ['/', '/index.html', '/manifest.json', '/icons/icon.svg'];
 
 self.addEventListener('install', (e) => {

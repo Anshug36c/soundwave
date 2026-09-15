@@ -10,6 +10,16 @@ const nav = [
   { to: '/liked', label: 'Liked Songs', icon: '❤️' },
 ];
 
+export function GhostLogo({ size = 26 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2C7.2 2 3.5 5.8 3.5 10.6v7.9l2.4-1.9 2 1.9 2.5-1.9 2 1.9 2.5-1.9 2 1.9 2.4-1.9v-7.9C20.5 5.8 16.8 2 12 2z" fill="#fff" stroke="#141414" strokeWidth="1.8" strokeLinejoin="round" />
+      <circle cx="9" cy="10.5" r="1.3" fill="#141414" />
+      <circle cx="15" cy="10.5" r="1.3" fill="#141414" />
+    </svg>
+  );
+}
+
 export function Sidebar() {
   const playlists = useStore(s => s.playlists);
   const createPlaylist = useStore(s => s.createPlaylist);
@@ -21,7 +31,7 @@ export function Sidebar() {
     <aside className="hidden md:flex w-64 shrink-0 flex-col gap-2 p-2 h-full">
       <div className="card p-4">
         <Link to="/" className="flex items-center gap-2 text-xl font-extrabold tracking-tight">
-          <span className="w-8 h-8 rounded-full bg-accent grid place-items-center text-black">♪</span>
+          <span className="w-9 h-9 rounded-2xl bg-accent grid place-items-center shrink-0"><GhostLogo size={26} /></span>
           SoundWave
         </Link>
         <nav className="mt-4 flex flex-col gap-1" aria-label="Primary">
@@ -66,6 +76,8 @@ export function TopBar() {
   const theme = useStore(s => s.theme);
   const setTheme = useStore(s => s.setTheme);
   const [q, setQ] = useState('');
+  const cycleTheme = () => setTheme(theme === 'dark' ? 'light' : theme === 'light' ? 'snap' : 'dark');
+  const themeIcon = theme === 'dark' ? '☀️' : theme === 'light' ? '👻' : '🌙';
 
   return (
     <header className="sticky top-0 z-20 glass border-b border-soft">
@@ -76,8 +88,8 @@ export function TopBar() {
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search songs, artists, albums…" aria-label="Search"
             className="w-full bg-soft border border-soft rounded-full px-4 py-2 text-sm outline-none focus:border-green-500" />
         </form>
-        <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} className="w-9 h-9 rounded-full bg-hoverable grid place-items-center" aria-label="Toggle theme">
-          {theme === 'dark' ? '☀️' : '🌙'}
+        <button onClick={cycleTheme} className="w-9 h-9 rounded-full bg-hoverable grid place-items-center" aria-label="Cycle theme" title={`Theme: ${theme} (click to change)`}>
+          {themeIcon}
         </button>
         <Link to="/settings" className="w-9 h-9 rounded-full bg-accent grid place-items-center font-bold text-black" aria-label="Profile and settings" title={profile.name}>
           {(profile.name?.[0] || 'G').toUpperCase()}

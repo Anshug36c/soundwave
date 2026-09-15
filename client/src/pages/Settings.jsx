@@ -17,6 +17,8 @@ export default function Settings() {
   const setQuality = useStore(s => s.setQuality);
   const formatPref = useStore(s => s.formatPref);
   const setFormatPref = useStore(s => s.setFormatPref);
+  const preferFull = useStore(s => s.preferFull);
+  const setPreferFull = useStore(s => s.setPreferFull);
   const profile = useStore(s => s.profile);
   const setProfile = useStore(s => s.setProfile);
   const history = useStore(s => s.history);
@@ -41,7 +43,7 @@ export default function Settings() {
       <h1 className="text-2xl font-extrabold tracking-tight">Profile & Settings</h1>
 
       <div className="card p-5 mt-4 flex items-center gap-4">
-        <div className="w-16 h-16 rounded-full bg-accent grid place-items-center text-2xl font-extrabold text-black shrink-0">
+        <div className="w-16 h-16 rounded-full bg-accent grid place-items-center text-2xl font-extrabold shrink-0" style={{ color: '#fffc00' }}>
           {(profile.name?.[0] || 'G').toUpperCase()}
         </div>
         <div className="flex-1">
@@ -72,20 +74,23 @@ export default function Settings() {
       )}
 
       <div className="flex flex-col gap-3 mt-4">
-        <Row label="Appearance" desc="Dark or light theme">
+        <Row label="Appearance" desc="Snap (yellow) · Dark · Light">
           <div className="flex gap-2">
-            {['dark', 'light'].map(t => <button key={t} onClick={() => setTheme(t)} className={`px-4 py-1.5 rounded-full text-sm font-bold capitalize ${theme === t ? 'bg-accent text-black' : 'bg-white/10'}`}>{t}</button>)}
+            {[['snap', '👻 Snap'], ['dark', 'Dark'], ['light', 'Light']].map(([v, l]) => <button key={v} onClick={() => setTheme(v)} className={`px-4 py-1.5 rounded-full text-sm font-bold ${theme === v ? 'bg-accent' : 'bg-white/10'}`} style={theme === v ? { color: '#fffc00' } : {}}>{l}</button>)}
           </div>
         </Row>
         <Row label="Audio quality" desc="High = 320kbps where available">
           <div className="flex gap-2">
-            {['low', 'medium', 'high'].map(q => <button key={q} onClick={() => { setQuality(q); toast(`Quality: ${q}`); }} className={`px-4 py-1.5 rounded-full text-sm font-bold capitalize ${quality === q ? 'bg-accent text-black' : 'bg-white/10'}`}>{q}</button>)}
+            {['low', 'medium', 'high'].map(q => <button key={q} onClick={() => { setQuality(q); toast(`Quality: ${q}`); }} className={`px-4 py-1.5 rounded-full text-sm font-bold capitalize ${quality === q ? 'bg-accent' : 'bg-white/10'}`} style={quality === q ? { color: 'var(--accent-ink, #000)' } : {}}>{q}</button>)}
           </div>
         </Row>
         <Row label="YouTube Music format" desc="Opus (WebM) = best quality · Auto picks the best available">
           <div className="flex gap-2">
-            {[['auto', 'Auto'], ['opus', 'Opus'], ['m4a', 'M4A']].map(([v, l]) => <button key={v} onClick={() => { setFormatPref(v); toast(`YT Music: ${l}`); }} className={`px-4 py-1.5 rounded-full text-sm font-bold ${formatPref === v ? 'bg-accent text-black' : 'bg-white/10'}`}>{l}</button>)}
+            {[['auto', 'Auto'], ['opus', 'Opus'], ['m4a', 'M4A']].map(([v, l]) => <button key={v} onClick={() => { setFormatPref(v); toast(`YT Music: ${l}`); }} className={`px-4 py-1.5 rounded-full text-sm font-bold ${formatPref === v ? 'bg-accent' : 'bg-white/10'}`} style={formatPref === v ? { color: 'var(--accent-ink, #000)' } : {}}>{l}</button>)}
           </div>
+        </Row>
+        <Row label="Prefer full tracks 🔊" desc="Auto-switch previews to full versions (YouTube → Audius/Archive)">
+          <button onClick={() => { setPreferFull(!preferFull); toast(preferFull ? 'Full-track upgrade off' : 'Full-track upgrade on 🔊'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${preferFull ? 'bg-accent' : 'bg-white/10'}`} style={preferFull ? { color: 'var(--accent-ink, #000)' } : {}}>{preferFull ? 'ON' : 'OFF'}</button>
         </Row>
         <Row label="Install app" desc="Add SoundWave to your home screen (PWA)">
           <button onClick={async () => { if (deferred) { deferred.prompt(); await deferred.userChoice; setDeferred(null); } else toast('Use browser menu → Install/Add to Home Screen'); }} className="btn-accent px-4 py-1.5 text-sm">📲 Install</button>
@@ -108,8 +113,8 @@ export default function Settings() {
       </div>
 
       <p className="text-xs text-dim mt-6 leading-5">
-        SoundWave streams via JioSaavn (full tracks where reachable), iTunes + Deezer (previews/charts), AudioDB/MusicBrainz (artist data) & Lyrics.ovh.
-        Add <code>SPOTIFY_CLIENT_ID/SECRET</code> and <code>LASTFM_API_KEY</code> in <code>.env</code> to enable enriched metadata.
+        SoundWave streams via YouTube Music (full Opus), JioSaavn (full where reachable), Audius + Archive.org (full indie), live radio, iTunes + Deezer (previews/charts), AudioDB/MusicBrainz (artist data) & Lyrics.ovh.
+        Add <code>LASTFM_API_KEY</code> in <code>.env</code> to enable enriched metadata.
         Made with ♥ as a demo — respect artists & rights holders.
       </p>
     </div>

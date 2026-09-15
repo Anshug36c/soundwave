@@ -10,14 +10,15 @@ export function Img({ src, alt, className = '' }) {
 
 export function SourceBadge({ track }) {
   let cls = 'bg-amber-500/20 text-amber-400', label = 'PREVIEW';
-  if (track.source === 'ytmusic') {
+  if (track.isLive) { cls = 'bg-red-600 text-white'; label = '● LIVE'; }
+  else if (track.source === 'ytmusic') {
     cls = 'bg-violet-500/25 text-violet-300';
     label = track.codec ? track.codec.toUpperCase() : 'YT · OPUS';
   } else if (!track.isPreview) {
     cls = 'bg-green-500/20 text-green-400';
     label = 'FULL';
   }
-  return <span className={`ml-1 text-[9px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap ${cls}`}>{label}</span>;
+  return <span className={`sticker ml-1 text-[9px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap ${cls}`}>{label}</span>;
 }
 
 export function SongRow({ track, index, context, showIndex = true, onRemove }) {

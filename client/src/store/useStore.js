@@ -21,6 +21,7 @@ export const useStore = create(
       showQueue: false,
       sleepTimerMin: 0,
       formatPref: 'auto', // auto | opus | m4a (YouTube Music)
+      preferFull: true, // auto-upgrade previews to full tracks
       srcOverride: null, // { url, label } — hot-swapped stream
       srcNonce: 0,
       activeFormat: null,
@@ -85,6 +86,7 @@ export const useStore = create(
       setShowFullPlayer: (v) => set({ showFullPlayer: v }),
       setShowQueue: (v) => set({ showQueue: v }),
       setSleepTimer: (min) => set({ sleepTimerMin: min }),
+      setPreferFull: (v) => set({ preferFull: v }),
       setFormatPref: (pref) => {
         const s = get();
         const t = s.queue[s.index];
@@ -172,7 +174,7 @@ export const useStore = create(
       },
 
       // ---------- settings / profile ----------
-      theme: 'dark',
+      theme: 'snap',
       quality: 'high',
       crossfade: 0,
       eq: { bass: 0, mid: 0, treble: 0 },
@@ -202,7 +204,7 @@ export const useStore = create(
         savedAlbums: s.savedAlbums, history: s.history, downloads: s.downloads,
         theme: s.theme, quality: s.quality, crossfade: s.crossfade, eq: s.eq,
         profile: s.profile, searchHistory: s.searchHistory, volume: s.volume,
-        formatPref: s.formatPref,
+        formatPref: s.formatPref, preferFull: s.preferFull,
       }),
     }
   )

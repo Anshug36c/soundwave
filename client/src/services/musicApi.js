@@ -19,6 +19,9 @@ export const api = {
   artist: (source, id) => get(`/artist/${source}/${encodeURIComponent(id)}`),
   playlist: (source, id) => get(`/playlist/${source}/${encodeURIComponent(id)}`),
   charts: () => get('/charts'),
+  underground: () => get('/underground'),
+  stations: (params = {}) => get('/radio-stations' + (Object.keys(params).length ? `?${new URLSearchParams(params)}` : '')),
+  alternates: (title, artist = '') => get(`/alternates?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}`),
   radio: (seed) => get(`/radio?seed=${encodeURIComponent(seed)}`),
   lyrics: ({ saavnId, artist, title }) => {
     const p = new URLSearchParams();

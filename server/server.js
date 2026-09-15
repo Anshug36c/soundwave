@@ -318,6 +318,121 @@ async function audioDbArtist(name) {
   } catch { return null; }
 }
 
+// ---------- Audius (full indie tracks, no key) ----------
+const AUDIUS_DNS = [
+  'https://discoveryprovider.audius.co',
+  'https://discoveryprovider2.audius.co',
+  'https://discoveryprovider3.audius.co',
+];
+async function audiusFetch(path) {
+  let lastErr;
+  for (const base of AUDIUS_DNS) {
+    try {
+      const sep = path.includes('?') ? '&' : '?';
+      return await fetchJson(`${base}${path}${sep}app_name=SoundWave`, {}, 9000);
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('Audius unreachable');
+}
+function normalizeAudiusTrack(t) {
+  if (!t || !t.id) return null;
+  const art = t.artwork || {};
+  const img = art['1000x1000'] || art['480x480'] || art['150x150'] || '';
+  const uimg = t.user?.profile_picture?.['480x480'] || t.user?.profile_picture?.['150x150'] || '';
+  return {
+    id: `audius:${t.id}`, source: 'audius', sourceId: String(t.id),
+    title: t.title || 'Unknown',
+    artist: { id: `audius:ar:${t.user?.id || t.user?.handle || ''}`, name: t.user?.name || t.user?.handle || 'Unknown Artist', image: uimg },
+    artists: [],
+    album: { id: '', name: '', image: img, year: (t.release_date || '').slice(0, 4) },
+    duration: Number(t.duration) || 0,
+    streamUrl: `${AUDIUS_DNS[0]}/v1/tracks/${t.id}/stream?app_name=SoundWave`,
+    streams: null, previewUrl: '', image: img,
+    thumbnails: { small: art['150x150'] || img, medium: art['480x480'] || img, large: img },
+    language: '', playCount: Number(t.play_count) || 0, explicit: false,
+    hasLyrics: false, lyricsId: null, genre: t.genre ? [t.genre] : [],
+    url: t.permalink ? `https://audius.co${t.permalink}` : '',
+    isPreview: false, isLiked: false,
+  };
+}
+async function audiusTrending(limit = 15) {
+  const j = await audiusFetch(`/v1/tracks/trending?limit=${limit}`);
+  return (j?.data || []).map(normalizeAudiusTrack).filter(t => t && t.streamUrl);
+}
+async function audiusSearch(query, limit = 10) {
+  const j = await audiusFetch(`/v1/tracks/search?query=${encodeURIComponent(query)}&limit=${limit}`);
+  return (j?.data || []).map(normalizeAudiusTrack).filter(t => t && t.streamUrl);
+}
+
+// ---------- Internet Archive (full tracks, no key, best-effort) ----------
+function parseArchiveDuration(d) {
+  if (d == null) return 0;
+  if (/^\d+(\.\d+)?$/.test(String(d).trim())) return Math.round(Number(d));
+  const parts = String(d).split(':').map(Number);
+  if (!parts.length || parts.some(isNaN)) return 0;
+  return parts.reduce((a, b) => a * 60 + b, 0);
+}
+async function archiveSearch(query, limit = 6) {
+  const q = `(${query}) AND mediatype:audio`;
+  const j = await fetchJson(`https://archive.org/advancedsearch.php?q=${encodeURIComponent(q)}&fl[]=identifier&fl[]=title&fl[]=creator&fl[]=duration&rows=${limit}&output=json`, {}, 12000);
+  const docs = j?.response?.docs || [];
+  const out = [];
+  for (const d of docs.slice(0, limit)) {
+    try {
+      const meta = await fetchJson(`https://archive.org/metadata/${d.identifier}`, {}, 10000);
+      const files = (meta?.files || []).filter(f => /\.mp3$/i.test(f.name || ''));
+      const pick = files.find(f => !/_vbr|_64kb|_128kb/i.test(f.name)) || files[0];
+      if (!pick) continue;
+      const sid = d.identifier;
+      out.push({
+        id: `archive:${sid}`, source: 'archive', sourceId: sid,
+        title: d.title || meta?.metadata?.title || sid,
+        artist: { id: '', name: d.creator || meta?.metadata?.creator || 'Archive.org', image: '' },
+        artists: [],
+        album: { id: '', name: '', image: `https://archive.org/services/img/${sid}`, year: '' },
+        duration: parseArchiveDuration(d.duration || meta?.metadata?.duration),
+        streamUrl: `https://archive.org/download/${sid}/${encodeURIComponent(pick.name).replace(/%2F/g, '/')}`,
+        streams: null, previewUrl: '', image: `https://archive.org/services/img/${sid}`,
+        thumbnails: { small: '', medium: '', large: '' },
+        language: '', playCount: 0, explicit: false,
+        hasLyrics: false, lyricsId: null, genre: [],
+        url: `https://archive.org/details/${sid}`,
+        isPreview: false, isLiked: false,
+      });
+    } catch { /* skip failed items */ }
+  }
+  return out;
+}
+
+// ---------- Radio Browser (live stations, no key) ----------
+const RADIO_HOSTS = ['https://de1.api.radio-browser.info', 'https://de2.api.radio-browser.info'];
+async function radioFetch(path) {
+  let lastErr;
+  for (const h of RADIO_HOSTS) {
+    try { return await fetchJson(`${h}${path}`, { headers: { 'User-Agent': 'SoundWave/1.0' } }, 9000); }
+    catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('Radio Browser unreachable');
+}
+function normalizeStation(s) {
+  const url = s.url_resolved || s.url;
+  if (!s.stationuuid || !url || !/^https?:\/\//.test(url)) return null;
+  return {
+    id: `radio:${s.stationuuid}`, source: 'radio', sourceId: s.stationuuid,
+    title: (s.name || 'Unknown Station').trim(),
+    artist: { id: '', name: [s.country, (s.tags || '').split(',').slice(0, 2).join(' · ')].filter(Boolean).join(' · ') || 'Live Radio', image: s.favicon || '' },
+    artists: [],
+    album: { id: '', name: 'Live Radio', image: s.favicon || '', year: '' },
+    duration: 0, streamUrl: url, streams: null, previewUrl: '',
+    image: s.favicon || '', thumbnails: { small: '', medium: '', large: '' },
+    language: s.language || '', playCount: Number(s.votes) || 0, explicit: false,
+    hasLyrics: false, lyricsId: null,
+    genre: (s.tags || '').split(',').map(t => t.trim()).filter(Boolean).slice(0, 3),
+    url: s.homepage || '', isPreview: false, isLive: true, isLiked: false,
+    codec: s.codec || '', bitrate: Number(s.bitrate) || 0,
+  };
+}
+
 // ---------- routes ----------
 app.get('/api/health', (req, res) => res.json({ ok: true, service: 'soundwave', time: new Date().toISOString() }));
 
@@ -328,6 +443,10 @@ app.get('/api/sources', async (req, res) => {
     deezer: fetchJson(`${DEEZER}/search?q=test&limit=1`, {}, 8000).then(() => 'ok'),
     lyrics: fetchJson('https://api.lyrics.ovh/v1/Coldplay/Yellow', {}, 8000).then(() => 'ok'),
     audiodb: fetchJson(`https://www.theaudiodb.com/api/v1/json/${AUDIODB_KEY}/search.php?s=coldplay`, {}, 8000).then(() => 'ok'),
+    audius: audiusFetch('/v1/tracks/trending?limit=1').then(() => 'ok'),
+    archive: fetchJson('https://archive.org/advancedsearch.php?q=test&fl[]=identifier&rows=1&output=json', {}, 10000).then(() => 'ok'),
+    radio: radioFetch('/json/stations/topvote/1').then(() => 'ok'),
+    ytplayer: fetch('https://www.youtube.com/iframe_api', { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(8000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return 'ok'; }),
   };
   const out = {};
   await Promise.all(Object.entries(probes).map(async ([k, p]) => {
@@ -385,8 +504,8 @@ app.get('/api/search', async (req, res) => {
   try {
     let songs = [], albums = [], artists = [], playlists = [];
     if (type === 'all' || type === 'songs') {
-      const [a, b, c] = await Promise.allSettled([saavnSearchSongs(q, 20), itunesSearchSongs(q, 20), deezerSearchTracks(q, 12)]);
-      songs = dedupe([...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(c.status === 'fulfilled' ? c.value : [])]);
+      const [a, b, c, d] = await Promise.allSettled([saavnSearchSongs(q, 20), itunesSearchSongs(q, 20), deezerSearchTracks(q, 12), audiusSearch(q, 8)]);
+      songs = dedupe([...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(c.status === 'fulfilled' ? c.value : []), ...(d.status === 'fulfilled' ? d.value : [])]);
     }
     if (type === 'all' || type === 'albums') {
       const [a, b] = await Promise.allSettled([saavnSearchAlbums(q, 10), itunesSearchAlbums(q, 10)]);
@@ -598,6 +717,63 @@ app.get('/api/radio', async (req, res) => {
     setCache(req.originalUrl, payload);
     res.json(payload);
   } catch (e) { res.status(502).json({ error: 'Radio failed', detail: e.message }); }
+});
+
+// Full-track sources: Audius trending, live radio, alternates matcher
+app.get('/api/underground', async (req, res) => {
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    const tracks = await audiusTrending(15);
+    setCache(req.originalUrl, tracks);
+    res.json(tracks);
+  } catch (e) { res.status(502).json({ error: 'Underground feed failed', detail: e.message }); }
+});
+
+app.get('/api/radio-stations', async (req, res) => {
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    const { tag, country, name } = req.query;
+    let path = '/json/stations/topvote/24';
+    if (name) path = `/json/stations/search?name=${encodeURIComponent(name)}&limit=20`;
+    else if (tag) path = `/json/stations/bytag/${encodeURIComponent(tag)}?limit=20`;
+    else if (country) path = `/json/stations/bycountry/${encodeURIComponent(country)}?limit=20`;
+    const j = await radioFetch(path);
+    const stations = (Array.isArray(j) ? j : []).map(normalizeStation).filter(Boolean).slice(0, 24);
+    setCache(req.originalUrl, stations);
+    res.json(stations);
+  } catch (e) { res.status(502).json({ error: 'Radio stations failed', detail: e.message }); }
+});
+
+function similarityScore(a, b) {
+  const words = s => new Set(String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2));
+  const A = words(a), B = words(b);
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  A.forEach(w => { if (B.has(w)) inter++; });
+  return inter / Math.max(A.size, B.size);
+}
+
+app.get('/api/alternates', async (req, res) => {
+  const title = (req.query.title || '').trim();
+  const artist = (req.query.artist || '').trim();
+  if (!title) return res.json({ track: null });
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    const q = `${title} ${artist}`.trim();
+    const [au, ar] = await Promise.allSettled([audiusSearch(q, 8), archiveSearch(q, 4)]);
+    const cands = [...(au.status === 'fulfilled' ? au.value : []), ...(ar.status === 'fulfilled' ? ar.value : [])];
+    let best = null, bestScore = 0;
+    for (const c of cands) {
+      const s = similarityScore(`${title} ${artist}`, `${c.title} ${c.artist?.name || ''}`);
+      if (s > bestScore) { bestScore = s; best = c; }
+    }
+    const result = bestScore >= 0.4 && best?.streamUrl ? { track: best, score: bestScore } : { track: null, score: bestScore };
+    setCache(req.originalUrl, result);
+    res.json(result);
+  } catch (e) { res.json({ track: null }); }
 });
 
 app.get('/api/lyrics', async (req, res) => {

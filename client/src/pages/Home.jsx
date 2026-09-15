@@ -20,6 +20,8 @@ export default function Home() {
   const playTracks = useStore(s => s.playTracks);
   const [heroIdx, setHeroIdx] = useState(0);
   const [ytmSongs, setYtmSongs] = useState(null);
+  const [underground, setUnderground] = useState(null);
+  const [stations, setStations] = useState(null);
 
   useEffect(() => {
     api.home().then(setData).catch(e => setError(e.message));
@@ -29,6 +31,8 @@ export default function Home() {
     import('../services/ytmusic').then(m => m.ytTrending())
       .then(s => setYtmSongs(s))
       .catch(() => setYtmSongs([]));
+    api.underground().then(setUnderground).catch(() => setUnderground([]));
+    api.stations().then(setStations).catch(() => setStations([]));
   }, []);
 
   useEffect(() => {
@@ -95,6 +99,33 @@ export default function Home() {
         <SectionRow title="▶ YouTube Music" subtitle="Full tracks · Opus quality · plays in your browser">
           {ytmSongs.map(t => <SongCard key={t.id} track={t} context={ytmSongs} />)}
         </SectionRow>
+      )}
+
+      {underground && underground.length > 0 && (
+        <SectionRow title="🔥 Underground" subtitle="Full tracks · fresh indie artists on Audius">
+          {underground.map(t => <SongCard key={t.id} track={t} context={underground} />)}
+        </SectionRow>
+      )}
+
+      {stations && stations.length > 0 && (
+        <section className="mt-7">
+          <div className="mb-3 px-1">
+            <h2 className="text-xl font-extrabold tracking-tight">📻 Live Radio</h2>
+            <p className="text-xs text-dim">Real stations streaming now</p>
+          </div>
+          <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 px-1">
+            {stations.map(s => (
+              <button key={s.id} onClick={() => playTracks([s], 0)} className="card shrink-0 w-36 p-3 text-center">
+                <span className="relative inline-block">
+                  <Img src={s.image} alt={s.title} className="w-20 h-20 rounded-full object-cover mx-auto bg-soft" />
+                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-red-600 text-white sticker">● LIVE</span>
+                </span>
+                <p className="mt-2 truncate text-xs font-bold">{s.title}</p>
+                <p className="truncate text-[10px] text-dim">{s.artist?.name}</p>
+              </button>
+            ))}
+          </div>
+        </section>
       )}
 
       <SectionRow title="Top Artists" subtitle="Most streamed voices">
