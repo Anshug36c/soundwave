@@ -1,7 +1,7 @@
 # SoundWave — deploy on Railway (uses Nixpacks, no Dockerfile needed)
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm --prefix server install && npm --prefix client install && npm --prefix client run build"
+buildCommand = "npm --prefix server install --include=dev && npm --prefix client install --include=dev && npm --prefix client run build"
 
 [deploy]
 startCommand = "npm --prefix server start"

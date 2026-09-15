@@ -72,7 +72,7 @@ docker run -p 5000:5000 soundwave
 ```
 
 **Manual (any Node host):**
-- Build command: `npm --prefix server install && npm --prefix client install && npm --prefix client run build`
+- Build command: `npm --prefix server install --include=dev && npm --prefix client install --include=dev && npm --prefix client run build`
 - Start command: `npm --prefix server start` (or `node server/server.js`)
 - No env vars required. Optional: `LASTFM_API_KEY`, `ITUNES_COUNTRY=IN`.
 
