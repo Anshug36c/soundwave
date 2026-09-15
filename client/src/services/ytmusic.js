@@ -7,7 +7,15 @@ let ytPromise = null;
 export function getInnertube() {
   if (!ytPromise) {
     ytPromise = (async () => {
-      const { Innertube } = await import('youtubei.js');
+      const { Innertube, Platform } = await import('youtubei.js');
+      // youtubei.js v18 requires a JS evaluator for signature deciphering.
+      // Browsers can run the extracted player code natively via Function.
+      if (Platform?.shim) {
+        Platform.shim.eval = async (data, env) => {
+          const code = `${data.output}\nreturn process(${JSON.stringify(env?.n ?? '')}, ${JSON.stringify(env?.sp ?? '')}, ${JSON.stringify(env?.sig ?? '')});`;
+          return new Function(code)();
+        };
+      }
       const yt = await Innertube.create({});
       return yt;
     })().catch((e) => {
@@ -98,6 +106,18 @@ export async function ytSearch(query) {
     songCount: 0,
   })).filter((a) => a.name && a.name !== 'Unknown Album');
   [...out.artists, ...out.albums].forEach((x) => { x.thumbnails = { small: x.image, medium: x.image, large: x.image }; });
+  if (!out.songs.length && !out.videos.length) {
+    // Fallback: regular YouTube search (works on networks where YTM shelves are gated)
+    const s = await yt.search(query);
+    const vids = (s.results || []).filter((n) => n && (n.id || n.video_id));
+    out.videos = vids.slice(0, 20).map((v) => normalizeYtSong({
+      id: v.id || v.video_id,
+      title: v.title?.text || v.title || '',
+      authors: [{ name: v.author?.name || '' }],
+      duration: { seconds: v.duration?.seconds || 0 },
+      thumbnails: v.thumbnails || [],
+    })).filter((t) => t.sourceId && t.title);
+  }
   return out;
 }
 
