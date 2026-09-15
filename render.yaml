@@ -10,6 +10,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_VERSION
+        value: 20
       - key: ITUNES_COUNTRY
         value: IN
       # Optional — get free keys to enrich artist data:
