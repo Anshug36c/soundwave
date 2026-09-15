@@ -16,6 +16,7 @@ export default function App() {
   useAudioEngine();
 
   useEffect(() => {
+    window.__SOUNDWAVE_MOUNTED = true;
     document.documentElement.dataset.theme = theme;
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#121212' : '#f6f6f4');
   }, [theme]);

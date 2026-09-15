@@ -1,6 +1,8 @@
-/* SoundWave service worker — app-shell caching + offline audio via Cache Storage */
-const SHELL = 'soundwave-shell-v3';
-const AUDIO = 'soundwave-audio-v3';
+/* SoundWave service worker — app-shell caching + offline audio via Cache Storage.
+ * Navigations are NETWORK-FIRST: a stale cached index.html referencing deleted
+ * hashed assets causes white screens after deploys. Cache is offline fallback only. */
+const SHELL = 'soundwave-shell-v4';
+const AUDIO = 'soundwave-audio-v4';
 const SHELL_URLS = ['/', '/index.html', '/manifest.json', '/icons/icon.svg'];
 
 self.addEventListener('install', (e) => {
@@ -45,9 +47,19 @@ self.addEventListener('fetch', (e) => {
       const copy = res.clone();
       caches.open(SHELL).then((c) => c.put(request, copy)).catch(() => {});
       return res;
-    }).catch(() => caches.match(request)));
+    }).catch(() => caches.match(request))));
     return;
   }
-  // Shell: cache-first
+  // Navigations + shell: NETWORK-FIRST (prevents stale-shell white screens),
+  // cache fallback keeps offline mode working.
+  if (request.mode === 'navigate' || SHELL_URLS.includes(url.pathname)) {
+    e.respondWith(fetch(request).then((res) => {
+      const copy = res.clone();
+      caches.open(SHELL).then((c) => c.put(request, copy)).catch(() => {});
+      return res;
+    }).catch(() => caches.match(request).then((hit) => hit || caches.match('/index.html'))));
+    return;
+  }
+  // Everything else (hashed assets): cache-first
   e.respondWith(caches.match(request).then((hit) => hit || fetch(request).catch(() => caches.match('/index.html'))));
 });

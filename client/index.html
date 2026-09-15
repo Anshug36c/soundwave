@@ -12,6 +12,42 @@
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
     <title>SoundWave — Music for Everyone</title>
+    <script>
+    // Boot watchdog: if React fails to mount (e.g. a stuck service worker serves a
+    // stale shell), drop service workers once per session and reload to self-heal.
+    (function () {
+      window.__SW_ERRORS = [];
+      window.addEventListener('error', function (e) { window.__SW_ERRORS.push(String((e && e.message) || 'script error')); }, true);
+      window.addEventListener('unhandledrejection', function (e) { var r = e && e.reason; window.__SW_ERRORS.push('rejection: ' + String((r && r.message) || r)); });
+      window.addEventListener('load', function () {
+        setTimeout(function () {
+          if (window.__SOUNDWAVE_MOUNTED) return;
+          try {
+            if (!sessionStorage.getItem('swreset1')) {
+              sessionStorage.setItem('swreset1', '1');
+              if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then(function (rs) {
+                  rs.forEach(function (r) { r.unregister(); });
+                  setTimeout(function () { location.reload(); }, 400);
+                });
+                return;
+              }
+              location.reload();
+              return;
+            }
+          } catch (err) { /* storage unavailable */ }
+          var root = document.getElementById('root');
+          if (root) {
+            root.innerHTML = '<div style="font-family:system-ui;padding:2rem;max-width:520px;margin:2rem auto;background:#fff;border:3px solid #141414;border-radius:16px;color:#141414">'
+              + '<h2 style="margin:0 0 .5rem">SoundWave couldn\'t start 😞</h2>'
+              + '<p style="font-size:14px">Please hard-refresh (Ctrl+Shift+R) or clear site data and try again.</p>'
+              + (window.__SW_ERRORS.length ? '<pre style="font-size:11px;background:#f4f4f4;padding:.75rem;border-radius:8px;overflow:auto">' + window.__SW_ERRORS.slice(0, 4).join('\n').replace(/</g, '&lt;') + '</pre>' : '')
+              + '</div>';
+          }
+        }, 5000);
+      });
+    })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
