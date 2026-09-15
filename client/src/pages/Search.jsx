@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, debounce } from '../services/musicApi';
 import { useStore } from '../store/useStore';
-import { SongRow, AlbumCard, ArtistCard, PlaylistCard, SkeletonList } from '../components/Cards';
+import { SongRow, AlbumCard, ArtistCard, SkeletonList } from '../components/Cards';
 
-const TABS = ['Songs', 'Albums', 'Artists', 'Playlists'];
-const TRENDING = ['Arijit Singh', 'Taylor Swift', 'AP Dhillon', 'Lofi beats', 'Shreya Ghoshal', 'Drake', 'Bollywood 2026', 'Coldplay'];
+const TABS = ['Songs', 'Albums', 'Artists'];
+const TRENDING = ['AP Dhillon', 'Diljit Dosanjh', 'Guru Randhawa', 'Jasmine Sandlas', 'Tulsi Kumar', 'Karan Aujla', 'Shubh', 'Prem Dhillon'];
 
 export default function Search() {
   const [params] = useSearchParams();
@@ -14,14 +14,14 @@ export default function Search() {
   const initialTab = TABS.includes(tabParam) ? tabParam : 'Songs';
   const [q, setQ] = useState(initial);
   const [tab, setTab] = useState(initialTab);
-  const [results, setResults] = useState({ songs: [], albums: [], artists: [], playlists: [] });
+  const [results, setResults] = useState({ songs: [], albums: [], artists: [] });
   const [loading, setLoading] = useState(false);
   const pushSearch = useStore(s => s.pushSearch);
   const searchHistory = useStore(s => s.searchHistory);
   const clearSearchHistory = useStore(s => s.clearSearchHistory);
 
   const run = useMemo(() => debounce(async (query) => {
-    if (!query.trim()) { setResults({ songs: [], albums: [], artists: [], playlists: [] }); setLoading(false); return; }
+    if (!query.trim()) { setResults({ songs: [], albums: [], artists: [] }); setLoading(false); return; }
     setLoading(true);
     try {
       const r = await api.search(query.trim());
@@ -72,9 +72,6 @@ export default function Search() {
       )}
       {!loading && q && tab === 'Artists' && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4">{results.artists.map(a => <ArtistCard key={a.id} artist={a} />)}</div>
-      )}
-      {!loading && q && tab === 'Playlists' && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4">{results.playlists.map(p => <PlaylistCard key={p.id} playlist={p} />)}</div>
       )}
     </div>
   );

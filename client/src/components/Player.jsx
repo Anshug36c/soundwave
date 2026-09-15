@@ -26,7 +26,7 @@ export function MiniPlayer() {
       <div className="h-1 bg-white/10"><div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} /></div>
       <div className="glass bg-black/60 border-t border-soft px-3 py-2 flex items-center gap-3">
         <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" aria-label="Open full player">
-          <Img src={track.image || track.thumbnails?.small} alt={track.title} className="w-12 h-12 rounded-md object-cover" />
+          <Img src={track.image} alt={track.title} className="w-12 h-12 rounded-md object-cover" />
           <span className="min-w-0">
             <p className="truncate text-sm font-bold flex items-center gap-2">{isPlaying && <EqIcon />}{track.title}</p>
             <p className="truncate text-xs text-dim">{track.artist?.name}</p>
@@ -46,7 +46,7 @@ function Lyrics({ track }) {
   useEffect(() => {
     if (!track) return;
     setLoading(true); setLyrics(null);
-    api.lyrics({ saavnId: track.source === 'saavn' ? track.sourceId : undefined, artist: track.artist?.name, title: track.title })
+    api.lyrics({ artist: track.artist?.name, title: track.title })
       .then(r => setLyrics(r.lyrics))
       .catch(() => setLyrics(null))
       .finally(() => setLoading(false));
@@ -113,7 +113,7 @@ export function FullPlayer() {
   const track = index >= 0 ? queue[index] : null;
   if (!show || !track) return null;
   const isLiked = !!liked[track.id];
-  const playLabel = track.isPreview ? '30s PREVIEW' : 'FULL TRACK';
+  const playLabel = 'FULL TRACK';
 
   const share = async () => {
     const url = `${location.origin}/search?q=${encodeURIComponent(track.title + ' ' + track.artist?.name)}`;
@@ -137,7 +137,7 @@ export function FullPlayer() {
         <div className="grid md:grid-cols-2 gap-8 mt-6 items-start">
           <div className="flex flex-col items-center">
             <div className={`relative ${isPlaying ? 'animate-spin-slow' : 'paused-spin animate-spin-slow'}`}>
-              <Img src={track.image || track.thumbnails?.large} alt={track.title} className="w-64 h-64 md:w-80 md:h-80 rounded-full object-cover shadow-2xl border-8 border-black/60" />
+              <Img src={track.image} alt={track.title} className="w-64 h-64 md:w-80 md:h-80 rounded-full object-cover shadow-2xl border-8 border-black/60" />
               <div className="absolute inset-0 grid place-items-center"><div className="w-16 h-16 rounded-full bg-black/80 border-4 border-white/20" /></div>
             </div>
             <div className="w-full mt-4">
@@ -203,7 +203,7 @@ export function FullPlayer() {
                 <p><b>Artist:</b> {track.artist?.name}</p>
                 <p><b>Album:</b> {track.album?.name} {track.album?.year && `(${track.album.year})`}</p>
                 <p><b>Duration:</b> {formatTime(track.duration)}</p>
-                <p><b>Source:</b> {track.source}{track.isPreview ? ' (30s preview)' : ' (full track)'}</p>
+                <p><b>Source:</b> DJPunjab · full MP3</p>
                 {track.codec && <p><b>Codec:</b> {track.codec.toUpperCase()}{track.quality ? ` · ${track.quality}kbps` : ''}</p>}
                 {track.language && <p><b>Language:</b> {track.language}</p>}
                 {track.playCount > 0 && <p><b>Plays:</b> {Number(track.playCount).toLocaleString()}</p>}
@@ -240,7 +240,7 @@ export function QueueDrawer() {
           {queue.map((t, i) => (
             <div key={`${t.id}-${i}`} className={`flex items-center gap-2 p-1.5 rounded-lg ${i === index ? 'bg-accent/10' : ''}`}>
               <button onClick={() => { playTracks(queue, i); }} className="flex items-center gap-2 flex-1 min-w-0 text-left">
-                <Img src={t.image || t.thumbnails?.small} alt="" className="w-10 h-10 rounded object-cover" />
+                <Img src={t.image} alt="" className="w-10 h-10 rounded object-cover" />
                 <span className="min-w-0"><p className="truncate text-sm font-semibold">{t.title}</p><p className="truncate text-xs text-dim">{t.artist?.name}</p></span>
               </button>
               {i === index && <span className="text-xs accent font-bold">PLAYING</span>}

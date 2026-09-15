@@ -15,8 +15,6 @@ export default function Settings() {
   const setTheme = useStore(s => s.setTheme);
   const quality = useStore(s => s.quality);
   const setQuality = useStore(s => s.setQuality);
-  const preferFull = useStore(s => s.preferFull);
-  const setPreferFull = useStore(s => s.setPreferFull);
   const studioOn = useStore(s => s.studioOn);
   const setStudioOn = useStore(s => s.setStudioOn);
   const crossfade = useStore(s => s.crossfade);
@@ -81,15 +79,12 @@ export default function Settings() {
             {[['snap', '👻 Snap'], ['dark', 'Dark'], ['light', 'Light']].map(([v, l]) => <button key={v} onClick={() => setTheme(v)} className={`px-4 py-1.5 rounded-full text-sm font-bold ${theme === v ? 'bg-accent' : 'bg-white/10'}`} style={theme === v ? { color: '#fffc00' } : {}}>{l}</button>)}
           </div>
         </Row>
-        <Row label="Audio quality" desc="High = 320kbps where available">
+        <Row label="Audio quality" desc="High = 320kbps · Medium = 128 · Low = 48 (DJPunjab MP3s, auto-fallback)">
           <div className="flex gap-2">
             {['low', 'medium', 'high'].map(q => <button key={q} onClick={() => { setQuality(q); toast(`Quality: ${q}`); }} className={`px-4 py-1.5 rounded-full text-sm font-bold capitalize ${quality === q ? 'bg-accent' : 'bg-white/10'}`} style={quality === q ? { color: 'var(--accent-ink, #000)' } : {}}>{q}</button>)}
           </div>
         </Row>
-        <Row label="Prefer full tracks 🔊" desc="Auto-switch previews to full versions (DJPunjab → Audius/Archive)">
-          <button onClick={() => { setPreferFull(!preferFull); toast(preferFull ? 'Full-track upgrade off' : 'Full-track upgrade on 🔊'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${preferFull ? 'bg-accent' : 'bg-white/10'}`} style={preferFull ? { color: 'var(--accent-ink, #000)' } : {}}>{preferFull ? 'ON' : 'OFF'}</button>
-        </Row>
-        <Row label="🎚️ Studio sound" desc="10-band EQ + live visualizer + normalize. Streams via proxy (more data). Find it in the player → Studio tab.">
+        <Row label="🎚️ Studio sound" desc="10-band EQ + live visualizer + normalize. Find it in the player → Studio tab.">
           <button onClick={() => { setStudioOn(!studioOn); toast(studioOn ? 'Studio sound off' : 'Studio sound on 🎚️'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${studioOn ? 'bg-accent' : 'bg-white/10'}`} style={studioOn ? { color: 'var(--accent-ink, #000)' } : {}}>{studioOn ? 'ON' : 'OFF'}</button>
         </Row>
         <Row label="Crossfade" desc="Smooth fade-out / fade-in between tracks">
@@ -116,10 +111,8 @@ export default function Settings() {
       </div>
 
       <p className="text-xs text-dim mt-6 leading-5">
-        SoundWave streams via DJPunjab (full MP3s), SoundCloud (full), JioSaavn (full where reachable), Audius + Archive.org (full indie), live radio, podcasts, iTunes + Tidal (previews/charts), AudioDB/MusicBrainz (artist data) & Lyrics.ovh.
-        Sound upgrades (EQ, visualizer, palette) inspired by the open-source Monochrome player.
-        Add <code>LASTFM_API_KEY</code> in <code>.env</code> to enable enriched metadata.
-        Made with ♥ as a demo — respect artists & rights holders.
+        SoundWave plays full MP3s from DJPunjab — every track is complete, no previews.
+        Lyrics by Lyrics.ovh. Made with ♥ as a demo — respect artists & rights holders.
       </p>
     </div>
   );

@@ -19,7 +19,6 @@ export const useStore = create(
       showFullPlayer: false,
       showQueue: false,
       sleepTimerMin: 0,
-      preferFull: true, // auto-upgrade previews to full tracks
 
       playTracks: (tracks, startIndex = 0) => {
         const list = (tracks || []).filter(Boolean);
@@ -80,7 +79,6 @@ export const useStore = create(
       setShowFullPlayer: (v) => set({ showFullPlayer: v }),
       setShowQueue: (v) => set({ showQueue: v }),
       setSleepTimer: (min) => set({ sleepTimerMin: min }),
-      setPreferFull: (v) => set({ preferFull: v }),
 
       // ---------- library ----------
       liked: {},            // id -> track
@@ -192,7 +190,6 @@ export const useStore = create(
         studioOn: s.studioOn, eqEnabled: s.eqEnabled, eqGains: s.eqGains,
         eqPreset: s.eqPreset, eqPreamp: s.eqPreamp, normalizeOn: s.normalizeOn,
         profile: s.profile, searchHistory: s.searchHistory, volume: s.volume,
-        preferFull: s.preferFull,
       }),
     }
   )

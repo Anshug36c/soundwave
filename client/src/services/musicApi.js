@@ -1,4 +1,4 @@
-// Unified frontend API client — talks to the SoundWave backend aggregator.
+// SoundWave API client — DJPunjab-only backend.
 const BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
 
 async function get(path) {
@@ -17,33 +17,17 @@ export const api = {
   song: (source, id) => get(`/song/${source}/${encodeURIComponent(id)}`),
   album: (source, id) => get(`/album/${source}/${encodeURIComponent(id)}`),
   artist: (source, id) => get(`/artist/${source}/${encodeURIComponent(id)}`),
-  playlist: (source, id) => get(`/playlist/${source}/${encodeURIComponent(id)}`),
-  charts: () => get('/charts'),
-  underground: () => get('/underground'),
-  stations: (params = {}) => get('/radio-stations' + (Object.keys(params).length ? `?${new URLSearchParams(params)}` : '')),
-  alternates: (title, artist = '') => get(`/alternates?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}`),
-  podcasts: (q) => get(`/podcasts/search?q=${encodeURIComponent(q)}`),
-  podcastTop: () => get('/podcasts/top'),
-  episodes: (feedUrl, image = '', show = '') => get(`/podcasts/episodes?feedUrl=${encodeURIComponent(feedUrl)}&image=${encodeURIComponent(image)}&show=${encodeURIComponent(show)}`),
-  concerts: () => get('/concerts'),
-  radio: (seed) => get(`/radio?seed=${encodeURIComponent(seed)}`),
-  lyrics: ({ saavnId, artist, title }) => {
-    const p = new URLSearchParams();
-    if (saavnId) p.set('saavnId', saavnId);
-    if (artist) p.set('artist', artist);
-    if (title) p.set('title', title);
-    return get(`/lyrics?${p.toString()}`);
-  },
-  streamProxy: (url) => (url.startsWith('/api/') ? url : `${BASE}/stream?url=${encodeURIComponent(url)}`),
+  lyrics: ({ artist, title }) => get(`/lyrics?artist=${encodeURIComponent(artist || '')}&title=${encodeURIComponent(title || '')}`),
 };
 
 export function streamFor(track, quality = 'high') {
-  if (!track) return '';
-  return track.streams?.[quality] || track.streamUrl || track.previewUrl || '';
+  if (!track?.streamUrl) return '';
+  const q = ['high', 'medium', 'low'].includes(quality) ? quality : 'high';
+  return `${track.streamUrl}${track.streamUrl.includes('?') ? '&' : '?'}quality=${q}`;
 }
 
 export function parseTrackId(id) {
-  // "saavn:xxx" | "deezer:xxx" | "saavn:al:xxx" ...
+  // "djp:xxx" | "djp:al:xxx" | "djp:ar:slug"
   const [source, kind, ...rest] = String(id || '').split(':');
   if (rest.length) return { source, kind, id: rest.join(':') };
   return { source, kind: 'track', id: kind };

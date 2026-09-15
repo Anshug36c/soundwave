@@ -8,17 +8,8 @@ export function Img({ src, alt, className = '' }) {
   );
 }
 
-export function SourceBadge({ track }) {
-  let cls = 'bg-amber-500/20 text-amber-400', label = 'PREVIEW';
-  if (track.source === 'sc' && !track.isPreview) { cls = 'bg-orange-500/20 text-orange-300'; label = 'FULL'; }
-  else if (track.source === 'tidal') { cls = 'bg-teal-400/20 text-teal-300'; label = 'TIDAL·FLAC'; }
-  else if (track.source === 'mono') { cls = 'bg-cyan-500/20 text-cyan-300'; label = 'HI-RES·30s'; }
-  else if (track.isLive) { cls = 'bg-red-600 text-white'; label = '● LIVE'; }
-  else if (!track.isPreview) {
-    cls = 'bg-green-500/20 text-green-400';
-    label = 'FULL';
-  }
-  return <span className={`sticker ml-1 text-[9px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap ${cls}`}>{label}</span>;
+export function SourceBadge() {
+  return <span className="sticker ml-1 text-[9px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap bg-green-500/20 text-green-400">FULL</span>;
 }
 
 export function SongRow({ track, index, context, showIndex = true, onRemove }) {
@@ -36,7 +27,7 @@ export function SongRow({ track, index, context, showIndex = true, onRemove }) {
     <div className={`group flex items-center gap-3 px-3 py-2 rounded-lg ${isCurrent ? 'bg-accent/10' : 'bg-hoverable'}`} role="row">
       <span className="w-6 text-center text-sm text-dim">{showIndex ? (isCurrent && isPlaying ? <EqIcon /> : (index + 1)) : (isCurrent && isPlaying ? <EqIcon /> : '♪')}</span>
       <button onClick={() => playTrack(track, context)} className="relative shrink-0" aria-label={`Play ${track.title}`}>
-        <Img src={track.image || track.thumbnails?.medium} alt={track.title} className="w-11 h-11 rounded-md object-cover" />
+        <Img src={track.image} alt={track.title} className="w-11 h-11 rounded-md object-cover" />
         <span className="absolute inset-0 grid place-items-center bg-black/50 rounded-md opacity-0 group-hover:opacity-100 text-white">▶</span>
       </button>
       <button onClick={() => playTrack(track, context)} className="flex-1 min-w-0 text-left">
@@ -71,7 +62,7 @@ export function SongCard({ track, context }) {
   return (
     <div onClick={() => playTrack(track, context || [track])} className="card group relative p-3 cursor-pointer min-w-[150px] max-w-[190px]" role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && playTrack(track, context || [track])}>
       <div className="relative">
-        <Img src={track.image || track.thumbnails?.medium} alt={track.title} className="w-full aspect-square rounded-lg object-cover" />
+        <Img src={track.image} alt={track.title} className="w-full aspect-square rounded-lg object-cover" />
         <PlayButton onPlay={() => playTrack(track, context || [track])} />
       </div>
       <p className="mt-2 truncate text-sm font-bold">{track.title}</p>
@@ -94,9 +85,7 @@ export function AlbumCard({ album }) {
 
 export function ArtistCard({ artist }) {
   const [source, kind, ...rest] = String(artist.id).split(':');
-  const to = source === 'lastfm'
-    ? `/search?q=${encodeURIComponent(artist.name)}`
-    : `/artist/${source}/${rest.join(':') || kind}`;
+  const to = `/artist/${source}/${rest.join(':') || kind}`;
   return (
     <Link to={to} className="card group p-3 min-w-[140px] max-w-[170px] text-center">
       <Img src={artist.image} alt={artist.name} className="w-full aspect-square rounded-full object-cover" />
@@ -110,14 +99,14 @@ export function PlaylistCard({ playlist, to }) {
   let link = to;
   if (!link && playlist.id) {
     const [source, kind, ...rest] = String(playlist.id).split(':');
-    link = source === 'local' ? `/playlist/${encodeURIComponent(playlist.id)}` : `/ext-playlist/${source}/${rest.join(':') || kind}`;
+    link = `/playlist/${encodeURIComponent(playlist.id)}`;
   }
   const mosaic = playlist.tracks?.slice(0, 4) || [];
   return (
     <Link to={link} className="card group p-3 min-w-[150px] max-w-[190px]">
       {mosaic.length >= 4 ? (
         <div className="grid grid-cols-2 gap-[2px] rounded-lg overflow-hidden aspect-square">
-          {mosaic.map(t => <Img key={t.id} src={t.image || t.thumbnails?.small} alt="" className="w-full h-full object-cover" />)}
+          {mosaic.map(t => <Img key={t.id} src={t.image} alt="" className="w-full h-full object-cover" />)}
         </div>
       ) : (
         <Img src={playlist.image} alt={playlist.name} className="w-full aspect-square rounded-lg object-cover" />

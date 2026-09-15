@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
-import { api, streamFor } from '../services/musicApi';
+import { streamFor } from '../services/musicApi';
 import * as studio from '../audio/studio';
 
 // Singleton audio element (plain playback). WebAudio routing is permanent per
@@ -13,10 +13,6 @@ function getAudio() {
   }
   return audio;
 }
-
-// auto-upgrade cache: preview trackId -> full track | null
-const upgradeCache = new Map();
-let upgradeToastShown = false;
 
 /** Smooth volume ramp (crossfade / sleep fade-out). */
 function fadeVolume(el, to, ms) {
@@ -33,22 +29,6 @@ function fadeVolume(el, to, ms) {
   });
 }
 
-/** Find a FULL version of a preview track via server alternates (DJPunjab / Audius / Archive). */
-async function upgradeToFull(track) {
-  if (upgradeCache.has(track.id)) return upgradeCache.get(track.id);
-  const done = (v) => { if (upgradeCache.size > 100) upgradeCache.clear(); upgradeCache.set(track.id, v); return v; };
-  try {
-    const r = await fetch(`/api/alternates?title=${encodeURIComponent(track.title)}&artist=${encodeURIComponent(track.artist?.name || '')}`);
-    if (r.ok) {
-      const j = await r.json();
-      if (j.track?.streamUrl) {
-        return done({ ...j.track, id: track.id, upgradedFrom: track.source });
-      }
-    }
-  } catch { /* keep preview */ }
-  return done(null);
-}
-
 // ---------- module-scope event handlers (survive element recreation) ----------
 function onTime() {
   const el = getAudio();
@@ -60,48 +40,21 @@ function onLoaded() {
 }
 function onPlay() { useStore.getState().setPlaying(true); }
 function onPause() { const el = getAudio(); if (!el.ended) useStore.getState().setPlaying(false); }
-async function onError() {
-  const el = getAudio();
-  const store = useStore;
-  const { queue, index, next, toast } = store.getState();
-  const t = queue[index];
-  // Studio proxy failed: fall back to a FRESH plain element + direct URL
-  if (t && el.src.includes('/api/stream') && !t._studioFellBack) {
-    const direct = streamFor(t, store.getState().quality) || t.streamUrl || '';
-    if (direct) {
-      const q = [...store.getState().queue];
-      q[store.getState().index] = { ...t, _studioFellBack: true };
-      useStore.setState({ queue: q });
-      const nel = recreateAudio();
-      nel.dataset.trackId = t.id;
-      nel.src = direct;
-      nel.play().catch(() => {});
-      toast('Studio bypassed for this stream', 'info');
-      return;
-    }
+let recentErrors = [];
+function onError() {
+  const s = useStore.getState();
+  // guard: if everything is failing, stop instead of skip-looping forever
+  const now = Date.now();
+  recentErrors = recentErrors.filter(t => now - t < 15000);
+  recentErrors.push(now);
+  if (recentErrors.length >= 4) {
+    recentErrors = [];
+    s.setPlaying(false);
+    s.toast('Playback keeps failing — check your connection', 'error');
+    return;
   }
-  // try resolving via backend (same-id-space sources only — never cross-wire ids), else skip
-  if (t && !t._retried) {
-    const [source, ...rest] = String(t.id).split(':');
-    if (!['saavn', 'deezer', 'itunes'].includes(source)) {
-      toast('Stream unavailable — skipping to next', 'error');
-      next();
-      return;
-    }
-    try {
-      const full = await api.song(source, rest.join(':'));
-      if (full?.streamUrl && full.streamUrl !== el.src) {
-        const q = [...store.getState().queue];
-        q[store.getState().index] = { ...t, ...full, _retried: true };
-        useStore.setState({ queue: q });
-        el.src = full.streamUrl;
-        el.play().catch(() => {});
-        return;
-      }
-    } catch { /* fall through to skip */ }
-  }
-  toast('Stream unavailable — skipping to next', 'error');
-  next();
+  s.toast('Stream unavailable — skipping to next', 'error');
+  s.next();
 }
 function onEnded() {
   const el = getAudio();
@@ -155,10 +108,9 @@ function recreateAudio() {
 }
 
 /**
- * Core audio engine:
- * - Studio mode (WebAudio EQ + visualizer via proxied streams), crossfade, sleep fade-out
- * - auto-upgrades previews to full tracks (DJPunjab / Audius / Archive)
- * - error auto-skip, preloads next track
+ * Core audio engine (DJPunjab-only):
+ * - all streams are same-origin (/api/djp-audio) so Studio EQ needs no proxy
+ * - crossfade, sleep fade-out, preloads next track
  * - MediaSession OS controls, keyboard shortcuts
  */
 export function useAudioEngine() {
@@ -193,50 +145,18 @@ export function useAudioEngine() {
     if (!track) { el.pause(); el.removeAttribute('src'); el.load(); return; }
     let cancelled = false;
     (async () => {
-      let url = streamFor(track, quality);
-      if (!url && ['saavn', 'deezer', 'itunes'].includes(track.source)) {
-        // lazy-resolve full detail (same-id-space sources only)
-        try {
-          const [source, ...rest] = String(track.id).split(':');
-          const full = await api.song(source, rest.join(':')).catch(() => null);
-          if (cancelled) return;
-          if (full?.streamUrl) {
-            const q = [...useStore.getState().queue];
-            const idx = useStore.getState().index;
-            if (q[idx]?.id === track.id) { q[idx] = { ...track, ...full }; useStore.setState({ queue: q }); }
-            url = streamFor({ ...track, ...full }, quality);
-          }
-        } catch { /* noop */ }
-      }
-      // Auto-upgrade previews → full tracks (keeps original id so playback continues seamlessly)
-      if (url && useStore.getState().preferFull && track.isPreview && !track.upgradedFrom && track.source !== 'radio') {
-        const up = await upgradeToFull(track);
-        if (cancelled) return;
-        if (up?.streamUrl) {
-          const q2 = [...useStore.getState().queue];
-          const idx2 = useStore.getState().index;
-          if (q2[idx2]?.id === track.id) {
-            q2[idx2] = up;
-            useStore.setState({ queue: q2 });
-          }
-          url = up.streamUrl;
-          if (!upgradeToastShown) { upgradeToastShown = true; useStore.getState().toast('Auto-upgraded to full track 🔊'); }
-        }
-      }
+      const url = streamFor(track, quality);
       if (cancelled) return;
       if (!url) {
         useStore.getState().toast('No playable stream for this track', 'error');
         return;
       }
-      // Studio mode: route through WebAudio graph + same-origin proxy (CORS-clean)
       const st = useStore.getState();
-      let playUrl = url;
-      if (st.studioOn && !track._studioFellBack) {
+      if (st.studioOn) {
         try {
           studio.ensureGraph(el);
           studio.syncFromState({ gains: st.eqGains, preamp: st.eqPreamp, enabled: st.eqEnabled, normalize: st.normalizeOn });
           studio.resume();
-          playUrl = api.streamProxy(url);
         } catch { /* plain fallback */ }
       }
       if (el.dataset.trackId !== track.id) {
@@ -248,13 +168,13 @@ export function useAudioEngine() {
           el.volume = 0; // fade-in from silence on fresh loads too
         }
         el.dataset.trackId = track.id;
-        el.src = playUrl;
+        el.src = url;
         el.currentTime = 0;
         if (useStore.getState().isPlaying) { try { await el.play(); } catch { /* noop */ } }
         if (st.crossfade && !st.muted) fadeVolume(el, st.volume, 600);
         else el.volume = st.muted ? 0 : st.volume;
       }
-      // preload next (only already-resolved URLs)
+      // preload next
       const q = useStore.getState().queue;
       const nxt = q[useStore.getState().index + 1];
       if (nxt?.streamUrl) { const l = new Audio(); l.preload = 'auto'; l.src = streamFor(nxt, quality); }
@@ -263,7 +183,7 @@ export function useAudioEngine() {
         try {
           navigator.mediaSession.metadata = new MediaMetadata({
             title: track.title, artist: track.artist?.name || '', album: track.album?.name || '',
-            artwork: [96, 128, 192, 256, 512].map(sz => ({ src: track.image || track.thumbnails?.medium || '', sizes: `${sz}x${sz}` })),
+            artwork: [96, 128, 192, 256, 512].map(sz => ({ src: track.image || '', sizes: `${sz}x${sz}` })),
           });
           const s = useStore.getState();
           navigator.mediaSession.setActionHandler('play', () => useStore.getState().setPlaying(true));
@@ -277,26 +197,24 @@ export function useAudioEngine() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [track?.id]);
 
-  // Studio toggle: recreate element (routing is permanent) + swap proxied/direct URL, keep position
+  // Studio toggle: recreate element (routing is permanent), keep position
   useEffect(() => {
     const el = getAudio();
     if (!track || !el.src) return;
     const st = useStore.getState();
-    const direct = streamFor(track, st.quality) || track.streamUrl || '';
+    const direct = streamFor(track, st.quality) || '';
     if (!direct) return;
     const t = el.currentTime || 0;
     const wasPlaying = !el.paused;
     const nel = recreateAudio();
     nel.dataset.trackId = track.id;
-    if (studioOn && !track._studioFellBack) {
+    nel.src = direct;
+    if (studioOn) {
       try {
         studio.ensureGraph(nel);
         studio.syncFromState({ gains: st.eqGains, preamp: st.eqPreamp, enabled: st.eqEnabled, normalize: st.normalizeOn });
         studio.resume();
-        nel.src = api.streamProxy(direct);
-      } catch { nel.src = direct; }
-    } else {
-      nel.src = direct;
+      } catch { /* plain fallback */ }
     }
     try { nel.currentTime = t; } catch { /* metadata not ready yet */ }
     if (wasPlaying) nel.play().catch(() => {});

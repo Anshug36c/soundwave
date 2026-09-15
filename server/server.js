@@ -1,528 +1,107 @@
+// SoundWave server — DJPunjab-only backend.
+// One source, done well: sitemap + fresh-charts index, exact MP3s, seekable cached audio.
 import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-
-dotenv.config({ path: '../.env' });
-dotenv.config();
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const LASTFM_KEY = process.env.LASTFM_API_KEY || '';
-const AUDIODB_KEY = process.env.AUDIODB_API_KEY || '2'; // '2' = free test key
-
-// JioSaavn mirrors — tried in order, first healthy one wins (full 320kbps tracks)
-const SAAVN_BASES = [
-  process.env.JIOSAAVN_API_URL,
-  'https://saavn.dev/api',
-  'https://saavn.sumit.co/api',
-].filter(Boolean).map(u => u.replace(/\/$/, ''));
-
-const DEEZER = 'https://api.deezer.com';
-const ITUNES = 'https://itunes.apple.com';
-const COUNTRY = process.env.ITUNES_COUNTRY || 'IN';
-
-app.use(cors());
 app.use(express.json());
 
-// ---------- tiny in-memory cache ----------
-const cache = new Map();
-const CACHE_TTL = 1000 * 60 * 10;
-function getCache(k) {
-  const hit = cache.get(k);
-  if (!hit) return null;
-  if (Date.now() - hit.t > CACHE_TTL) { cache.delete(k); return null; }
-  return hit.v;
+// ---------------- tiny TTL cache ----------------
+const cache = new Map(); // key -> { v, t, ttl }
+function getCache(key) {
+  const h = cache.get(key);
+  if (!h) return null;
+  if (Date.now() - h.t > h.ttl) { cache.delete(key); return null; }
+  return h.v;
 }
-function setCache(k, v) {
-  if (cache.size > 800) cache.clear();
-  cache.set(k, { t: Date.now(), v });
-}
-
-async function fetchJson(url, opts = {}, timeoutMs = 12000) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const r = await fetch(url, { ...opts, signal: ctrl.signal, headers: { 'User-Agent': 'SoundWave/1.0', Accept: 'application/json', ...(opts.headers || {}) } });
-    if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
-    const text = await r.text();
-    try {
-      return JSON.parse(text);
-    } catch {
-      throw new Error(`Non-JSON from ${url}: ${text.slice(0, 80)}`);
-    }
-  } finally { clearTimeout(t); }
+function setCache(key, val, ttl = 5 * 60 * 1000) {
+  if (cache.size > 500) cache.clear();
+  cache.set(key, { v: val, t: Date.now(), ttl });
 }
 
-// Saavn with mirror failover + short negative caching
-const baseCooldown = new Map();
-async function saavnFetch(path) {
-  for (const base of SAAVN_BASES) {
-    if ((baseCooldown.get(base) || 0) > Date.now()) continue;
-    try {
-      return await fetchJson(`${base}${path}`, {}, 8000);
-    } catch (e) {
-      baseCooldown.set(base, Date.now() + 60000);
-    }
-  }
-  throw new Error('All JioSaavn mirrors unreachable');
-}
-
-// ---------- normalizers → unified schema ----------
-function pickImage(images, quality = 'large') {
-  if (!images) return '';
-  if (typeof images === 'string') return images;
-  if (Array.isArray(images)) {
-    const order = quality === 'small' ? ['50x50', '150x150', '500x500'] : quality === 'medium' ? ['150x150', '500x500', '50x50'] : ['500x500', '150x150', '50x50'];
-    for (const q of order) { const f = images.find(i => i.quality === q || i.link?.includes(q)); if (f) return f.url || f.link; }
-    return images[images.length - 1]?.url || images[images.length - 1]?.link || '';
-  }
-  return images[quality] || images.large || '';
-}
-const itunesArt = (url, size = 600) => (url || '').replace('100x100bb', `${size}x${size}bb`).replace('100x100', `${size}x${size}`);
-
-function streamsFromSaavn(downloadUrl = []) {
-  const get = (q) => downloadUrl.find(d => d.quality === q)?.url || null;
-  const high = get('320kbps') || get('160kbps') || get('96kbps') || get('48kbps') || null;
-  const medium = get('160kbps') || get('96kbps') || high;
-  const low = get('96kbps') || get('48kbps') || medium;
-  return { low, medium, high };
-}
-
-function normalizeSaavnSong(s) {
-  if (!s || !s.id) return null;
-  const artists = s.artists?.primary || s.artists?.all || [];
-  const streams = streamsFromSaavn(s.downloadUrl || []);
-  return {
-    id: `saavn:${s.id}`, source: 'saavn', sourceId: String(s.id),
-    title: s.name || 'Unknown',
-    artist: { id: artists[0]?.id ? `saavn:ar:${artists[0].id}` : '', name: artists[0]?.name || s.primaryArtists || 'Unknown Artist', image: pickImage(artists[0]?.image, 'medium') },
-    artists: artists.map(a => ({ id: `saavn:ar:${a.id}`, name: a.name, image: pickImage(a.image, 'small') })),
-    album: { id: s.album?.id ? `saavn:al:${s.album.id}` : '', name: s.album?.name || 'Unknown Album', image: pickImage(s.image, 'large'), year: s.year || s.releaseDate?.slice(0, 4) || '' },
-    duration: Number(s.duration) || 0,
-    streamUrl: streams.high || streams.medium || streams.low || '', streams,
-    previewUrl: streams.low || '', image: pickImage(s.image, 'large'),
-    thumbnails: { small: pickImage(s.image, 'small'), medium: pickImage(s.image, 'medium'), large: pickImage(s.image, 'large') },
-    language: s.language || '', playCount: Number(s.playCount) || 0,
-    explicit: s.explicitContent === true || s.explicitContent === 'true',
-    hasLyrics: !!s.hasLyrics, lyricsId: s.lyricsId || s.id, genre: [], url: s.url || '',
-    isPreview: false, isLiked: false,
-  };
-}
-
-function normalizeDeezerTrack(t) {
-  if (!t || !t.id) return null;
-  return {
-    id: `deezer:${t.id}`, source: 'deezer', sourceId: String(t.id),
-    title: t.title || 'Unknown',
-    artist: { id: `deezer:ar:${t.artist?.id}`, name: t.artist?.name || 'Unknown Artist', image: t.artist?.picture_medium || t.artist?.picture || '' },
-    artists: t.contributors?.map(c => ({ id: `deezer:ar:${c.id}`, name: c.name, image: c.picture_small || '' })) || [],
-    album: { id: `deezer:al:${t.album?.id}`, name: t.album?.title || 'Unknown Album', image: t.album?.cover_xl || t.album?.cover_big || t.album?.cover || '', year: '' },
-    duration: Number(t.duration) || 30,
-    streamUrl: t.preview || '', streams: { low: t.preview || '', medium: t.preview || '', high: t.preview || '' },
-    previewUrl: t.preview || '', image: t.album?.cover_xl || t.album?.cover_big || '',
-    thumbnails: { small: t.album?.cover_small || '', medium: t.album?.cover_medium || '', large: t.album?.cover_xl || t.album?.cover_big || '' },
-    language: '', playCount: Number(t.rank) || 0, explicit: !!t.explicit_lyrics,
-    hasLyrics: false, lyricsId: null, genre: [], url: t.link || '',
-    isPreview: true, isLiked: false,
-  };
-}
-
-function normalizeItunesSong(t) {
-  if (!t || (!t.trackId && !t.collectionId)) return null;
-  const art = itunesArt(t.artworkUrl100, 600);
-  return {
-    id: `itunes:${t.trackId}`, source: 'itunes', sourceId: String(t.trackId),
-    title: t.trackName || 'Unknown',
-    artist: { id: `itunes:ar:${t.artistId}`, name: t.artistName || 'Unknown Artist', image: itunesArt(t.artworkUrl100, 300) },
-    artists: [{ id: `itunes:ar:${t.artistId}`, name: t.artistName || 'Unknown Artist', image: '' }],
-    album: { id: `itunes:al:${t.collectionId}`, name: t.collectionName || 'Unknown Album', image: art, year: (t.releaseDate || '').slice(0, 4) },
-    duration: Math.round((Number(t.trackTimeMillis) || 30000) / 1000),
-    streamUrl: t.previewUrl || '', streams: { low: t.previewUrl || '', medium: t.previewUrl || '', high: t.previewUrl || '' },
-    previewUrl: t.previewUrl || '', image: art,
-    thumbnails: { small: itunesArt(t.artworkUrl100, 100), medium: itunesArt(t.artworkUrl100, 300), large: art },
-    language: '', playCount: 0, explicit: t.trackExplicitness === 'explicit',
-    hasLyrics: false, lyricsId: null, genre: t.primaryGenreName ? [t.primaryGenreName] : [],
-    url: t.trackViewUrl || '', isPreview: true, isLiked: false,
-  };
-}
-
-function normalizeSaavnAlbum(a) {
-  if (!a || !a.id) return null;
-  return {
-    id: `saavn:al:${a.id}`, source: 'saavn', sourceId: String(a.id), type: 'album',
-    name: a.name || a.title || 'Unknown Album',
-    artist: a.primaryArtists || a.artists?.primary?.[0]?.name || 'Various Artists',
-    image: pickImage(a.image, 'large'),
-    thumbnails: { small: pickImage(a.image, 'small'), medium: pickImage(a.image, 'medium'), large: pickImage(a.image, 'large') },
-    year: a.year || '', songCount: a.songCount || a.songs?.length || 0,
-  };
-}
-function normalizeItunesAlbum(t) {
-  const id = t.collectionId;
-  if (!id) return null;
-  return {
-    id: `itunes:al:${id}`, source: 'itunes', sourceId: String(id), type: 'album',
-    name: t.collectionName || 'Unknown Album', artist: t.artistName || 'Various Artists',
-    image: itunesArt(t.artworkUrl100, 600),
-    thumbnails: { small: itunesArt(t.artworkUrl100, 100), medium: itunesArt(t.artworkUrl100, 300), large: itunesArt(t.artworkUrl100, 600) },
-    year: (t.releaseDate || '').slice(0, 4), songCount: Number(t.trackCount) || 0,
-  };
-}
-function normalizeDeezerAlbum(a) {
-  if (!a || !a.id) return null;
-  return {
-    id: `deezer:al:${a.id}`, source: 'deezer', sourceId: String(a.id), type: 'album',
-    name: a.title || 'Unknown Album', artist: a.artist?.name || 'Various Artists',
-    image: a.cover_xl || a.cover_big || a.cover || '',
-    thumbnails: { small: a.cover_small || '', medium: a.cover_medium || '', large: a.cover_xl || a.cover_big || '' },
-    year: a.release_date?.slice(0, 4) || '', songCount: a.nb_tracks || 0,
-  };
-}
-function normalizeSaavnArtist(a) {
-  if (!a || !a.id) return null;
-  return {
-    id: `saavn:ar:${a.id}`, source: 'saavn', sourceId: String(a.id), type: 'artist',
-    name: a.name || 'Unknown Artist', image: pickImage(a.image, 'large'),
-    thumbnails: { small: pickImage(a.image, 'small'), medium: pickImage(a.image, 'medium'), large: pickImage(a.image, 'large') }, role: a.role || '',
-  };
-}
-function normalizeItunesArtist(t) {
-  if (!t || !t.artistId) return null;
-  return {
-    id: `itunes:ar:${t.artistId}`, source: 'itunes', sourceId: String(t.artistId), type: 'artist',
-    name: t.artistName || 'Unknown Artist', image: itunesArt(t.artworkUrl100, 600),
-    thumbnails: { small: itunesArt(t.artworkUrl100, 100), medium: itunesArt(t.artworkUrl100, 300), large: itunesArt(t.artworkUrl100, 600) }, role: t.primaryGenreName || '',
-  };
-}
-function normalizeDeezerArtist(a) {
-  if (!a || !a.id) return null;
-  return {
-    id: `deezer:ar:${a.id}`, source: 'deezer', sourceId: String(a.id), type: 'artist',
-    name: a.name || 'Unknown Artist', image: a.picture_xl || a.picture_big || a.picture_medium || '',
-    thumbnails: { small: a.picture_small || '', medium: a.picture_medium || '', large: a.picture_xl || a.picture_big || '' }, role: '',
-  };
-}
-function normalizeSaavnPlaylist(p) {
-  if (!p || !p.id) return null;
-  return {
-    id: `saavn:pl:${p.id}`, source: 'saavn', sourceId: String(p.id), type: 'playlist',
-    name: p.name || p.title || 'Untitled Playlist', description: p.description || '',
-    image: pickImage(p.image, 'large'),
-    thumbnails: { small: pickImage(p.image, 'small'), medium: pickImage(p.image, 'medium'), large: pickImage(p.image, 'large') },
-    songCount: p.songCount || p.songs?.length || 0,
-  };
-}
-
-function dedupe(tracks) {
-  const seen = new Set();
-  return (tracks || []).filter(t => {
-    if (!t || !t.id) return false;
-    const key = `${(t.title || '').toLowerCase().trim()}|${(t.artist?.name || '').toLowerCase().trim()}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-// ---------- upstream helpers ----------
-async function saavnSearchSongs(query, limit = 20) {
-  const j = await saavnFetch(`/search/songs?query=${encodeURIComponent(query)}&limit=${limit}`);
-  const arr = j?.data?.results || j?.data || [];
-  return (Array.isArray(arr) ? arr : []).map(normalizeSaavnSong).filter(Boolean);
-}
-async function saavnSearchAlbums(query, limit = 12) {
-  const j = await saavnFetch(`/search/albums?query=${encodeURIComponent(query)}&limit=${limit}`);
-  const arr = j?.data?.results || j?.data || [];
-  return (Array.isArray(arr) ? arr : []).map(normalizeSaavnAlbum).filter(Boolean);
-}
-async function saavnSearchArtists(query, limit = 12) {
-  const j = await saavnFetch(`/search/artists?query=${encodeURIComponent(query)}&limit=${limit}`);
-  const arr = j?.data?.results || j?.data || [];
-  return (Array.isArray(arr) ? arr : []).map(normalizeSaavnArtist).filter(Boolean);
-}
-async function saavnSearchPlaylists(query, limit = 12) {
-  const j = await saavnFetch(`/search/playlists?query=${encodeURIComponent(query)}&limit=${limit}`);
-  const arr = j?.data?.results || j?.data || [];
-  return (Array.isArray(arr) ? arr : []).map(normalizeSaavnPlaylist).filter(Boolean);
-}
-async function deezerSearchTracks(query, limit = 20) {
-  const j = await fetchJson(`${DEEZER}/search?q=${encodeURIComponent(query)}&limit=${limit}`, {}, 8000);
-  return (j?.data || []).map(normalizeDeezerTrack).filter(Boolean);
-}
-async function itunesSearchSongs(query, limit = 20, country = COUNTRY) {
-  const j = await fetchJson(`${ITUNES}/search?term=${encodeURIComponent(query)}&media=music&entity=song&limit=${limit}&country=${country}`, {}, 8000);
-  return (j?.results || []).map(normalizeItunesSong).filter(t => t && t.streamUrl);
-}
-async function itunesSearchAlbums(query, limit = 12, country = COUNTRY) {
-  const j = await fetchJson(`${ITUNES}/search?term=${encodeURIComponent(query)}&media=music&entity=album&limit=${limit}&country=${country}`, {}, 8000);
-  const seen = new Set();
-  return (j?.results || []).map(normalizeItunesAlbum).filter(a => a && !seen.has(a.id) && (seen.add(a.id), true));
-}
-async function itunesSearchArtists(query, limit = 12, country = COUNTRY) {
-  const j = await fetchJson(`${ITUNES}/search?term=${encodeURIComponent(query)}&media=music&entity=musicArtist&limit=${limit}&country=${country}`, {}, 8000);
-  // artist entity has no artwork — enrich with a song search for images
-  const artists = (j?.results || []).filter(a => a.artistId);
-  const withArt = await Promise.allSettled(artists.slice(0, limit).map(async (a) => {
-    let img = '';
-    try {
-      const s = await fetchJson(`${ITUNES}/search?term=${encodeURIComponent(a.artistName)}&media=music&entity=song&limit=1&country=${country}`, {}, 6000);
-      img = itunesArt(s?.results?.[0]?.artworkUrl100, 600);
-    } catch {}
-    return { id: `itunes:ar:${a.artistId}`, source: 'itunes', sourceId: String(a.artistId), type: 'artist', name: a.artistName, image: img, thumbnails: { small: img, medium: img, large: img }, role: a.primaryGenreName || '' };
-  }));
-  return withArt.filter(s => s.status === 'fulfilled').map(s => s.value);
-}
-async function itunesLookup(ids, entity = 'song') {
-  const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean).join(',');
-  if (!list) return [];
-  const j = await fetchJson(`${ITUNES}/lookup?id=${list}&entity=${entity}&limit=200&country=${COUNTRY}`, {}, 10000);
-  return j?.results || [];
-}
-async function itunesTopSongs(country = COUNTRY, limit = 25) {
-  const rss = await fetchJson(`${ITUNES}/${country.toLowerCase()}/rss/topsongs/limit=${limit}/json`, {}, 8000);
-  const entries = rss?.feed?.entry || [];
-  const ids = entries.map(e => e?.id?.attributes?.['im:id']).filter(Boolean);
-  if (!ids.length) return [];
-  const looked = await itunesLookup(ids, 'song');
-  const byId = new Map(looked.filter(r => r.trackId).map(r => [String(r.trackId), r]));
-  // preserve chart order; fall back to RSS metadata when lookup misses
-  return ids.map((id, i) => {
-    const hit = byId.get(String(id));
-    if (hit) return { ...normalizeItunesSong(hit), chartRank: i + 1 };
-    const e = entries[i];
-    const imgs = e?.['im:image'] || [];
-    const img = (imgs[2] || imgs[1] || imgs[0])?.label || '';
-    return {
-      id: `itunes:${id}`, source: 'itunes', sourceId: String(id), title: e?.['im:name']?.label || 'Unknown',
-      artist: { id: '', name: e?.['im:artist']?.label || 'Unknown', image: img },
-      artists: [], album: { id: '', name: '', image: img, year: '' }, duration: 30,
-      streamUrl: '', streams: {}, previewUrl: '', image: img,
-      thumbnails: { small: img, medium: img, large: img }, genre: [], isPreview: true, chartRank: i + 1,
-    };
-  }).filter(t => t.streamUrl || t.previewUrl);
-}
-async function itunesTopAlbums(country = COUNTRY, limit = 12) {
-  const rss = await fetchJson(`${ITUNES}/${country.toLowerCase()}/rss/topalbums/limit=${limit}/json`, {}, 8000);
-  return (rss?.feed?.entry || []).map(e => {
-    const id = e?.id?.attributes?.['im:id'];
-    const imgs = e?.['im:image'] || [];
-    const img = (imgs[2] || imgs[1] || imgs[0])?.label || '';
-    const hi = img.replace('170x170bb', '600x600bb');
-    return { id: `itunes:al:${id}`, source: 'itunes', sourceId: String(id), type: 'album', name: e?.['im:name']?.label || 'Unknown', artist: e?.['im:artist']?.label || '', image: hi, thumbnails: { small: img, medium: img, large: hi }, year: (e?.['im:releaseDate']?.label || '').slice(0, 4), songCount: 0 };
-  }).filter(a => a.sourceId && a.sourceId !== 'undefined');
-}
-async function audioDbArtist(name) {
-  try {
-    const j = await fetchJson(`https://www.theaudiodb.com/api/v1/json/${AUDIODB_KEY}/search.php?s=${encodeURIComponent(name)}`, {}, 8000);
-    return j?.artists?.[0] || null;
-  } catch { return null; }
-}
-
-// ---------- Audius (full indie tracks, no key) ----------
-const AUDIUS_DNS = [
-  'https://discoveryprovider.audius.co',
-  'https://discoveryprovider2.audius.co',
-  'https://discoveryprovider3.audius.co',
-];
-async function audiusFetch(path) {
-  let lastErr;
-  for (const base of AUDIUS_DNS) {
-    try {
-      const sep = path.includes('?') ? '&' : '?';
-      return await fetchJson(`${base}${path}${sep}app_name=SoundWave`, {}, 9000);
-    } catch (e) { lastErr = e; }
-  }
-  throw lastErr || new Error('Audius unreachable');
-}
-function normalizeAudiusTrack(t) {
-  if (!t || !t.id) return null;
-  const art = t.artwork || {};
-  const img = art['1000x1000'] || art['480x480'] || art['150x150'] || '';
-  const uimg = t.user?.profile_picture?.['480x480'] || t.user?.profile_picture?.['150x150'] || '';
-  return {
-    id: `audius:${t.id}`, source: 'audius', sourceId: String(t.id),
-    title: t.title || 'Unknown',
-    artist: { id: `audius:ar:${t.user?.id || t.user?.handle || ''}`, name: t.user?.name || t.user?.handle || 'Unknown Artist', image: uimg },
-    artists: [],
-    album: { id: '', name: '', image: img, year: (t.release_date || '').slice(0, 4) },
-    duration: Number(t.duration) || 0,
-    streamUrl: `${AUDIUS_DNS[0]}/v1/tracks/${t.id}/stream?app_name=SoundWave`,
-    streams: null, previewUrl: '', image: img,
-    thumbnails: { small: art['150x150'] || img, medium: art['480x480'] || img, large: img },
-    language: '', playCount: Number(t.play_count) || 0, explicit: false,
-    hasLyrics: false, lyricsId: null, genre: t.genre ? [t.genre] : [],
-    url: t.permalink ? `https://audius.co${t.permalink}` : '',
-    isPreview: false, isLiked: false,
-  };
-}
-async function audiusTrending(limit = 15, genre = '') {
-  const j = await audiusFetch(`/v1/tracks/trending?limit=${limit}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`);
-  return (j?.data || []).map(normalizeAudiusTrack).filter(t => t && t.streamUrl);
-}
-async function audiusSearch(query, limit = 10) {
-  const j = await audiusFetch(`/v1/tracks/search?query=${encodeURIComponent(query)}&limit=${limit}`);
-  return (j?.data || []).map(normalizeAudiusTrack).filter(t => t && t.streamUrl);
-}
-
-// ---------- Internet Archive (full tracks, no key, best-effort) ----------
-function parseArchiveDuration(d) {
-  if (d == null) return 0;
-  if (/^\d+(\.\d+)?$/.test(String(d).trim())) return Math.round(Number(d));
-  const parts = String(d).split(':').map(Number);
-  if (!parts.length || parts.some(isNaN)) return 0;
-  return parts.reduce((a, b) => a * 60 + b, 0);
-}
-async function archiveSearch(query, limit = 6) {
-  const q = `(${query}) AND mediatype:audio`;
-  const j = await fetchJson(`https://archive.org/advancedsearch.php?q=${encodeURIComponent(q)}&fl[]=identifier&fl[]=title&fl[]=creator&fl[]=duration&rows=${limit}&output=json`, {}, 12000);
-  const docs = j?.response?.docs || [];
-  const out = [];
-  for (const d of docs.slice(0, limit)) {
-    try {
-      const meta = await fetchJson(`https://archive.org/metadata/${d.identifier}`, {}, 10000);
-      const files = (meta?.files || []).filter(f => /\.mp3$/i.test(f.name || ''));
-      const pick = files.find(f => !/_vbr|_64kb|_128kb/i.test(f.name)) || files[0];
-      if (!pick) continue;
-      const sid = d.identifier;
-      out.push({
-        id: `archive:${sid}`, source: 'archive', sourceId: sid,
-        title: d.title || meta?.metadata?.title || sid,
-        artist: { id: '', name: d.creator || meta?.metadata?.creator || 'Archive.org', image: '' },
-        artists: [],
-        album: { id: '', name: '', image: `https://archive.org/services/img/${sid}`, year: '' },
-        duration: parseArchiveDuration(d.duration || meta?.metadata?.duration),
-        streamUrl: `https://archive.org/download/${sid}/${encodeURIComponent(pick.name).replace(/%2F/g, '/')}`,
-        streams: null, previewUrl: '', image: `https://archive.org/services/img/${sid}`,
-        thumbnails: { small: '', medium: '', large: '' },
-        language: '', playCount: 0, explicit: false,
-        hasLyrics: false, lyricsId: null, genre: [],
-        url: `https://archive.org/details/${sid}`,
-        isPreview: false, isLiked: false,
-      });
-    } catch { /* skip failed items */ }
-  }
-  return out;
-}
-
-// ---------- Radio Browser (live stations, no key) ----------
-const RADIO_HOSTS = ['https://de1.api.radio-browser.info', 'https://de2.api.radio-browser.info'];
-async function radioFetch(path) {
-  let lastErr;
-  for (const h of RADIO_HOSTS) {
-    try { return await fetchJson(`${h}${path}`, { headers: { 'User-Agent': 'SoundWave/1.0' } }, 9000); }
-    catch (e) { lastErr = e; }
-  }
-  throw lastErr || new Error('Radio Browser unreachable');
-}
-function normalizeStation(s) {
-  const url = s.url_resolved || s.url;
-  if (!s.stationuuid || !url || !/^https?:\/\//.test(url)) return null;
-  return {
-    id: `radio:${s.stationuuid}`, source: 'radio', sourceId: s.stationuuid,
-    title: (s.name || 'Unknown Station').trim(),
-    artist: { id: '', name: [s.country, (s.tags || '').split(',').slice(0, 2).join(' · ')].filter(Boolean).join(' · ') || 'Live Radio', image: s.favicon || '' },
-    artists: [],
-    album: { id: '', name: 'Live Radio', image: s.favicon || '', year: '' },
-    duration: 0, streamUrl: url, streams: null, previewUrl: '',
-    image: s.favicon || '', thumbnails: { small: '', medium: '', large: '' },
-    language: s.language || '', playCount: Number(s.votes) || 0, explicit: false,
-    hasLyrics: false, lyricsId: null,
-    genre: (s.tags || '').split(',').map(t => t.trim()).filter(Boolean).slice(0, 3),
-    url: s.homepage || '', isPreview: false, isLive: true, isLiked: false,
-    codec: s.codec || '', bitrate: Number(s.bitrate) || 0,
-  };
-}
-
-// ---------- routes ----------
-app.get('/api/health', (req, res) => res.json({ ok: true, service: 'soundwave', time: new Date().toISOString() }));
-
-app.get('/api/sources', async (req, res) => {
-  const probes = {
-    saavn: (async () => { await saavnFetch('/search/songs?query=test&limit=1'); return 'ok'; })(),
-    itunes: fetchJson(`${ITUNES}/search?term=test&media=music&limit=1`, {}, 8000).then(() => 'ok'),
-    deezer: fetchJson(`${DEEZER}/search?q=test&limit=1`, {}, 8000).then(() => 'ok'),
-    lyrics: fetchJson('https://api.lyrics.ovh/v1/Coldplay/Yellow', {}, 8000).then(() => 'ok'),
-    audiodb: fetchJson(`https://www.theaudiodb.com/api/v1/json/${AUDIODB_KEY}/search.php?s=coldplay`, {}, 8000).then(() => 'ok'),
-    audius: audiusFetch('/v1/tracks/trending?limit=1').then(() => 'ok'),
-    archive: fetchJson('https://archive.org/advancedsearch.php?q=test&fl[]=identifier&rows=1&output=json', {}, 10000).then(() => 'ok'),
-    radio: radioFetch('/json/stations/topvote/1').then(() => 'ok'),
-    mono: monoFetch('/search/?s=test').then(() => 'ok'),
-    tidal: tidalSearchSongs('test', 1).then(() => 'ok'),
-    soundcloud: scSearchTracks('test', 1).then(() => 'ok'),
-    djpunjab: djpLoadIndex().then(m => (m.size > 100 ? 'ok' : Promise.reject(new Error('index empty')))),
-  };
-  const out = {};
-  await Promise.all(Object.entries(probes).map(async ([k, p]) => {
-    try { out[k] = await p; } catch (e) { out[k] = `down: ${e.message.slice(0, 80)}`; }
-  }));
-  res.json(out);
-});
-
-app.get('/api/home', async (req, res) => {
-  const cached = getCache(req.originalUrl);
-  if (cached) return res.json(cached);
-  try {
-    const [trendingSaavn, chartsIN, chartsUS, newAlbums, topSongsUS, chill, workout, playlists, deezerChart] = await Promise.allSettled([
-      saavnSearchSongs('trending hindi hits 2026', 20),
-      itunesTopSongs('IN', 25),
-      itunesTopSongs('US', 15),
-      itunesTopAlbums('IN', 12),
-      itunesSearchSongs('top global hits 2026', 12, 'US'),
-      itunesSearchSongs('chill lofi vibes', 15),
-      itunesSearchSongs('workout energetic pump', 15),
-      saavnSearchPlaylists('bollywood hits', 10),
-      fetchJson(`${DEEZER}/chart/0/tracks?limit=15`, {}, 8000).then(j => (j?.data || []).map(normalizeDeezerTrack).filter(Boolean)),
-    ]);
-    const V = (r) => (r.status === 'fulfilled' ? r.value : []);
-    const charts = dedupe([...V(chartsIN), ...V(chartsUS)]);
-    const trendingNow = dedupe([...V(trendingSaavn), ...V(chartsIN).slice(0, 12), ...V(topSongsUS)]);
-    const artistMap = new Map();
-    [...V(chartsIN), ...V(chartsUS)].forEach(t => {
-      const a = t.artist;
-      if (a?.id && !artistMap.has(a.id)) artistMap.set(a.id, { id: a.id, source: t.source, sourceId: a.id.split(':').pop(), type: 'artist', name: a.name, image: t.image, thumbnails: t.thumbnails, role: '' });
-    });
-    const payload = {
-      hero: trendingNow.slice(0, 5),
-      trendingNow: trendingNow.slice(0, 18),
-      charts: [...charts, ...V(deezerChart)].slice(0, 25),
-      newReleases: V(newAlbums),
-      topArtists: [...artistMap.values()].slice(0, 14),
-      mood: { chill: V(chill), workout: V(workout) },
-      featuredPlaylists: V(playlists),
-    };
-    setCache(req.originalUrl, payload);
-    res.json(payload);
-  } catch (e) {
-    console.error('home error', e.message);
-    res.status(502).json({ error: 'Failed to load home feed', detail: e.message });
-  }
-});
-
-// ---------------- DJPunjab (full Punjabi/Bollywood MP3s via sitemap index) ----------------
+// ---------------- DJPunjab ----------------
 const DJP_BASE = (process.env.DJP_BASE_URL || 'https://djpunjab.is').replace(/\/$/, '');
-const DJP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
-let djpIndex = new Map(), djpUrlToId = new Map(), djpIndexTime = 0, djpIndexPromise = null;
-async function djpLoadIndex(force = false) {
-  if (!force && djpIndex.size && Date.now() - djpIndexTime < 12 * 3600 * 1000) return djpIndex;
+const DJP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36';
+const INDEX_TTL = 6 * 3600 * 1000;   // re-crawl sitemap + fresh charts every 6h
+const PAGE_TTL = 6 * 3600 * 1000;    // song/album page cache
+const AUDIO_TTL = 60 * 60 * 1000;    // downloaded MP3 cache
+const AUDIO_MAX = 10;                // LRU entries (~70MB @320k)
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/** GET text with retries (reliability first). */
+async function fetchText(url, { timeout = 20000 } = {}) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), timeout);
+    try {
+      const r = await fetch(url, {
+        signal: ctrl.signal,
+        headers: { 'User-Agent': DJP_UA, Referer: `${DJP_BASE}/`, Accept: 'text/html,*/*' },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.text();
+    } catch (e) { lastErr = e; await sleep(400 * (attempt + 1)); }
+    finally { clearTimeout(to); }
+  }
+  throw lastErr;
+}
+
+/** GET binary (MP3) — single attempt, caller handles fallback chain. */
+async function fetchBuf(url, timeout = 90000) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), timeout);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': DJP_UA, Referer: `${DJP_BASE}/` } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const ab = await r.arrayBuffer();
+    return Buffer.from(ab);
+  } finally { clearTimeout(to); }
+}
+
+function parseDjpLoc(url) {
+  const sm = String(url).match(/\/(single-track|punjabi-music)\/(.+?)-(\d+)\.html$/);
+  if (!sm) return null;
+  return { id: sm[3], url, slug: sm[2].replace(/-mp3-song$|-album$/, ''), album: /-album-\d+\.html$/.test(url) };
+}
+
+let djpIndex = new Map(), djpIndexTime = 0, djpIndexPromise = null, djpLatestIds = [];
+async function djpLoadIndex() {
+  if (djpIndex.size && Date.now() - djpIndexTime < INDEX_TTL) return djpIndex;
   if (!djpIndexPromise) {
     djpIndexPromise = (async () => {
-      const xml = await (await fetch(`${DJP_BASE}/sitemap.xml`, { headers: { 'User-Agent': DJP_UA }, signal: AbortSignal.timeout(30000) })).text();
-      const map = new Map(), rev = new Map();
-      for (const m of xml.matchAll(/<loc>([^<]+)<\/loc>/g)) {
-        const url = m[1];
-        const sm = url.match(/\/(single-track|punjabi-music)\/(.+?)-(\d+)\.html$/);
-        if (!sm) continue;
-        const slug = sm[2].replace(/-mp3-song$|-album$/, '');
-        map.set(sm[3], { url, slug, album: /-album-\d+\.html$/.test(url) });
-        rev.set(url, sm[3]);
-      }
-      if (map.size > 100) { djpIndex = map; djpUrlToId = rev; djpIndexTime = Date.now(); }
+      const map = new Map();
+      try {
+        const xml = await fetchText(`${DJP_BASE}/sitemap.xml`, { timeout: 30000 });
+        for (const m of xml.matchAll(/<loc>([^<]+)<\/loc>/g)) {
+          const p = parseDjpLoc(m[1]);
+          if (p) map.set(p.id, p);
+        }
+      } catch (e) { console.error('djp sitemap failed:', e.message); }
+      // Sitemap is stale (misses newest uploads) — merge the fresh-songs chart.
+      const fresh = [];
+      try {
+        const html = await fetchText(`${DJP_BASE}/page/latest.html`, { timeout: 20000 });
+        for (const m of html.matchAll(/href="([^"]*?-(?:mp3-song|album)-\d+\.html)"/gi)) {
+          const u = m[1].startsWith('http') ? m[1] : DJP_BASE + m[1];
+          const p = parseDjpLoc(u.replace(/&amp;/g, '&'));
+          if (p && !p.album) { map.set(p.id, p); fresh.push(p.id); }
+        }
+      } catch (e) { console.error('djp latest chart failed:', e.message); }
+      djpLatestIds = fresh;
+      if (map.size > 100) { djpIndex = map; djpIndexTime = Date.now(); }
+      else console.error(`djp index too small (${map.size}) — keeping previous`);
       return djpIndex;
     })().finally(() => { djpIndexPromise = null; });
   }
   return djpIndexPromise;
 }
-djpLoadIndex().catch(() => {});
+djpLoadIndex().then(m => console.log(`   DJPunjab index: ${m.size} entries`)).catch(() => {});
+
 function djpScore(slug, words) {
   const s = ` ${slug.replace(/-/g, ' ')} `;
   let score = 0;
@@ -533,14 +112,29 @@ function djpScore(slug, words) {
   }
   return score;
 }
-const djpPageCache = new Map();
-async function djpFetchHtml(url) {
-  return (await fetch(url, { headers: { 'User-Agent': DJP_UA }, signal: AbortSignal.timeout(20000) })).text();
+
+function prettySlug(slug) {
+  return String(slug || '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
-async function djpSongPage(url) {
+function slugifyName(n) {
+  return String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+const djpPageCache = new Map(); // url -> { data, time }
+function pageCacheGet(url) {
   const hit = djpPageCache.get(url);
-  if (hit && Date.now() - hit.time < 6 * 3600 * 1000) return hit.data;
-  const html = await djpFetchHtml(url);
+  if (hit && Date.now() - hit.time < PAGE_TTL) return hit.data;
+  return null;
+}
+function pageCacheSet(url, data) {
+  if (djpPageCache.size > 400) djpPageCache.delete(djpPageCache.keys().next().value);
+  djpPageCache.set(url, { data, time: Date.now() });
+}
+
+async function djpSongPage(url) {
+  const hit = pageCacheGet(url);
+  if (hit) return hit;
+  const html = await fetchText(url);
   const mp3s = {};
   for (const m of html.matchAll(/https:\/\/s\d+\.djpunjab\.is\/data\/(48|128|320)\/\d+\/\d+\/[^"']+\.mp3/gi)) {
     mp3s[m[1]] = m[0].replace(/&amp;/g, '&');
@@ -554,26 +148,38 @@ async function djpSongPage(url) {
     title = t.replace(/\s*mp3 songs? download djpunjab\s*/gi, '').trim() || 'Unknown';
   }
   const cover = html.match(/https:\/\/cover\.djpunjab\.is\/[^"']+\.(?:webp|jpg)/i)?.[0] || '';
-  const data = { mp3: mp3s['320'] || mp3s['128'] || mp3s['48'] || '', quality: mp3s['320'] ? '320' : mp3s['128'] ? '128' : '48', title, artist: artist || 'Unknown', cover };
-  if (djpPageCache.size > 300) djpPageCache.delete(djpPageCache.keys().next().value);
-  djpPageCache.set(url, { data, time: Date.now() });
+  // duration ≈ bytes ÷ bitrate (CBR MP3s — accurate; non-fatal if HEAD fails)
+  let duration = 0;
+  const best = mp3s['320'] || mp3s['128'] || mp3s['48'] || '';
+  const br = mp3s['320'] ? 320 : mp3s['128'] ? 128 : 48;
+  if (best) {
+    try {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 8000);
+      try {
+        const h = await fetch(best, { method: 'HEAD', signal: ctrl.signal, headers: { 'User-Agent': DJP_UA, Referer: `${DJP_BASE}/` } });
+        const len = parseInt(h.headers.get('content-length') || '0', 10);
+        if (len > 100000) duration = Math.round((len * 8) / (br * 1000));
+      } finally { clearTimeout(to); }
+    } catch { /* leave 0 — client fills from audio element */ }
+  }
+  const data = { mp3: best, mp3s, quality: mp3s['320'] ? '320' : mp3s['128'] ? '128' : '48', title, artist: artist || 'Unknown', cover, duration };
+  pageCacheSet(url, data);
   return data;
 }
+
 async function djpAlbumPage(url) {
-  const hit = djpPageCache.get(url);
-  if (hit && Date.now() - hit.time < 6 * 3600 * 1000) return hit.data;
-  const html = await djpFetchHtml(url);
+  const hit = pageCacheGet(url);
+  if (hit) return hit;
+  const html = await fetchText(url);
   const cover = html.match(/https:\/\/cover\.djpunjab\.is\/[^"']+\.(?:webp|jpg)/i)?.[0] || '';
   const title = (html.match(/<title>([^<]*)<\/title>/i)?.[1] || '').replace(/\s*mp3 songs? download djpunjab\s*/gi, '').trim();
   const trackUrls = [...new Set([...html.matchAll(/href="((?:https:\/\/djpunjab\.is)?\/(?:single-track|punjabi-music)\/[^"]*?mp3-song-\d+\.html)"/gi)].map(m => (m[1].startsWith('http') ? m[1] : DJP_BASE + m[1]).replace(/&amp;/g, '&')))];
   const data = { cover, title, trackUrls, isAlbum: true };
-  if (djpPageCache.size > 300) djpPageCache.delete(djpPageCache.keys().next().value);
-  djpPageCache.set(url, { data, time: Date.now() });
+  pageCacheSet(url, data);
   return data;
 }
-function prettySlug(slug) {
-  return slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
+
 function normalizeDjpSong(id, pg) {
   if (!id || !pg?.mp3) return null;
   return {
@@ -581,27 +187,53 @@ function normalizeDjpSong(id, pg) {
     title: pg.title || 'Unknown',
     artist: { id: '', name: pg.artist || 'Unknown', image: pg.cover || '' },
     artists: [], album: { id: '', name: '', image: pg.cover || '' },
-    duration: 0, image: pg.cover || '',
+    duration: pg.duration || 0, image: pg.cover || '',
     streamUrl: `/api/djp-audio?id=${id}`, previewUrl: '', isPreview: false,
     codec: 'mp3', quality: pg.quality, explicit: false,
   };
 }
-async function djpSearchSongs(q, limit = 8) {
+
+async function djpSearchSongs(q, limit = 15) {
   const idx = await djpLoadIndex().catch(() => new Map());
   if (!idx.size) return [];
   const words = q.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 1);
   if (!words.length) return [];
-  const scored = [];
+  const songHits = [], albumHits = [];
   for (const [id, e] of idx) {
-    if (e.album) continue;
     const s = djpScore(e.slug, words);
-    if (s > 0) scored.push([s, id, e]);
+    if (s <= 0) continue;
+    (e.album ? albumHits : songHits).push([s, id, e]);
   }
-  scored.sort((a, b) => b[0] - a[0]);
-  const pages = await Promise.all(scored.slice(0, limit).map(([, id, e]) => djpSongPage(e.url).then(pg => ({ id, pg })).catch(() => null)));
-  return pages.filter(Boolean).map(({ id, pg }) => normalizeDjpSong(id, pg)).filter(Boolean);
+  songHits.sort((a, b) => b[0] - a[0]);
+  albumHits.sort((a, b) => b[0] - a[0]);
+  // direct song pages first
+  const pages = await Promise.all(songHits.slice(0, limit).map(([, id, e]) => djpSongPage(e.url).then(pg => ({ id, pg })).catch(() => null)));
+  const out = pages.filter(Boolean).map(({ id, pg }) => normalizeDjpSong(id, pg)).filter(Boolean);
+  // fill the rest from matched albums' tracks (most DJP "albums" are singles)
+  if (out.length < limit && albumHits.length) {
+    const need = limit - out.length;
+    const albPages = await Promise.all(albumHits.slice(0, Math.min(need, 6)).map(([, , e]) => djpAlbumPage(e.url).catch(() => null)));
+    const jobs = [];
+    for (const pg of albPages) {
+      if (!pg) continue;
+      for (const u of (pg.trackUrls || []).slice(0, 2)) {
+        const tid = (u.match(/mp3-song-(\d+)\.html/) || [])[1];
+        if (tid) jobs.push([tid, u]);
+      }
+      if (jobs.length >= need * 2) break;
+    }
+    const more = await Promise.all(jobs.slice(0, need * 2).map(async ([tid, u]) => {
+      try { return normalizeDjpSong(tid, await djpSongPage(u)); } catch { return null; }
+    }));
+    const seen = new Set(out.map(t => t.id));
+    for (const t of more.filter(Boolean)) {
+      if (!seen.has(t.id) && out.length < limit) { seen.add(t.id); out.push(t); }
+    }
+  }
+  return out;
 }
-async function djpSearchAlbums(q, limit = 5) {
+
+async function djpSearchAlbums(q, limit = 8) {
   const idx = await djpLoadIndex().catch(() => new Map());
   if (!idx.size) return [];
   const words = q.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 1);
@@ -613,1037 +245,330 @@ async function djpSearchAlbums(q, limit = 5) {
     if (s > 0) scored.push([s, id, e]);
   }
   scored.sort((a, b) => b[0] - a[0]);
+  const pages = await Promise.all(scored.slice(0, limit).map(([, id, e]) => djpAlbumPage(e.url).then(pg => ({ id, e, pg })).catch(() => null)));
+  return pages.filter(Boolean).map(({ id, e, pg }) => ({
+    id: `djp:al:${id}`, source: 'djp', sourceId: String(id), type: 'album',
+    name: pg.title || prettySlug(e.slug), artist: '', image: pg.cover || '', year: '',
+    trackCount: (pg.trackUrls || []).length,
+  }));
+}
+
+async function djpSearchArtists(q, limit = 8) {
+  const songs = await djpSearchSongs(q, 12).catch(() => []);
+  const seen = new Map();
+  for (const t of songs) {
+    const n = t.artist?.name || '';
+    if (!n || n === 'Unknown') continue;
+    const slug = slugifyName(n);
+    if (!slug || seen.has(slug)) continue;
+    seen.set(slug, { id: `djp:ar:${slug}`, source: 'djp', type: 'artist', name: n, image: t.image || '' });
+    if (seen.size >= limit) break;
+  }
+  return [...seen.values()];
+}
+
+async function djpLatestSongs(n = 12) {
+  const idx = await djpLoadIndex().catch(() => new Map());
+  let ids = [...djpLatestIds];
+  if (!ids.length && idx.size) {
+    // fallback: highest song ids first (ids grow over time)
+    ids = [...idx.entries()].filter(([, e]) => !e.album).map(([id]) => id)
+      .sort((a, b) => Number(b) - Number(a)).slice(0, n * 2);
+  }
   const out = [];
-  for (const [, id, e] of scored.slice(0, limit)) {
+  for (const id of ids.slice(0, n * 2)) {
+    if (out.length >= n) break;
     try {
-      const pg = await djpAlbumPage(e.url);
-      out.push({ id: `djp:al:${id}`, source: 'djp', sourceId: String(id), type: 'album', name: pg.title || prettySlug(e.slug), artist: '', image: pg.cover || '', year: '', trackCount: (pg.trackUrls || []).length });
-    } catch { /* skip */ }
+      const e = idx.get(String(id));
+      const t = e ? normalizeDjpSong(id, await djpSongPage(e.url)) : null;
+      if (t) out.push(t);
+    } catch { /* skip duds */ }
   }
   return out;
 }
 
-// ---------------- SoundCloud (full free streams via public web client_id) ----------------
-const SC_FALLBACK_CID = 'Pb72ranhoyt6gw7hM7TkzUItXlMWSNSo';
-let scCid = process.env.SC_CLIENT_ID || null, scCidTime = 0;
-async function scClientId(force = false) {
-  if (!force && scCid && Date.now() - scCidTime < 24 * 3600 * 1000) return scCid;
+async function djpLatestAlbums(n = 8) {
+  let links = [];
   try {
-    const html = await (await fetch('https://soundcloud.com/', { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }, signal: AbortSignal.timeout(15000) })).text();
-    const assets = [...new Set([...html.matchAll(/https:\/\/a-v2\.sndcdn\.com\/assets\/[0-9]+-[a-z0-9]+\.js/g)].map(m => m[0]))].slice(0, 10);
-    for (const u of assets) {
-      const js = await (await fetch(u, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) })).text();
-      const m = js.match(/client_id["=:\s]+([a-zA-Z0-9]{20,})/);
-      if (m) { scCid = m[1]; scCidTime = Date.now(); return scCid; }
+    const html = await fetchText(`${DJP_BASE}/punjabi_music/latest.php`, { timeout: 20000 });
+    for (const m of html.matchAll(/href="([^"]*?-album-\d+\.html)"/gi)) {
+      const u = (m[1].startsWith('http') ? m[1] : DJP_BASE + m[1]).replace(/&amp;/g, '&');
+      const p = parseDjpLoc(u);
+      if (p) links.push(p);
     }
-  } catch { /* fall through to fallback */ }
-  if (!scCid) { scCid = SC_FALLBACK_CID; scCidTime = Date.now(); }
-  return scCid;
-}
-async function scFetch(path, timeout = 20000, retry = true) {
-  const cid = await scClientId();
-  const sep = path.includes('?') ? '&' : '?';
-  const r = await fetch(`https://api-v2.soundcloud.com${path}${sep}client_id=${cid}`, { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(timeout) });
-  if (r.status === 401 && retry) { await scClientId(true); return scFetch(path, timeout, false); }
-  if (!r.ok) throw new Error(`SoundCloud HTTP ${r.status} for ${path}`);
-  return r.json();
-}
-function scArt(url, size = 't500x500') { return (url || '').replace('-large', `-${size}`); }
-function normalizeScTrack(t) {
-  if (!t?.id) return null;
-  const u = t.user || {};
-  const snip = t.policy === 'SNIP';
-  return {
-    id: `sc:${t.id}`, source: 'sc', sourceId: String(t.id), type: 'track',
-    title: t.title || 'Unknown',
-    artist: { id: u.id ? `sc:ar:${u.id}` : '', name: u.username || 'Unknown', image: scArt(u.avatar_url, 't300x300') },
-    artists: [], album: { id: '', name: '', image: scArt(t.artwork_url) },
-    duration: Math.round((t.duration || 0) / 1000), image: scArt(t.artwork_url),
-    streamUrl: `/api/sc-audio?id=${t.id}`, previewUrl: snip ? `/api/sc-audio?id=${t.id}` : '',
-    isPreview: snip, genre: t.genre || '', playCount: t.playback_count || 0, explicit: false,
-  };
-}
-function normalizeScUser(u) {
-  if (!u?.id) return null;
-  return { id: `sc:ar:${u.id}`, source: 'sc', sourceId: String(u.id), type: 'artist', name: u.username || 'Unknown', image: scArt(u.avatar_url) };
-}
-function normalizeScPlaylist(pl) {
-  if (!pl?.id) return null;
-  const u = pl.user || {};
-  return { id: `sc:pl:${pl.id}`, source: 'sc', sourceId: String(pl.id), type: 'playlist', name: pl.title || 'Playlist', description: (pl.description || '').slice(0, 300), image: scArt(pl.artwork_url), artist: u.username || '', trackCount: pl.track_count || (pl.tracks || []).length || 0 };
-}
-async function scSearchTracks(q, limit = 10) {
-  const j = await scFetch(`/search/tracks?q=${encodeURIComponent(q)}&limit=${limit}`);
-  return (j?.collection || []).slice(0, limit).map(normalizeScTrack).filter(Boolean);
-}
-async function scSearchPlaylists(q, limit = 6) {
-  const j = await scFetch(`/search/playlists?q=${encodeURIComponent(q)}&limit=${limit}`);
-  return (j?.collection || []).slice(0, limit).map(normalizeScPlaylist).filter(Boolean);
-}
-const scStreamCache = new Map();
-async function scResolveStream(id) {
-  const hit = scStreamCache.get(String(id));
-  if (hit && Date.now() - hit.time < 10 * 60 * 1000) return hit.url;
-  const t = await scFetch(`/tracks/${encodeURIComponent(id)}`);
-  const trs = t?.media?.transcodings || [];
-  const prog = trs.find(x => x?.format?.protocol === 'progressive') || trs.find(x => /progressive/.test(x?.url || ''));
-  if (!prog?.url) throw new Error('No progressive stream');
-  const j = await fetchJson(`${prog.url}?client_id=${await scClientId()}`, {}, 15000);
-  if (!j?.url) throw new Error('Resolve failed');
-  if (scStreamCache.size > 50) scStreamCache.delete(scStreamCache.keys().next().value);
-  scStreamCache.set(String(id), { url: j.url, time: Date.now() });
-  return j.url;
+  } catch (e) { console.error('djp latest albums failed:', e.message); }
+  if (!links.length) {
+    const idx = await djpLoadIndex().catch(() => new Map());
+    links = [...idx.values()].filter(e => e.album).sort((a, b) => Number(b.id) - Number(a.id)).slice(0, n * 2);
+  }
+  const pages = await Promise.all(links.slice(0, n * 2).map(p => djpAlbumPage(p.url).then(pg => ({ p, pg })).catch(() => null)));
+  return pages.filter(Boolean).slice(0, n).map(({ p, pg }) => ({
+    id: `djp:al:${p.id}`, source: 'djp', sourceId: String(p.id), type: 'album',
+    name: pg.title || prettySlug(p.slug), artist: '', image: pg.cover || '', year: '',
+    trackCount: (pg.trackUrls || []).length,
+  }));
 }
 
-// ---------------- Tidal pipeline from scratch (own tokens, no middleman) ----------------
-const TIDAL_CID = process.env.TIDAL_CLIENT_ID || 'txNoH4kkV41MfH25';
-const TIDAL_SECRET = process.env.TIDAL_CLIENT_SECRET || 'dQjy0MinCEvxi1O4UmxvxWnDjt4cgHBPw8ll6nYBk98=';
-let tidalTok = null, tidalTokExp = 0, tidalTokPromise = null;
-async function tidalToken(force = false) {
-  if (!force && tidalTok && Date.now() < tidalTokExp) return tidalTok;
-  if (!tidalTokPromise) {
-    tidalTokPromise = (async () => {
-      const body = new URLSearchParams({ client_id: TIDAL_CID, client_secret: TIDAL_SECRET, grant_type: 'client_credentials' });
-      const r = await fetch('https://auth.tidal.com/v1/oauth2/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: 'Basic ' + Buffer.from(`${TIDAL_CID}:${TIDAL_SECRET}`).toString('base64') },
-        body, signal: AbortSignal.timeout(15000),
-      });
-      if (!r.ok) throw new Error(`Tidal token HTTP ${r.status}`);
-      const j = await r.json();
-      if (!j.access_token) throw new Error('Tidal token missing');
-      tidalTok = j.access_token;
-      tidalTokExp = Date.now() + ((j.expires_in || 3600) - 60) * 1000;
-      return tidalTok;
-    })().finally(() => { tidalTokPromise = null; });
-  }
-  return tidalTokPromise;
-}
-async function tidalFetch(path, timeout = 20000, retry = true) {
-  const tok = await tidalToken();
-  const sep = path.includes('?') ? '&' : '?';
-  const r = await fetch(`https://api.tidal.com${path}${sep}countryCode=US`, { headers: { Authorization: `Bearer ${tok}`, 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(timeout) });
-  if (r.status === 401 && retry) { await tidalToken(true); return tidalFetch(path, timeout, false); }
-  if (!r.ok) throw new Error(`Tidal HTTP ${r.status} for ${path}`);
-  return r.json();
-}
-function normalizeTidalTrack(t) {
-  const x = normalizeMonoTrack(t);
-  if (!x) return null;
-  x.id = String(x.id).replace(/^mono:/, 'tidal:');
-  x.source = 'tidal';
-  x.streamUrl = `/api/tidal-audio?id=${t.id}`;
-  x.previewUrl = x.streamUrl;
-  if (x.artist) x.artist.id = String(x.artist.id || '').replace(/^mono:/, 'tidal:');
-  x.artists = (x.artists || []).map(a => ({ ...a, id: String(a.id || '').replace(/^mono:/, 'tidal:') }));
-  if (x.album) x.album.id = String(x.album.id || '').replace(/^mono:/, 'tidal:');
-  return x;
-}
-function normalizeTidalArtist(a) {
-  const x = normalizeMonoArtist(a);
-  if (!x) return null;
-  x.id = String(x.id).replace(/^mono:/, 'tidal:');
-  x.source = 'tidal';
-  return x;
-}
-function normalizeTidalAlbum(al) {
-  const x = normalizeMonoAlbum(al);
-  if (!x) return null;
-  x.id = String(x.id).replace(/^mono:/, 'tidal:');
-  x.source = 'tidal';
-  return x;
-}
-function normalizeTidalPlaylist(pl) {
-  const x = normalizeMonoPlaylist(pl);
-  if (!x) return null;
-  x.id = String(x.id).replace(/^mono:/, 'tidal:');
-  x.source = 'tidal';
-  return x;
-}
-async function tidalSearchSongs(q, limit = 10) {
-  const j = await tidalFetch(`/v1/search/tracks?query=${encodeURIComponent(q)}&limit=${limit}`);
-  return (j?.items || []).slice(0, limit).map(normalizeTidalTrack).filter(Boolean);
-}
-async function tidalSearchArtists(q, limit = 8) {
-  const j = await tidalFetch(`/v1/search/artists?query=${encodeURIComponent(q)}&limit=${limit}`);
-  return (j?.items || []).slice(0, limit).map(normalizeTidalArtist).filter(Boolean);
-}
-async function tidalSearchAlbums(q, limit = 8) {
-  const j = await tidalFetch(`/v1/search/albums?query=${encodeURIComponent(q)}&limit=${limit}`);
-  return (j?.items || []).slice(0, limit).map(normalizeTidalAlbum).filter(Boolean);
-}
-async function tidalSearchPlaylists(q, limit = 6) {
-  const j = await tidalFetch(`/v1/search/playlists?query=${encodeURIComponent(q)}&limit=${limit}`);
-  return (j?.items || []).slice(0, limit).map(normalizeTidalPlaylist).filter(Boolean);
-}
-const tidalAudioCache = new Map();
-async function tidalStitchedAudio(id) {
-  const hit = tidalAudioCache.get(String(id));
-  if (hit && Date.now() - hit.time < 15 * 60 * 1000) return hit.buf;
-  const j = await tidalFetch(`/v1/tracks/${encodeURIComponent(id)}/playbackinfo?audioquality=HI_RES_LOSSLESS&playbackmode=STREAM&assetpresentation=FULL`, 30000);
-  const b64 = j?.manifest;
-  if (!b64) throw new Error(j?.userMessage || 'No manifest');
-  const xml = Buffer.from(b64, 'base64').toString('utf8');
-  const tpl = xml.match(/<SegmentTemplate[^>]*>/)?.[0] || '';
-  const init = (tpl.match(/initialization="([^"]+)"/)?.[1] || '').replace(/&amp;/g, '&');
-  const media = (tpl.match(/media="([^"]+)"/)?.[1] || '').replace(/&amp;/g, '&');
-  if (!init || !media || !media.includes('$Number$')) throw new Error('Unsupported manifest');
-  let count = 0;
-  for (const m of xml.matchAll(/<S\b[^>]*>/g)) {
-    const tag = m[0];
-    const r = parseInt(tag.match(/\br="(\d+)"/)?.[1] || '0', 10);
-    count += r + 1;
-  }
-  if (!count || count > 60) throw new Error('Bad segment timeline');
-  const urls = [init, ...Array.from({ length: count }, (_, i) => media.replace('$Number$', String(i + 1)))];
-  const parts = new Array(urls.length);
-  let next = 0;
-  const workers = Array.from({ length: 4 }, async () => {
-    while (next < urls.length) {
-      const i = next++;
-      const r = await fetch(urls[i], { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(25000) });
-      if (!r.ok) throw new Error(`Segment ${i} HTTP ${r.status}`);
-      parts[i] = Buffer.from(await r.arrayBuffer());
-    }
-  });
-  await Promise.all(workers);
-  const buf = Buffer.concat(parts);
-  if (buf.length < 10000) throw new Error('Stitched audio too small');
-  if (tidalAudioCache.size > 4) tidalAudioCache.delete(tidalAudioCache.keys().next().value);
-  tidalAudioCache.set(String(id), { buf, time: Date.now() });
-  return buf;
+const TRENDING_QUERIES = ['ap dhillon', 'diljit dosanjh', 'guru randhawa', 'jasmine sandlas', 'tulsi kumar', 'prem dhillon'];
+async function djpTrending(per = 2) {
+  const parts = await Promise.all(TRENDING_QUERIES.map(q => djpSearchSongs(q, per).catch(() => [])));
+  return parts.flat().slice(0, 12);
 }
 
-// ---------------- Monochrome API (Tidal catalog: search + Hi-Res DASH previews) ----------------
-const MONO_API = (process.env.MONO_API_URL || 'https://monochrome-api.samidy.com').replace(/\/$/, '');
-async function monoFetch(path, timeout = 20000) {
-  const r = await fetch(`${MONO_API}${path}`, { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(timeout) });
-  if (!r.ok) throw new Error(`Mono HTTP ${r.status} for ${path}`);
-  return r.json();
-}
-function tidalImg(uuid, size = 640) {
-  if (!uuid) return '';
-  return `https://resources.tidal.com/images/${String(uuid).replace(/-/g, '/')}/${size}x${size}.jpg`;
-}
-function normalizeMonoTrack(t) {
-  if (!t?.id) return null;
-  const artists = (t.artists || (t.artist ? [t.artist] : [])).filter(Boolean);
-  const a0 = artists[0] || {};
-  const alb = t.album || {};
+async function djpArtistDetail(slug) {
+  slug = slugifyName(slug);
+  const words = slug.split('-').filter(w => w.length > 1);
+  const ids = [];
+  try {
+    const html = await fetchText(`${DJP_BASE}/artist/${slug}-top-songs`, { timeout: 15000 });
+    for (const m of html.matchAll(/href="([^"]*?mp3-song-(\d+)\.html)"/gi)) {
+      const u = (m[1].startsWith('http') ? m[1] : DJP_BASE + m[1]).replace(/&amp;/g, '&');
+      ids.push([m[2], u]);
+    }
+  } catch { /* use index fallback below */ }
+  const idx = await djpLoadIndex().catch(() => new Map());
+  if (ids.length < 5 && words.length && idx.size) {
+    for (const [id, e] of idx) {
+      if (e.album) continue;
+      if (words.every(w => e.slug.includes(w))) ids.push([id, e.url]);
+      if (ids.length >= 30) break;
+    }
+  }
+  if (ids.length < 8 && words.length && idx.size) {
+    const albHits = [];
+    for (const [id, e] of idx) {
+      if (!e.album) continue;
+      if (words.every(w => e.slug.includes(w))) albHits.push(e.url);
+      if (albHits.length >= 6) break;
+    }
+    const albPages = await Promise.all(albHits.map(u => djpAlbumPage(u).catch(() => null)));
+    for (const pg of albPages) {
+      if (!pg) continue;
+      for (const u of (pg.trackUrls || []).slice(0, 2)) {
+        const tid = (u.match(/mp3-song-(\d+)\.html/) || [])[1];
+        if (tid) ids.push([tid, u]);
+      }
+      if (ids.length >= 30) break;
+    }
+  }
+  const seen = new Set();
+  const uniq = ids.filter(([id]) => !seen.has(String(id)) && seen.add(String(id))).slice(0, 20);
+  const songs = (await Promise.all(uniq.map(async ([id, u]) => {
+    try { return normalizeDjpSong(id, await djpSongPage(u)); } catch { return null; }
+  }))).filter(Boolean);
+  if (!songs.length) return null;
+  const name = songs[0].artist?.name && songs[0].artist.name !== 'Unknown' ? songs[0].artist.name : prettySlug(slug);
+  // albums by this artist (cheap: metadata only, no track resolution)
+  let topAlbums = [];
+  if (words.length && idx.size) {
+    const scored = [];
+    for (const [id, e] of idx) {
+      if (!e.album) continue;
+      const s = djpScore(e.slug, words);
+      if (s > 0) scored.push([s, id, e]);
+    }
+    scored.sort((a, b) => b[0] - a[0]);
+    const pages = await Promise.all(scored.slice(0, 4).map(([, id, e]) => djpAlbumPage(e.url).then(pg => ({ id, e, pg })).catch(() => null)));
+    topAlbums = pages.filter(Boolean).map(({ id, e, pg }) => ({
+      id: `djp:al:${id}`, source: 'djp', type: 'album', name: pg.title || prettySlug(e.slug),
+      artist: name, image: pg.cover || '', year: '', trackCount: (pg.trackUrls || []).length,
+    }));
+  }
   return {
-    id: `mono:${t.id}`, source: 'mono', sourceId: String(t.id), type: 'track',
-    title: t.title || 'Unknown',
-    artist: { id: a0.id ? `mono:ar:${a0.id}` : '', name: a0.name || 'Unknown', image: tidalImg(a0.picture, 320) },
-    artists: artists.map(a => ({ id: a.id ? `mono:ar:${a.id}` : '', name: a.name || '', image: tidalImg(a.picture, 320) })),
-    album: { id: alb.id ? `mono:al:${alb.id}` : '', name: alb.title || '', image: tidalImg(alb.cover, 640), year: (alb.releaseDate || '').slice(0, 4) },
-    duration: t.duration || 30, image: tidalImg(alb.cover, 640),
-    streamUrl: `/api/mono-audio?id=${t.id}`, previewUrl: `/api/mono-audio?id=${t.id}`,
-    isPreview: true, codec: 'flac', explicit: !!t.explicit,
-    popularity: t.popularity || 0, isrc: t.isrc || '', playCount: 0,
+    id: `djp:ar:${slug}`, source: 'djp', type: 'artist', name,
+    image: songs[0].image || '', topSongs: songs, topAlbums, tags: [],
   };
 }
-function normalizeMonoArtist(a) {
-  if (!a?.id) return null;
-  return { id: `mono:ar:${a.id}`, source: 'mono', sourceId: String(a.id), type: 'artist', name: a.name || 'Unknown', image: tidalImg(a.picture, 640) || (a.selectedAlbumCoverFallback ? tidalImg(a.selectedAlbumCoverFallback, 640) : ''), popularity: a.popularity || 0 };
-}
-function normalizeMonoAlbum(al) {
-  if (!al?.id) return null;
-  const a0 = (al.artists || [])[0] || {};
-  return { id: `mono:al:${al.id}`, source: 'mono', sourceId: String(al.id), type: 'album', name: al.title || 'Album', artist: a0.name || '', image: tidalImg(al.cover, 640), year: (al.releaseDate || '').slice(0, 4), trackCount: al.numberOfTracks || 0 };
-}
-function normalizeMonoPlaylist(pl) {
-  const pid = pl.uuid || pl.id;
-  if (!pid) return null;
-  return { id: `mono:pl:${pid}`, source: 'mono', sourceId: String(pid), type: 'playlist', name: pl.title || 'Playlist', description: pl.description || '', image: pl.squareImage ? tidalImg(pl.squareImage, 640) : '', trackCount: pl.numberOfTracks || 0 };
-}
-async function monoSearchSongs(q, limit = 10) {
-  const j = await monoFetch(`/search/?s=${encodeURIComponent(q)}`);
-  return (j?.data?.items || []).slice(0, limit).map(normalizeMonoTrack).filter(Boolean);
-}
-async function monoSearchArtists(q, limit = 8) {
-  const j = await monoFetch(`/search/?a=${encodeURIComponent(q)}`);
-  return (j?.data?.artists?.items || []).slice(0, limit).map(normalizeMonoArtist).filter(Boolean);
-}
-async function monoSearchAlbums(q, limit = 8) {
-  const j = await monoFetch(`/search/?al=${encodeURIComponent(q)}`);
-  return (j?.data?.albums?.items || []).slice(0, limit).map(normalizeMonoAlbum).filter(Boolean);
-}
-async function monoSearchPlaylists(q, limit = 6) {
-  const j = await monoFetch(`/search/?p=${encodeURIComponent(q)}`);
-  return (j?.data?.playlists?.items || []).slice(0, limit).map(normalizeMonoPlaylist).filter(Boolean);
-}
-// Stitched DASH preview cache: id -> { buf, time }
-const monoAudioCache = new Map();
-async function monoStitchedAudio(id) {
-  const hit = monoAudioCache.get(String(id));
-  if (hit && Date.now() - hit.time < 15 * 60 * 1000) return hit.buf;
-  const j = await monoFetch(`/track/?id=${encodeURIComponent(id)}`, 30000);
-  const b64 = j?.data?.manifest;
-  if (!b64) throw new Error(j?.detail || 'No manifest');
-  const xml = Buffer.from(b64, 'base64').toString('utf8');
-  const tpl = xml.match(/<SegmentTemplate[^>]*>/)?.[0] || '';
-  const init = (tpl.match(/initialization="([^"]+)"/)?.[1] || '').replace(/&amp;/g, '&');
-  const media = (tpl.match(/media="([^"]+)"/)?.[1] || '').replace(/&amp;/g, '&');
-  if (!init || !media || !media.includes('$Number$')) throw new Error('Unsupported manifest');
-  let count = 0;
-  for (const m of xml.matchAll(/<S\b[^>]*>/g)) {
-    const tag = m[0];
-    const r = parseInt(tag.match(/\br="(\d+)"/)?.[1] || '0', 10);
-    count += r + 1;
-  }
-  if (!count || count > 60) throw new Error('Bad segment timeline');
-  const urls = [init, ...Array.from({ length: count }, (_, i) => media.replace('$Number$', String(i + 1)))];
-  const parts = new Array(urls.length);
-  let next = 0;
-  const workers = Array.from({ length: 4 }, async () => {
-    while (next < urls.length) {
-      const i = next++;
-      const r = await fetch(urls[i], { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(25000) });
-      if (!r.ok) throw new Error(`Segment ${i} HTTP ${r.status}`);
-      parts[i] = Buffer.from(await r.arrayBuffer());
-    }
-  });
-  await Promise.all(workers);
-  const buf = Buffer.concat(parts);
-  if (buf.length < 10000) throw new Error('Stitched audio too small');
-  if (monoAudioCache.size > 4) monoAudioCache.delete(monoAudioCache.keys().next().value);
-  monoAudioCache.set(String(id), { buf, time: Date.now() });
-  return buf;
-}
+
+// ---------------- API ----------------
+app.get('/api/health', (req, res) => res.json({ ok: true, source: 'djpunjab', time: new Date().toISOString() }));
+
+app.get('/api/sources', async (req, res) => {
+  try {
+    const m = await djpLoadIndex();
+    res.json({ djpunjab: m.size > 100 ? 'ok' : 'empty', indexSize: m.size, latest: djpLatestIds.length, uptime: Math.round(process.uptime()) });
+  } catch (e) { res.json({ djpunjab: `down: ${e.message}`, indexSize: 0 }); }
+});
 
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').trim();
   const type = (req.query.type || 'all').toLowerCase();
-  if (!q) return res.json({ songs: [], albums: [], artists: [], playlists: [] });
+  if (!q) return res.json({ songs: [], albums: [], artists: [] });
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
   try {
-    let songs = [], albums = [], artists = [], playlists = [];
-    if (type === 'all' || type === 'songs') {
-      const [a, b, c, d, e, f, g, h] = await Promise.allSettled([saavnSearchSongs(q, 20), audiusSearch(q, 8), scSearchTracks(q, 10), djpSearchSongs(q, 8), monoSearchSongs(q, 10), tidalSearchSongs(q, 10), itunesSearchSongs(q, 20), deezerSearchTracks(q, 12)]);
-      // order = quality priority: full tracks first, then HI-RES previews, then standard previews
-      songs = dedupe([...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(c.status === 'fulfilled' ? c.value : []), ...(d.status === 'fulfilled' ? d.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : []), ...(g.status === 'fulfilled' ? g.value : []), ...(h.status === 'fulfilled' ? h.value : [])]);
-    }
-    if (type === 'all' || type === 'albums') {
-      const [a, b, e, f, h] = await Promise.allSettled([saavnSearchAlbums(q, 10), itunesSearchAlbums(q, 10), monoSearchAlbums(q, 8), tidalSearchAlbums(q, 8), djpSearchAlbums(q, 5)]);
-      albums = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : []), ...(h.status === 'fulfilled' ? h.value : [])];
-    }
-    if (type === 'all' || type === 'artists') {
-      const [a, b, e, f] = await Promise.allSettled([saavnSearchArtists(q, 8), itunesSearchArtists(q, 8), monoSearchArtists(q, 8), tidalSearchArtists(q, 8)]);
-      artists = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : [])];
-    }
-    if (type === 'all' || type === 'playlists') {
-      const [a, e, f, g] = await Promise.allSettled([saavnSearchPlaylists(q, 10), monoSearchPlaylists(q, 6), tidalSearchPlaylists(q, 6), scSearchPlaylists(q, 6)]);
-      playlists = [...(a.status === 'fulfilled' ? a.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : []), ...(g.status === 'fulfilled' ? g.value : [])];
-    }
-    const payload = { songs, albums, artists, playlists };
+    const [songs, albums, artists] = await Promise.all([
+      (type === 'all' || type === 'songs') ? djpSearchSongs(q, 15).catch(() => []) : [],
+      (type === 'all' || type === 'albums') ? djpSearchAlbums(q, 8).catch(() => []) : [],
+      (type === 'all' || type === 'artists') ? djpSearchArtists(q, 8).catch(() => []) : [],
+    ]);
+    const payload = { songs, albums, artists };
     setCache(req.originalUrl, payload);
     res.json(payload);
-  } catch (e) {
-    res.status(502).json({ error: 'Search failed', detail: e.message });
-  }
+  } catch (e) { res.status(502).json({ error: 'Search failed', detail: e.message }); }
+});
+
+app.get('/api/home', async (req, res) => {
+  const cached = getCache('home:v1');
+  if (cached) return res.json(cached);
+  try {
+    const [latest, trending, newReleases] = await Promise.all([
+      djpLatestSongs(12).catch(() => []),
+      djpTrending(2).catch(() => []),
+      djpLatestAlbums(8).catch(() => []),
+    ]);
+    const hero = latest.filter(t => t.image).slice(0, 5);
+    const seen = new Map();
+    for (const t of [...trending, ...latest]) {
+      const n = t.artist?.name || '';
+      if (!n || n === 'Unknown') continue;
+      const slug = slugifyName(n);
+      if (!slug || seen.has(slug)) continue;
+      seen.set(slug, { id: `djp:ar:${slug}`, source: 'djp', type: 'artist', name: n, image: t.image || '' });
+    }
+    const [party, romantic] = await Promise.all([
+      djpSearchSongs('jasmine sandlas guru randhawa', 6).catch(() => []),
+      djpSearchSongs('tulsi kumar', 6).catch(() => []),
+    ]);
+    const payload = {
+      hero, newDrops: latest, trendingNow: trending.slice(0, 10),
+      topArtists: [...seen.values()].slice(0, 10), newReleases,
+      party: party.length ? party : trending.slice(0, 5),
+      romantic: romantic.length ? romantic : latest.slice(0, 5),
+    };
+    setCache('home:v1', payload, 10 * 60 * 1000);
+    res.json(payload);
+  } catch (e) { res.status(502).json({ error: 'Home feed failed', detail: e.message }); }
 });
 
 app.get('/api/song/:source/:id', async (req, res) => {
   const { source, id } = req.params;
+  if (source !== 'djp') return res.status(404).json({ error: 'Unknown source' });
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
   try {
-    if (source === 'saavn') {
-      const j = await saavnFetch(`/songs/${encodeURIComponent(id)}`);
-      const track = normalizeSaavnSong(j?.data?.[0] || j?.data);
-      if (!track) return res.status(404).json({ error: 'Song not found' });
-      if (!track.streamUrl) {
-        const fb = await itunesSearchSongs(`${track.title} ${track.artist?.name}`, 3).catch(() => []);
-        if (fb[0]?.streamUrl) { track.previewUrl = fb[0].streamUrl; track.streamUrl = fb[0].streamUrl; track.fallbackSource = 'itunes'; }
-      }
-      setCache(req.originalUrl, track);
-      return res.json(track);
-    }
-    if (source === 'deezer') {
-      const track = normalizeDeezerTrack(await fetchJson(`${DEEZER}/track/${encodeURIComponent(id)}`));
-      if (!track) return res.status(404).json({ error: 'Song not found' });
-      setCache(req.originalUrl, track);
-      return res.json(track);
-    }
-    if (source === 'itunes') {
-      const results = await itunesLookup(id, 'song');
-      const track = normalizeItunesSong(results.find(r => r.trackId) || results[0]);
-      if (!track) return res.status(404).json({ error: 'Song not found' });
-      setCache(req.originalUrl, track);
-      return res.json(track);
-    }
-    if (source === 'mono') {
-      const j = await monoFetch(`/info/?id=${encodeURIComponent(id)}`);
-      const track = normalizeMonoTrack(j?.data);
-      if (!track) return res.status(404).json({ error: 'Song not found' });
-      setCache(req.originalUrl, track);
-      return res.json(track);
-    }
-    if (source === 'tidal') {
-      const track = normalizeTidalTrack(await tidalFetch(`/v1/tracks/${encodeURIComponent(id)}/`));
-      if (!track) return res.status(404).json({ error: 'Song not found' });
-      setCache(req.originalUrl, track);
-      return res.json(track);
-    }
-    if (source === 'sc') {
-      const track = normalizeScTrack(await scFetch(`/tracks/${encodeURIComponent(id)}`));
-      if (!track) return res.status(404).json({ error: 'Song not found' });
-      setCache(req.originalUrl, track);
-      return res.json(track);
-    }
-    if (source === 'djp') {
-      const e = (await djpLoadIndex()).get(String(id));
-      if (!e) return res.status(404).json({ error: 'Song not indexed' });
-      const track = normalizeDjpSong(id, await djpSongPage(e.url));
-      if (!track) return res.status(404).json({ error: 'Song not found' });
-      setCache(req.originalUrl, track);
-      return res.json(track);
-    }
-    res.status(400).json({ error: 'Unknown source' });
-  } catch (e) { res.status(502).json({ error: 'Failed to resolve song', detail: e.message }); }
+    const e = (await djpLoadIndex()).get(String(id));
+    if (!e || e.album) return res.status(404).json({ error: 'Song not indexed' });
+    const track = normalizeDjpSong(id, await djpSongPage(e.url));
+    if (!track) return res.status(404).json({ error: 'Song unavailable' });
+    setCache(req.originalUrl, track, 30 * 60 * 1000);
+    res.json(track);
+  } catch (e) { res.status(502).json({ error: 'Song failed', detail: e.message }); }
 });
 
 app.get('/api/album/:source/:id', async (req, res) => {
   const { source, id } = req.params;
+  if (source !== 'djp') return res.status(404).json({ error: 'Unknown source' });
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
   try {
-    if (source === 'saavn') {
-      const j = await saavnFetch(`/albums/${encodeURIComponent(id)}`);
-      const d = j?.data || {};
-      const payload = { ...normalizeSaavnAlbum(d), description: d.description || '', songs: (d.songs || []).map(normalizeSaavnSong).filter(Boolean) };
-      setCache(req.originalUrl, payload);
-      return res.json(payload);
-    }
-    if (source === 'itunes') {
-      const results = await itunesLookup(id, 'song');
-      const col = results.find(r => r.wrapperType === 'collection') || {};
-      const songs = results.filter(r => r.wrapperType === 'track').map(normalizeItunesSong).filter(t => t && t.streamUrl);
-      const payload = { ...(normalizeItunesAlbum({ collectionId: id, collectionName: col.collectionName, artistName: col.artistName, artworkUrl100: col.artworkUrl100, releaseDate: col.releaseDate, trackCount: col.trackCount }) || { id: `itunes:al:${id}`, name: col.collectionName || 'Album', image: itunesArt(col.artworkUrl100, 600) }), description: '', songs };
-      setCache(req.originalUrl, payload);
-      return res.json(payload);
-    }
-    if (source === 'deezer') {
-      const j = await fetchJson(`${DEEZER}/album/${encodeURIComponent(id)}`);
-      const songs = (j?.tracks?.data || []).map(t => normalizeDeezerTrack({ ...t, artist: t.artist || j.artist, album: { id: j.id, title: j.title, cover_xl: j.cover_xl, cover_big: j.cover_big } })).filter(Boolean);
-      const payload = { ...normalizeDeezerAlbum(j), description: '', songs };
-      setCache(req.originalUrl, payload);
-      return res.json(payload);
-    }
-    if (source === 'mono') {
-      const j = await monoFetch(`/album/?id=${encodeURIComponent(id)}&limit=100`);
-      const d = j?.data || {};
-      const songs = (d.items || []).map(x => normalizeMonoTrack(x?.item)).filter(Boolean);
-      const payload = { ...normalizeMonoAlbum(d), description: d.copyright || '', songs };
-      if (!payload.artist && songs[0]) payload.artist = songs[0].artist?.name || '';
-      if (!payload.image && songs[0]) payload.image = songs[0].image || '';
-      setCache(req.originalUrl, payload);
-      return res.json(payload);
-    }
-    if (source === 'tidal') {
-      const [meta, tr] = await Promise.all([
-        tidalFetch(`/v1/albums/${encodeURIComponent(id)}/`),
-        (async () => {
-          const p1 = await tidalFetch(`/v1/albums/${encodeURIComponent(id)}/tracks?limit=50`).catch(() => ({ items: [] }));
-          let items = p1?.items || [];
-          if ((p1?.totalNumberOfItems || 0) > items.length)
-            items = items.concat((await tidalFetch(`/v1/albums/${encodeURIComponent(id)}/tracks?limit=50&offset=50`).catch(() => ({ items: [] })))?.items || []);
-          return { items };
-        })(),
-      ]);
-      const songs = (tr?.items || []).map(normalizeTidalTrack).filter(Boolean);
-      const payload = { ...normalizeTidalAlbum(meta), description: meta?.copyright || '', songs };
-      if (!payload.artist && songs[0]) payload.artist = songs[0].artist?.name || '';
-      if (!payload.image && songs[0]) payload.image = songs[0].image || '';
-      setCache(req.originalUrl, payload);
-      return res.json(payload);
-    }
-    if (source === 'djp') {
-      const e = (await djpLoadIndex()).get(String(id));
-      if (!e) return res.status(404).json({ error: 'Album not indexed' });
-      const pg = await djpAlbumPage(e.url);
-      const songs = (await Promise.all((pg.trackUrls || []).slice(0, 30).map(async u => {
-        try {
-          const tid = djpUrlToId.get(u) || (u.match(/mp3-song-(\d+)\.html/) || [])[1];
-          if (!tid) return null;
-          return normalizeDjpSong(tid, await djpSongPage(u));
-        } catch { return null; }
-      }))).filter(Boolean);
-      const payload = { id: `djp:al:${id}`, source: 'djp', sourceId: String(id), type: 'album', name: pg.title || prettySlug(e.slug), artist: songs[0]?.artist?.name || '', image: pg.cover || songs[0]?.image || '', year: '', trackCount: songs.length, description: '', songs };
-      setCache(req.originalUrl, payload);
-      return res.json(payload);
-    }
-    res.status(400).json({ error: 'Unknown source' });
-  } catch (e) { res.status(502).json({ error: 'Failed to load album', detail: e.message }); }
+    const e = (await djpLoadIndex()).get(String(id));
+    if (!e) return res.status(404).json({ error: 'Album not indexed' });
+    const pg = await djpAlbumPage(e.url);
+    const songs = (await Promise.all((pg.trackUrls || []).slice(0, 30).map(async u => {
+      try {
+        const tid = (u.match(/mp3-song-(\d+)\.html/) || [])[1];
+        if (!tid) return null;
+        return normalizeDjpSong(tid, await djpSongPage(u));
+      } catch { return null; }
+    }))).filter(Boolean);
+    const payload = {
+      id: `djp:al:${id}`, source: 'djp', sourceId: String(id), type: 'album',
+      name: pg.title || prettySlug(e.slug), artist: songs[0]?.artist?.name || '',
+      image: pg.cover || songs[0]?.image || '', year: '', trackCount: songs.length, description: '', songs,
+    };
+    setCache(req.originalUrl, payload, 30 * 60 * 1000);
+    res.json(payload);
+  } catch (e) { res.status(502).json({ error: 'Album failed', detail: e.message }); }
 });
 
 app.get('/api/artist/:source/:id', async (req, res) => {
   const { source, id } = req.params;
+  if (source !== 'djp') return res.status(404).json({ error: 'Unknown source' });
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
   try {
-    let payload = null;
-    if (source === 'saavn') {
-      const j = await saavnFetch(`/artists/${encodeURIComponent(id)}`);
-      const d = j?.data || {};
-      payload = {
-        ...normalizeSaavnArtist(d), bio: d.bio || '',
-        topSongs: (d.topSongs || []).map(normalizeSaavnSong).filter(Boolean),
-        topAlbums: (d.topAlbums || []).map(normalizeSaavnAlbum).filter(Boolean),
-        similar: (d.similarArtists || []).map(normalizeSaavnArtist).filter(Boolean),
-      };
-    } else if (source === 'itunes') {
-      const [songsRes, albumsRes] = await Promise.all([
-        fetchJson(`${ITUNES}/lookup?id=${encodeURIComponent(id)}&entity=song&limit=25&sort=popularity&country=${COUNTRY}`, {}, 10000).catch(() => ({ results: [] })),
-        fetchJson(`${ITUNES}/lookup?id=${encodeURIComponent(id)}&entity=album&limit=12&country=${COUNTRY}`, {}, 10000).catch(() => ({ results: [] })),
-      ]);
-      const songsAll = songsRes?.results || [];
-      const artistMeta = songsAll.find(r => r.wrapperType === 'artist') || (albumsRes?.results || []).find(r => r.wrapperType === 'artist') || {};
-      const topSongs = songsAll.filter(r => r.wrapperType === 'track').map(normalizeItunesSong).filter(t => t && t.streamUrl);
-      payload = {
-        id: `itunes:ar:${id}`, source: 'itunes', sourceId: String(id), type: 'artist',
-        name: artistMeta.artistName || topSongs[0]?.artist?.name || 'Artist',
-        image: topSongs[0]?.image || '', bio: '',
-        topSongs,
-        topAlbums: (albumsRes?.results || []).filter(r => r.wrapperType === 'collection').map(normalizeItunesAlbum).filter(Boolean),
-        similar: [],
-      };
-    } else if (source === 'deezer') {
-      const [a, top] = await Promise.all([
-        fetchJson(`${DEEZER}/artist/${encodeURIComponent(id)}`),
-        fetchJson(`${DEEZER}/artist/${encodeURIComponent(id)}/top?limit=10`).catch(() => ({ data: [] })),
-      ]);
-      payload = { ...normalizeDeezerArtist(a), bio: '', topSongs: (top?.data || []).map(normalizeDeezerTrack).filter(Boolean), topAlbums: [], similar: [] };
-    } else if (source === 'mono') {
-      const j = await monoFetch(`/artist/?id=${encodeURIComponent(id)}`);
-      const a = j?.artist || {};
-      const [top, sim] = await Promise.all([
-        monoSearchSongs(a.name || id, 10).catch(() => []),
-        monoFetch(`/artist/similar/?id=${encodeURIComponent(id)}`).catch(() => null),
-      ]);
-      const simItems = sim?.artists?.items || sim?.data?.artists?.items || (Array.isArray(sim?.data) ? sim.data : []) || [];
-      payload = {
-        ...normalizeMonoArtist(a), bio: '',
-        topSongs: top, topAlbums: [],
-        similar: simItems.map(normalizeMonoArtist).filter(Boolean).slice(0, 8),
-      };
-    } else if (source === 'tidal') {
-      const [a, top, albs] = await Promise.all([
-        tidalFetch(`/v1/artists/${encodeURIComponent(id)}/`),
-        tidalFetch(`/v1/artists/${encodeURIComponent(id)}/toptracks?limit=10`).catch(() => ({ items: [] })),
-        tidalFetch(`/v1/artists/${encodeURIComponent(id)}/albums?limit=8`).catch(() => ({ items: [] })),
-      ]);
-      payload = {
-        ...normalizeTidalArtist(a), bio: '',
-        topSongs: (top?.items || []).map(normalizeTidalTrack).filter(Boolean),
-        topAlbums: (albs?.items || []).map(normalizeTidalAlbum).filter(Boolean),
-        similar: [],
-      };
-    } else if (source === 'sc') {
-      const [u, tr] = await Promise.all([
-        scFetch(`/users/${encodeURIComponent(id)}`),
-        scFetch(`/users/${encodeURIComponent(id)}/tracks?limit=10`).catch(() => ({ collection: [] })),
-      ]);
-      payload = {
-        ...normalizeScUser(u), bio: (u?.description || '').slice(0, 500),
-        topSongs: (tr?.collection || []).map(normalizeScTrack).filter(Boolean),
-        topAlbums: [], similar: [],
-      };
-    } else return res.status(400).json({ error: 'Unknown source' });
-
-    // Enrichment: AudioDB (free) + LastFM (optional key)
-    if (payload?.name) {
-      const adb = await audioDbArtist(payload.name);
-      if (adb) {
-        payload.bio = payload.bio || adb.strBiographyEN || '';
-        payload.image = payload.image || adb.strArtistThumb || adb.strArtistFanart || '';
-        payload.fanart = adb.strArtistFanart || '';
-        payload.formedYear = adb.intFormedYear || '';
-        payload.genre = adb.strGenre || '';
-      }
-      if (LASTFM_KEY) {
-        try {
-          const lf = await fetchJson(`https://ws.audioscrobbler.com/2.0/?method=artist.getinfo&artist=${encodeURIComponent(payload.name)}&api_key=${LASTFM_KEY}&format=json`, {}, 8000);
-          const info = lf?.artist;
-          if (info) {
-            payload.bio = payload.bio || (info.bio?.summary || '').replace(/<[^>]*>/g, '');
-            if (!payload.similar?.length && info.similar?.artist) {
-              payload.similar = info.similar.artist.slice(0, 8).map(x => ({ id: `lastfm:ar:${x.name}`, source: 'lastfm', sourceId: x.name, type: 'artist', name: x.name, image: x.image?.[3]?.['#text'] || '' }));
-            }
-            payload.tags = (info.tags?.tag || []).map(t => t.name);
-          }
-        } catch {}
-      }
-    }
-    setCache(req.originalUrl, payload);
-    res.json(payload);
-  } catch (e) { res.status(502).json({ error: 'Failed to load artist', detail: e.message }); }
-});
-
-app.get('/api/playlist/:source/:id', async (req, res) => {
-  const { source, id } = req.params;
-  const cached = getCache(req.originalUrl);
-  if (cached) return res.json(cached);
-  try {
-    if (source === 'saavn') {
-      const j = await saavnFetch(`/playlists/${encodeURIComponent(id)}`);
-      const d = j?.data || {};
-      const payload = { ...normalizeSaavnPlaylist(d), description: d.description || '', songs: (d.songs || []).map(normalizeSaavnSong).filter(Boolean) };
-      setCache(req.originalUrl, payload);
-      return res.json(payload);
-    }
-    if (source === 'deezer') {
-      const j = await fetchJson(`${DEEZER}/playlist/${encodeURIComponent(id)}`);
-      const payload = {
-        id: `deezer:pl:${j.id}`, source: 'deezer', sourceId: String(j.id), type: 'playlist',
-        name: j.title, description: j.description || '', image: j.picture_xl || j.picture_big || '',
-        songs: (j?.tracks?.data || []).map(normalizeDeezerTrack).filter(Boolean),
-      };
-      setCache(req.originalUrl, payload);
-      return res.json(payload);
-    }
-    if (source === 'mono') {
-      const j = await monoFetch(`/playlist/?id=${encodeURIComponent(id)}&limit=100`);
-      const d = j?.data || j?.playlist || {};
-      const items = d.items || d.tracks?.items || [];
-      const songs = items.map(x => normalizeMonoTrack(x?.item || x)).filter(Boolean);
-      const payload = { ...normalizeMonoPlaylist({ uuid: id, title: d.title, description: d.description, numberOfTracks: d.numberOfTracks, squareImage: d.squareImage }), description: d.description || '', image: songs[0]?.image || '', songs };
-      setCache(req.originalUrl, payload);
-      return res.json(payload);
-    }
-    if (source === 'archive') {
-      const meta = await fetchJson(`https://archive.org/metadata/${encodeURIComponent(id)}`, {}, 20000);
-      const files = (meta?.files || []).filter(f => /\.(mp3|ogg|flac|m4a)$/i.test(f.name || '') && !/_(vbr|64kb|meta|thumbs|itemimage)/i.test(f.name || ''));
-      const mp3s = files.filter(f => /\.mp3$/i.test(f.name));
-      const list = (mp3s.length ? mp3s : files).slice(0, 200);
-      const md = meta?.metadata || {};
-      const thumb = `https://archive.org/download/${id}/__ia_thumb.jpg`;
-      const songs = list.map((f, i) => ({
-        id: `archive:${id}:${i}`, source: 'archive', sourceId: `${id}/${f.name}`, type: 'track',
-        title: (f.title || f.name || '').replace(/\.[^.]+$/, '').replace(/[_+]/g, ' ').trim() || `Track ${i + 1}`,
-        artist: { id: '', name: md.creator || 'Unknown' }, artists: [],
-        album: { id: `archive:pl:${id}`, name: md.title || 'Live concert', image: thumb },
-        duration: parseArchiveDuration(f.length) || 0, image: thumb,
-        streamUrl: `https://archive.org/download/${id}/${encodeURIComponent(f.name)}`,
-        isPreview: false, codec: (String(f.name).split('.').pop() || '').toLowerCase(),
-      }));
-      const cname = `${md.creator || ''} — ${md.coverage || md.date || ''}`.trim() || md.title || 'Concert';
-      const payload = { id: `archive:pl:${id}`, source: 'archive', sourceId: id, type: 'playlist', name: cname, description: String(md.description || '').slice(0, 500), image: thumb, songs };
-      setCache(req.originalUrl, payload);
-      return res.json(payload);
-    }
-    if (source === 'tidal') {
-      const [meta, tr] = await Promise.all([
-        tidalFetch(`/v1/playlists/${encodeURIComponent(id)}/`).catch(() => ({})),
-        (async () => {
-          const p1 = await tidalFetch(`/v1/playlists/${encodeURIComponent(id)}/tracks?limit=50`).catch(() => ({ items: [] }));
-          let items = p1?.items || [];
-          if ((p1?.totalNumberOfItems || 0) > items.length)
-            items = items.concat((await tidalFetch(`/v1/playlists/${encodeURIComponent(id)}/tracks?limit=50&offset=50`).catch(() => ({ items: [] })))?.items || []);
-          return { items };
-        })(),
-      ]);
-      const songs = (tr?.items || []).map(normalizeTidalTrack).filter(Boolean);
-      const payload = { ...normalizeTidalPlaylist({ uuid: id, title: meta?.title, description: meta?.description, numberOfTracks: meta?.numberOfTracks, squareImage: meta?.squareImage }), description: meta?.description || '', image: songs[0]?.image || '', songs };
-      setCache(req.originalUrl, payload);
-      return res.json(payload);
-    }
-    if (source === 'sc') {
-      const pl = await scFetch(`/playlists/${encodeURIComponent(id)}`);
-      const songs = (pl?.tracks || []).map(normalizeScTrack).filter(Boolean);
-      const payload = { ...normalizeScPlaylist(pl), description: (pl?.description || '').slice(0, 500), songs };
-      setCache(req.originalUrl, payload);
-      return res.json(payload);
-    }
-    res.status(400).json({ error: 'Unknown source' });
-  } catch (e) { res.status(502).json({ error: 'Failed to load playlist', detail: e.message }); }
-});
-
-app.get('/api/charts', async (req, res) => {
-  const cached = getCache(req.originalUrl);
-  if (cached) return res.json(cached);
-  try {
-    const [inSongs, usSongs, inAlbums, dz] = await Promise.allSettled([
-      itunesTopSongs('IN', 25), itunesTopSongs('US', 15), itunesTopAlbums('IN', 12),
-      fetchJson(`${DEEZER}/chart/0/tracks?limit=15`, {}, 8000).then(j => (j?.data || []).map(normalizeDeezerTrack).filter(Boolean)),
-    ]);
-    const V = (r) => (r.status === 'fulfilled' ? r.value : []);
-    const tracks = dedupe([...V(inSongs), ...V(dz), ...V(usSongs)]);
-    const artistMap = new Map();
-    V(inSongs).forEach(t => { if (t.artist?.id && !artistMap.has(t.artist.id)) artistMap.set(t.artist.id, { id: t.artist.id, source: t.source, sourceId: t.artist.id.split(':').pop(), type: 'artist', name: t.artist.name, image: t.image, thumbnails: t.thumbnails, role: '' }); });
-    const payload = { tracks, albums: V(inAlbums), artists: [...artistMap.values()], playlists: [] };
-    setCache(req.originalUrl, payload);
-    res.json(payload);
-  } catch (e) { res.status(502).json({ error: 'Failed to load charts', detail: e.message }); }
-});
-
-app.get('/api/radio', async (req, res) => {
-  const seed = (req.query.seed || 'top hits').trim();
-  const cached = getCache(req.originalUrl);
-  if (cached) return res.json(cached);
-  try {
-    const [a, b, c] = await Promise.allSettled([
-      itunesSearchSongs(seed, 20), saavnSearchSongs(seed, 15), deezerSearchTracks(seed, 10),
-    ]);
-    const songs = dedupe([...(b.status === 'fulfilled' ? b.value : []), ...(a.status === 'fulfilled' ? a.value : []), ...(c.status === 'fulfilled' ? c.value : [])]);
-    for (let i = songs.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1));[songs[i], songs[k]] = [songs[k], songs[i]]; }
-    const payload = { seed, songs };
-    setCache(req.originalUrl, payload);
-    res.json(payload);
-  } catch (e) { res.status(502).json({ error: 'Radio failed', detail: e.message }); }
-});
-
-// Full-track sources: Audius trending, live radio, alternates matcher
-app.get('/api/underground', async (req, res) => {
-  const cached = getCache(req.originalUrl);
-  if (cached) return res.json(cached);
-  try {
-    const tracks = await audiusTrending(15, req.query.genre || '');
-    setCache(req.originalUrl, tracks);
-    res.json(tracks);
-  } catch (e) { res.status(502).json({ error: 'Underground feed failed', detail: e.message }); }
-});
-
-const BUILTIN_STATIONS = [
-  { stationuuid: 'somafm-groovesalad', name: 'SomaFM: Groove Salad', url_resolved: 'https://ice1.somafm.com/groovesalad-128-mp3', favicon: 'https://somafm.com/img/groovesalad.jpg', tags: 'ambient,beats', country: 'USA', language: 'English', votes: 9999, homepage: 'https://somafm.com/groovesalad/' },
-  { stationuuid: 'somafm-defcon', name: 'SomaFM: DEF CON Radio', url_resolved: 'https://ice1.somafm.com/defcon-128-mp3', favicon: 'https://somafm.com/img/defcon.jpg', tags: 'hacker,electronic', country: 'USA', language: 'English', votes: 9998, homepage: 'https://somafm.com/defcon/' },
-  { stationuuid: 'somafm-dronezone', name: 'SomaFM: Drone Zone', url_resolved: 'https://ice1.somafm.com/dronezone-128-mp3', favicon: 'https://somafm.com/img/dronezone.jpg', tags: 'ambient,drone', country: 'USA', language: 'English', votes: 9997, homepage: 'https://somafm.com/dronezone/' },
-  { stationuuid: 'somafm-fluid', name: 'SomaFM: Fluid', url_resolved: 'https://ice1.somafm.com/fluid-128-mp3', favicon: 'https://somafm.com/img/fluid.jpg', tags: 'hiphop,chill', country: 'USA', language: 'English', votes: 9996, homepage: 'https://somafm.com/fluid/' },
-  { stationuuid: 'somafm-7soul', name: 'SomaFM: Seven Inch Soul', url_resolved: 'https://ice1.somafm.com/7soul-128-mp3', favicon: 'https://somafm.com/img/7soul.jpg', tags: 'soul,funk', country: 'USA', language: 'English', votes: 9995, homepage: 'https://somafm.com/7soul/' },
-  { stationuuid: 'somafm-metal', name: 'SomaFM: Metal Detector', url_resolved: 'https://ice1.somafm.com/metal-128-mp3', favicon: 'https://somafm.com/img/metal.jpg', tags: 'metal', country: 'USA', language: 'English', votes: 9994, homepage: 'https://somafm.com/metal/' },
-];
-app.get('/api/radio-stations', async (req, res) => {
-  const cached = getCache(req.originalUrl);
-  if (cached) return res.json(cached);
-  try {
-    const { tag, country, name } = req.query;
-    let path = '/json/stations/topvote/24';
-    if (name) path = `/json/stations/search?name=${encodeURIComponent(name)}&limit=20`;
-    else if (tag) path = `/json/stations/bytag/${encodeURIComponent(tag)}?limit=20`;
-    else if (country) path = `/json/stations/bycountry/${encodeURIComponent(country)}?limit=20`;
-    const j = await radioFetch(path);
-    const stations = (Array.isArray(j) ? j : []).map(normalizeStation).filter(Boolean).slice(0, 24);
-    setCache(req.originalUrl, stations);
-    res.json(stations);
-  } catch (e) {
-    const fb = BUILTIN_STATIONS.map(normalizeStation).filter(Boolean);
-    if (fb.length) { setCache(req.originalUrl, fb); return res.json(fb); }
-    res.status(502).json({ error: 'Radio stations failed', detail: e.message });
-  }
-});
-
-function similarityScore(a, b) {
-  const words = s => new Set(String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2));
-  const A = words(a), B = words(b);
-  if (!A.size || !B.size) return 0;
-  let inter = 0;
-  A.forEach(w => { if (B.has(w)) inter++; });
-  return inter / Math.max(A.size, B.size);
-}
-
-app.get('/api/alternates', async (req, res) => {
-  const title = (req.query.title || '').trim();
-  const artist = (req.query.artist || '').trim();
-  if (!title) return res.json({ track: null });
-  const cached = getCache(req.originalUrl);
-  if (cached) return res.json(cached);
-  try {
-    const q = `${title} ${artist}`.trim();
-    const [au, ar, dj] = await Promise.allSettled([audiusSearch(q, 8), archiveSearch(q, 4), djpSearchSongs(q, 5)]);
-    const cands = [...(au.status === 'fulfilled' ? au.value : []), ...(ar.status === 'fulfilled' ? ar.value : []), ...(dj.status === 'fulfilled' ? dj.value : [])];
-    let best = null, bestScore = 0;
-    for (const c of cands) {
-      const s = similarityScore(`${title} ${artist}`, `${c.title} ${c.artist?.name || ''}`);
-      if (s > bestScore) { bestScore = s; best = c; }
-    }
-    const result = bestScore >= 0.4 && best?.streamUrl ? { track: best, score: bestScore } : { track: null, score: bestScore };
-    setCache(req.originalUrl, result);
-    res.json(result);
-  } catch (e) { res.json({ track: null }); }
-});
-
-// DJPunjab audio: download full MP3 once, store in memory cache, serve seekable
-const djpAudioCache = new Map();
-app.get('/api/djp-audio', async (req, res) => {
-  const id = req.query.id;
-  if (!id) return res.status(400).json({ error: 'Missing id' });
-  try {
-    let buf = null;
-    const hit = djpAudioCache.get(String(id));
-    if (hit && Date.now() - hit.time < 30 * 60 * 1000) buf = hit.buf;
-    if (!buf) {
-      const idx = await djpLoadIndex();
-      const e = idx.get(String(id));
-      if (!e) return res.status(404).json({ error: 'Song not indexed' });
-      const pg = await djpSongPage(e.url);
-      if (!pg.mp3) return res.status(502).json({ error: 'No MP3 found' });
-      const up = await fetch(pg.mp3, { headers: { 'User-Agent': DJP_UA, Referer: `${DJP_BASE}/` }, signal: AbortSignal.timeout(120000) });
-      if (!up.ok) throw new Error(`MP3 HTTP ${up.status}`);
-      buf = Buffer.from(await up.arrayBuffer());
-      if (buf.length < 100000) throw new Error('MP3 too small');
-      if (djpAudioCache.size > 4) djpAudioCache.delete(djpAudioCache.keys().next().value);
-      djpAudioCache.set(String(id), { buf, time: Date.now() });
-    }
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Cache-Control', 'public, max-age=1800');
-    const range = req.headers.range;
-    if (range) {
-      const m = range.match(/bytes=(\d*)-(\d*)/);
-      const start = m?.[1] ? parseInt(m[1], 10) : 0;
-      const end = m?.[2] ? parseInt(m[2], 10) : buf.length - 1;
-      const s = Math.min(start, buf.length - 1), e = Math.min(end, buf.length - 1);
-      if (s > e) return res.status(416).end();
-      res.status(206);
-      res.setHeader('Content-Range', `bytes ${s}-${e}/${buf.length}`);
-      res.setHeader('Content-Length', String(e - s + 1));
-      return res.end(buf.subarray(s, e + 1));
-    }
-    res.setHeader('Content-Length', String(buf.length));
-    res.end(buf);
-  } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'DJPunjab audio failed', detail: e.message }); }
-});
-
-// SoundCloud audio: resolve progressive MP3 + proxy with Range (seekable, Studio-safe)
-app.get('/api/sc-audio', async (req, res) => {
-  const id = req.query.id;
-  if (!id) return res.status(400).json({ error: 'Missing id' });
-  try {
-    const url = await scResolveStream(id);
-    const up = await fetch(url, { headers: { 'User-Agent': 'SoundWave/1.0', ...(req.headers.range ? { Range: req.headers.range } : {}) } });
-    if (!up.ok && up.status !== 206) return res.status(502).json({ error: 'Upstream audio failed' });
-    res.status(up.status);
-    up.headers.forEach((v, k) => {
-      if (['content-type', 'content-length', 'content-range', 'accept-ranges'].includes(k.toLowerCase())) res.setHeader(k, v);
-    });
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    const reader = up.body.getReader();
-    req.on('close', () => { try { reader.cancel(); } catch {} });
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!res.write(value)) await new Promise(r => res.once('drain', r));
-    }
-    res.end();
-  } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'SoundCloud audio failed', detail: e.message }); }
-});
-
-// Own Tidal pipeline: CD-quality preview stitched from DASH into one seekable MP4
-app.get('/api/tidal-audio', async (req, res) => {
-  const id = req.query.id;
-  if (!id) return res.status(400).json({ error: 'Missing id' });
-  try {
-    const buf = await tidalStitchedAudio(id);
-    res.setHeader('Content-Type', 'audio/mp4');
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Cache-Control', 'public, max-age=600');
-    const range = req.headers.range;
-    if (range) {
-      const m = range.match(/bytes=(\d*)-(\d*)/);
-      const start = m?.[1] ? parseInt(m[1], 10) : 0;
-      const end = m?.[2] ? parseInt(m[2], 10) : buf.length - 1;
-      const s = Math.min(start, buf.length - 1), e = Math.min(end, buf.length - 1);
-      if (s > e) return res.status(416).end();
-      res.status(206);
-      res.setHeader('Content-Range', `bytes ${s}-${e}/${buf.length}`);
-      res.setHeader('Content-Length', String(e - s + 1));
-      return res.end(buf.subarray(s, e + 1));
-    }
-    res.setHeader('Content-Length', String(buf.length));
-    res.end(buf);
-  } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'Tidal audio failed', detail: e.message }); }
-});
-
-// Monochrome/Tidal Hi-Res preview, stitched from DASH segments into one seekable MP4
-app.get('/api/mono-audio', async (req, res) => {
-  const id = req.query.id;
-  if (!id) return res.status(400).json({ error: 'Missing id' });
-  try {
-    const buf = await monoStitchedAudio(id);
-    res.setHeader('Content-Type', 'audio/mp4');
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Cache-Control', 'public, max-age=600');
-    const range = req.headers.range;
-    if (range) {
-      const m = range.match(/bytes=(\d*)-(\d*)/);
-      const start = m?.[1] ? parseInt(m[1], 10) : 0;
-      const end = m?.[2] ? parseInt(m[2], 10) : buf.length - 1;
-      const s = Math.min(start, buf.length - 1), e = Math.min(end, buf.length - 1);
-      if (s > e) return res.status(416).end();
-      res.status(206);
-      res.setHeader('Content-Range', `bytes ${s}-${e}/${buf.length}`);
-      res.setHeader('Content-Length', String(e - s + 1));
-      return res.end(buf.subarray(s, e + 1));
-    }
-    res.setHeader('Content-Length', String(buf.length));
-    res.end(buf);
-  } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'Mono audio failed', detail: e.message }); }
-});
-
-// ---------------- Podcasts (iTunes Search, no key + RSS episodes) ----------------
-async function itunesPodcastSearch(q, limit = 20) {
-  const j = await fetchJson(`${ITUNES}/search?term=${encodeURIComponent(q)}&media=podcast&entity=podcast&limit=${limit}&country=${COUNTRY}`, {}, 12000).catch(() => null);
-  return (j?.results || []).map(c => ({
-    id: `podcast:${c.collectionId}`, source: 'podcast', type: 'podcast',
-    name: c.collectionName || 'Podcast', artist: c.artistName || '',
-    image: itunesArt(c.artworkUrl600 || c.artworkUrl100, 600),
-    feedUrl: c.feedUrl || '', genres: c.genres || [], trackCount: c.trackCount || 0,
-  })).filter(x => x.feedUrl);
-}
-function decodeEntities(s) {
-  return String(s || '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-    .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).trim();
-}
-function stripTags(s) { return decodeEntities(String(s || '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim(); }
-function parseEpDuration(s) {
-  if (!s) return 0;
-  s = String(s).trim();
-  if (/^\d+$/.test(s)) return +s;
-  const parts = s.split(':').map(Number);
-  if (parts.some(isNaN)) return 0;
-  return parts.reduce((a, b) => a * 60 + b, 0);
-}
-function parseRss(xml, feedMeta = {}) {
-  const channel = xml.match(/<channel>([\s\S]*?)<\/channel>/)?.[1] || xml;
-  const img = channel.match(/<itunes:image[^>]*href="([^"]+)"/)?.[1] || channel.match(/<image>\s*<url>([^<]+)<\/url>/)?.[1] || feedMeta.image || '';
-  const episodes = [];
-  for (const m of channel.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
-    const it = m[1];
-    const enc = it.match(/<enclosure[^>]*url="([^"]+)"/)?.[1] || '';
-    if (!enc) continue;
-    episodes.push({
-      title: stripTags(it.match(/<title>([\s\S]*?)<\/title>/)?.[1] || 'Episode').slice(0, 200),
-      pubDate: (it.match(/<pubDate>([^<]+)<\/pubDate>/)?.[1] || '').trim(),
-      streamUrl: decodeEntities(enc),
-      duration: parseEpDuration(it.match(/<(itunes:)?duration>([^<]+)<\/(itunes:)?duration>/)?.[2] || ''),
-      description: stripTags(it.match(/<description>([\s\S]*?)<\/description>/)?.[1] || '').slice(0, 500),
-      image: it.match(/<itunes:image[^>]*href="([^"]+)"/)?.[1] || img,
-      guid: stripTags(it.match(/<guid[^>]*>([\s\S]*?)<\/guid>/)?.[1] || '').slice(0, 120),
-    });
-    if (episodes.length >= 60) break;
-  }
-  return { image: img, episodes };
-}
-app.get('/api/podcasts/search', async (req, res) => {
-  const q = (req.query.q || '').trim();
-  if (!q) return res.json([]);
-  const cached = getCache(req.originalUrl);
-  if (cached) return res.json(cached);
-  try {
-    const out = await itunesPodcastSearch(q, 20);
-    setCache(req.originalUrl, out);
-    res.json(out);
-  } catch (e) { res.status(502).json({ error: 'Podcast search failed', detail: e.message }); }
-});
-app.get('/api/podcasts/top', async (req, res) => {
-  const cached = getCache(req.originalUrl);
-  if (cached) return res.json(cached);
-  try {
-    const rss = await fetchJson('https://itunes.apple.com/us/rss/toppodcasts/limit=20/json', {}, 12000);
-    const entries = rss?.feed?.entry || [];
-    const ids = entries.map(e => e?.id?.attributes?.['im:id']).filter(Boolean).join(',');
-    if (!ids) return res.json([]);
-    const lookup = await fetchJson(`${ITUNES}/lookup?id=${ids}&entity=podcast&country=${COUNTRY}`, {}, 12000).catch(() => ({ results: [] }));
-    const out = (lookup?.results || []).filter(r => r.feedUrl).map(c => ({
-      id: `podcast:${c.collectionId}`, source: 'podcast', type: 'podcast',
-      name: c.collectionName || 'Podcast', artist: c.artistName || '',
-      image: itunesArt(c.artworkUrl600 || c.artworkUrl100, 600),
-      feedUrl: c.feedUrl || '', genres: c.genres || [], trackCount: c.trackCount || 0,
-    }));
-    setCache(req.originalUrl, out);
-    res.json(out);
-  } catch (e) { res.status(502).json({ error: 'Top podcasts failed', detail: e.message }); }
-});
-app.get('/api/podcasts/episodes', async (req, res) => {
-  const feedUrl = req.query.feedUrl || '';
-  if (!/^https?:\/\//.test(feedUrl)) return res.status(400).json({ error: 'Missing feedUrl' });
-  const cached = getCache(req.originalUrl);
-  if (cached) return res.json(cached);
-  try {
-    const r = await fetch(feedUrl, { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(20000) });
-    if (!r.ok) throw new Error(`Feed HTTP ${r.status}`);
-    const xml = await r.text();
-    const { image, episodes } = parseRss(xml, { image: req.query.image || '' });
-    const show = decodeEntities(req.query.show || '');
-    const tracks = episodes.map(ep => ({
-      id: `pod:${Buffer.from(ep.streamUrl).toString('base64url').slice(0, 32)}`, source: 'podcast', sourceId: ep.streamUrl, type: 'track',
-      title: ep.title, artist: { id: '', name: show || 'Podcast' }, artists: [],
-      album: { id: '', name: show || 'Podcast', image }, image,
-      duration: ep.duration, streamUrl: ep.streamUrl, isPreview: false,
-      pubDate: ep.pubDate, description: ep.description,
-    }));
-    const out = { image, episodes: tracks };
-    setCache(req.originalUrl, out);
-    res.json(out);
-  } catch (e) { res.status(502).json({ error: 'Episodes failed', detail: e.message }); }
-});
-
-// ---------------- Live concerts (Archive.org etree) ----------------
-app.get('/api/concerts', async (req, res) => {
-  const cached = getCache(req.originalUrl);
-  if (cached) return res.json(cached);
-  try {
-    const j = await fetchJson(`https://archive.org/advancedsearch.php?q=${encodeURIComponent('collection:etree AND mediatype:audio')}&fl[]=identifier,title,creator,date,coverage,downloads&rows=14&sort[]=downloads%20desc&output=json`, {}, 15000);
-    const items = (j?.response?.docs || []).map(d => ({
-      id: `archive:pl:${d.identifier}`, source: 'archive', sourceId: d.identifier, type: 'playlist',
-      name: `${d.creator || 'Unknown'} — ${d.coverage || d.date || ''}`.trim() || d.title,
-      description: d.title || '', image: `https://archive.org/download/${d.identifier}/__ia_thumb.jpg`,
-      trackCount: 0,
-    }));
-    setCache(req.originalUrl, items);
-    res.json(items);
-  } catch (e) { res.status(502).json({ error: 'Concerts failed', detail: e.message }); }
+    const data = await djpArtistDetail(id);
+    if (!data) return res.status(404).json({ error: 'Artist not found' });
+    setCache(req.originalUrl, data, 15 * 60 * 1000);
+    res.json(data);
+  } catch (e) { res.status(502).json({ error: 'Artist failed', detail: e.message }); }
 });
 
 app.get('/api/lyrics', async (req, res) => {
-  const { saavnId, artist, title } = req.query;
+  const artist = (req.query.artist || '').trim();
+  const title = (req.query.title || '').trim();
+  if (!artist || !title) return res.json({ lyrics: null });
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
-  let result = { lyrics: null, source: null };
   try {
-    if (saavnId) {
-      const j = await saavnFetch(`/lyrics/${encodeURIComponent(saavnId)}`).catch(() => null);
-      const lyr = j?.data?.lyrics;
-      if (lyr) result = { lyrics: lyr.replace(/<br\s*\/?>/gi, '\n'), source: 'saavn' };
-    }
-    if (!result.lyrics && artist && title) {
-      const j = await fetchJson(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`, {}, 10000).catch(() => null);
-      if (j?.lyrics) result = { lyrics: j.lyrics, source: 'lyrics.ovh' };
-    }
-    setCache(req.originalUrl, result);
-    res.json(result);
-  } catch (e) { res.json(result); }
+    const r = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`, { signal: AbortSignal.timeout(10000) });
+    const j = await r.json().catch(() => ({}));
+    const payload = { lyrics: j.lyrics || null };
+    setCache(req.originalUrl, payload, 3600000);
+    res.json(payload);
+  } catch { res.json({ lyrics: null }); }
 });
 
-app.get('/api/stream', async (req, res) => {
-  const url = req.query.url;
-  if (!url || !/^https?:\/\//.test(url)) return res.status(400).json({ error: 'Missing url' });
+// DJPunjab audio: download full MP3 once, keep in memory, serve seekable.
+// Quality falls back down the chain (320→128→48) so playback ~never fails.
+const QUALITY_ORDER = { high: ['320', '128', '48'], medium: ['128', '320', '48'], low: ['48', '128', '320'] };
+const djpAudioCache = new Map(); // key -> { buf, time }
+function serveBuf(res, req, buf, cached, br) {
+  res.setHeader('Content-Type', 'audio/mpeg');
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.setHeader('X-Audio-Cache', cached ? 'HIT' : 'MISS');
+  if (br) res.setHeader('X-Audio-Bitrate', br);
+  const range = req.headers.range;
+  if (range) {
+    const m = range.match(/bytes=(\d*)-(\d*)/);
+    const start = m?.[1] ? parseInt(m[1], 10) : 0;
+    const end = m?.[2] ? parseInt(m[2], 10) : buf.length - 1;
+    const s = Math.min(start, buf.length - 1), e = Math.min(end, buf.length - 1);
+    if (s > e) return res.status(416).end();
+    res.status(206);
+    res.setHeader('Content-Range', `bytes ${s}-${e}/${buf.length}`);
+    res.setHeader('Content-Length', String(e - s + 1));
+    return res.end(buf.subarray(s, e + 1));
+  }
+  res.setHeader('Content-Length', String(buf.length));
+  res.end(buf);
+}
+app.get('/api/djp-audio', async (req, res) => {
+  const id = String(req.query.id || '');
+  const q = QUALITY_ORDER[req.query.quality] ? req.query.quality : 'high';
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+  const key = `${id}:${q}`;
+  const hit = djpAudioCache.get(key);
+  if (hit && Date.now() - hit.time < AUDIO_TTL) return serveBuf(res, req, hit.buf, true, hit.br);
   try {
-    const upstream = await fetch(url, { headers: { 'User-Agent': 'SoundWave/1.0', ...(req.headers.range ? { Range: req.headers.range } : {}) } });
-    if (!upstream.ok && upstream.status !== 206) return res.status(502).json({ error: 'Upstream stream failed' });
-    res.status(upstream.status);
-    upstream.headers.forEach((v, k) => {
-      if (['content-type', 'content-length', 'content-range', 'accept-ranges'].includes(k.toLowerCase())) res.setHeader(k, v);
-    });
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg');
-    const reader = upstream.body.getReader();
-    req.on('close', () => { try { reader.cancel(); } catch {} });
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!res.write(value)) await new Promise(r => res.once('drain', r));
+    const e = (await djpLoadIndex()).get(id);
+    if (!e || e.album) return res.status(404).json({ error: 'Song not indexed' });
+    const order = QUALITY_ORDER[q];
+    const attempt = async (pg) => {
+      for (const br of order) {
+        const url = pg.mp3s?.[br];
+        if (!url) continue;
+        const buf = await fetchBuf(url).catch(() => null);
+        if (buf && buf.length > 100000) return { buf, br };
+      }
+      return null;
+    };
+    let got = await attempt(await djpSongPage(e.url));
+    if (!got) {
+      djpPageCache.delete(e.url); // page may be stale — refresh once and retry
+      const pg2 = await djpSongPage(e.url).catch(() => null);
+      if (pg2) got = await attempt(pg2);
     }
-    res.end();
-  } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'Stream proxy failed', detail: e.message }); }
+    if (!got) return res.status(502).json({ error: 'MP3 download failed' });
+    if (djpAudioCache.size >= AUDIO_MAX) djpAudioCache.delete(djpAudioCache.keys().next().value);
+    djpAudioCache.set(key, { buf: got.buf, br: got.br, time: Date.now() });
+    serveBuf(res, req, got.buf, false, got.br);
+  } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'DJPunjab audio failed', detail: e.message }); }
 });
 
-// Serve production client build (npm run build) from the same process
-import path from 'path';
-import { fileURLToPath } from 'url';
-import fs from 'fs';
+// Serve production client build from the same process
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, '../client/dist');
 if (fs.existsSync(distDir)) {
@@ -1661,7 +586,5 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🎵 SoundWave server on http://localhost:${PORT}`);
-  console.log(`   JioSaavn mirrors: ${SAAVN_BASES.join(', ')}`);
-  console.log(`   iTunes country: ${COUNTRY} · LastFM: ${LASTFM_KEY ? 'configured' : 'not configured (optional)'}`);
+  console.log(`🎵 SoundWave server on http://localhost:${PORT} (DJPunjab-only)`);
 });

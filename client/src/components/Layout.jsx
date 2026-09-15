@@ -5,11 +5,8 @@ import { useStore } from '../store/useStore';
 const nav = [
   { to: '/', label: 'Home', icon: '🏠' },
   { to: '/search', label: 'Search', icon: '🔍' },
-  { to: '/charts', label: 'Charts', icon: '📈' },
-  { to: '/radio', label: 'Radio', icon: '📻' },
-  { to: '/podcasts', label: 'Podcasts', icon: '🎙️' },
-  { to: '/library', label: 'Your Library', icon: '📚' },
-  { to: '/liked', label: 'Liked Songs', icon: '❤️' },
+  { to: '/library', label: 'Library', icon: '📚' },
+  { to: '/liked', label: 'Liked', icon: '❤️' },
 ];
 
 export function GhostLogo({ size = 26 }) {
@@ -37,7 +34,7 @@ export function Sidebar() {
           SoundWave
         </Link>
         <nav className="mt-4 flex flex-col gap-1" aria-label="Primary">
-          {nav.slice(0, 3).map(n => (
+          {nav.slice(0, 2).map(n => (
             <NavLink key={n.to} to={n.to} className={({ isActive }) => `px-3 py-2 rounded-lg font-semibold text-sm ${isActive ? 'bg-accent text-black' : 'text-dim hover:text-white bg-hoverable'}`}>
               <span className="mr-2">{n.icon}</span>{n.label}
             </NavLink>

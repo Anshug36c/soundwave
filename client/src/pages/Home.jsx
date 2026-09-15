@@ -2,15 +2,15 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../services/musicApi';
 import { useStore } from '../store/useStore';
-import { SongRow, SongCard, AlbumCard, ArtistCard, PlaylistCard, SectionRow, SkeletonRow, SkeletonList, Img } from '../components/Cards';
+import { SongRow, SongCard, AlbumCard, ArtistCard, SectionRow, SkeletonRow, SkeletonList, Img } from '../components/Cards';
 
 const MOODS = [
-  { name: 'Happy', emoji: '😊', q: 'happy upbeat hits' },
-  { name: 'Chill', emoji: '😌', q: 'chill lofi songs' },
-  { name: 'Energetic', emoji: '⚡', q: 'energetic workout hits' },
-  { name: 'Romantic', emoji: '❤️', q: 'romantic bollywood songs' },
-  { name: 'Focus', emoji: '🎯', q: 'focus instrumental study' },
-  { name: 'Party', emoji: '🎉', q: 'party dance hits' },
+  { name: 'AP Dhillon', emoji: '🔥', q: 'ap dhillon' },
+  { name: 'Diljit Dosanjh', emoji: '⭐', q: 'diljit dosanjh' },
+  { name: 'Guru Randhawa', emoji: '🎤', q: 'guru randhawa' },
+  { name: 'Jasmine Sandlas', emoji: '💃', q: 'jasmine sandlas' },
+  { name: 'Tulsi Kumar', emoji: '❤️', q: 'tulsi kumar' },
+  { name: 'Karan Aujla', emoji: '⚡', q: 'karan aujla' },
 ];
 
 export default function Home() {
@@ -19,18 +19,9 @@ export default function Home() {
   const history = useStore(s => s.history);
   const playTracks = useStore(s => s.playTracks);
   const [heroIdx, setHeroIdx] = useState(0);
-  const [underground, setUnderground] = useState(null);
-  const [stations, setStations] = useState(null);
-  const [concerts, setConcerts] = useState(null);
 
   useEffect(() => {
     api.home().then(setData).catch(e => setError(e.message));
-  }, []);
-
-  useEffect(() => {
-    api.underground().then(setUnderground).catch(() => setUnderground([]));
-    api.stations().then(setStations).catch(() => setStations([]));
-    api.concerts().then(setConcerts).catch(() => setConcerts([]));
   }, []);
 
   useEffect(() => {
@@ -43,7 +34,6 @@ export default function Home() {
   if (!data) return <div className="p-4"><div className="skeleton h-56 rounded-2xl" /><div className="mt-6"><SkeletonRow /></div><div className="mt-6"><SkeletonList /></div></div>;
 
   const hero = data.hero[heroIdx];
-  const madeForYou = [...(data.trendingNow || []), ...(data.charts || [])].slice(0, 12);
 
   return (
     <div className="pb-8">
@@ -54,11 +44,11 @@ export default function Home() {
           <div className="relative flex items-center gap-5 p-6">
             <Img src={hero.image} alt={hero.title} className="w-36 h-36 md:w-48 md:h-48 rounded-2xl object-cover shadow-2xl" />
             <div className="min-w-0">
-              <p className="text-xs font-bold tracking-widest accent">FEATURED · TRENDING NOW</p>
+              <p className="text-xs font-bold tracking-widest accent">FEATURED · LATEST DROP</p>
               <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight truncate">{hero.title}</h1>
               <p className="text-dim font-semibold">{hero.artist?.name}</p>
               <div className="flex gap-2 mt-4">
-                <button onClick={() => playTracks(data.trendingNow, heroIdx % data.trendingNow.length)} className="btn-accent px-6 py-2.5 text-sm">▶ Play</button>
+                <button onClick={() => playTracks(data.newDrops, heroIdx % data.newDrops.length)} className="btn-accent px-6 py-2.5 text-sm">▶ Play</button>
                 <button onClick={() => setHeroIdx((heroIdx + 1) % data.hero.length)} className="px-5 py-2.5 rounded-full text-sm font-bold bg-white/10">Next →</button>
               </div>
             </div>
@@ -69,7 +59,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Mood bubbles */}
+      {/* Artist bubbles */}
       <div className="flex gap-2 mt-6 overflow-x-auto no-scrollbar pb-1">
         {MOODS.map(m => (
           <Link key={m.name} to={`/search?q=${encodeURIComponent(m.q)}`} className="card shrink-0 px-4 py-2.5 text-sm font-bold"> {m.emoji} {m.name}</Link>
@@ -82,81 +72,47 @@ export default function Home() {
         </SectionRow>
       )}
 
-      <SectionRow title="Made For You" subtitle="Based on trending + charts">
-        {madeForYou.map(t => <SongCard key={t.id} track={t} context={madeForYou} />)}
-      </SectionRow>
-
-      <section className="mt-7">
-        <h2 className="text-xl font-extrabold tracking-tight mb-3 px-1">Trending Now</h2>
-        <div className="card p-2 flex flex-col">
-          {data.trendingNow.slice(0, 10).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.trendingNow} />)}
-        </div>
-      </section>
-
-      {underground && underground.length > 0 && (
-        <SectionRow title="🔥 Underground" subtitle="Full tracks · fresh indie artists on Audius">
-          {underground.map(t => <SongCard key={t.id} track={t} context={underground} />)}
+      {data.newDrops?.length > 0 && (
+        <SectionRow title="🆕 New Drops" subtitle="Fresh off DJPunjab · full tracks">
+          {data.newDrops.map(t => <SongCard key={t.id} track={t} context={data.newDrops} />)}
         </SectionRow>
       )}
 
-      {stations && stations.length > 0 && (
+      {data.trendingNow?.length > 0 && (
         <section className="mt-7">
-          <div className="mb-3 px-1 flex items-end justify-between">
-            <div>
-              <h2 className="text-xl font-extrabold tracking-tight">📻 Live Radio</h2>
-              <p className="text-xs text-dim">Real stations streaming now</p>
-            </div>
-            <Link to="/radio" className="text-xs font-bold accent">Browse all →</Link>
-          </div>
-          <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 px-1">
-            {stations.map(s => (
-              <button key={s.id} onClick={() => playTracks([s], 0)} className="card shrink-0 w-36 p-3 text-center">
-                <span className="relative inline-block">
-                  <Img src={s.image} alt={s.title} className="w-20 h-20 rounded-full object-cover mx-auto bg-soft" />
-                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-red-600 text-white sticker">● LIVE</span>
-                </span>
-                <p className="mt-2 truncate text-xs font-bold">{s.title}</p>
-                <p className="truncate text-[10px] text-dim">{s.artist?.name}</p>
-              </button>
-            ))}
+          <h2 className="text-xl font-extrabold tracking-tight mb-3 px-1">Trending Now</h2>
+          <div className="card p-2 flex flex-col">
+            {data.trendingNow.slice(0, 10).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.trendingNow} />)}
           </div>
         </section>
       )}
 
-      {concerts && concerts.length > 0 && (
-        <SectionRow title="🎸 Live Concerts" subtitle="Full concert recordings · Internet Archive">
-          {concerts.map(p => <PlaylistCard key={p.id} playlist={p} />)}
+      {data.topArtists?.length > 0 && (
+        <SectionRow title="Top Artists" subtitle="Most wanted voices">
+          {data.topArtists.map(a => <ArtistCard key={a.id} artist={a} />)}
         </SectionRow>
       )}
 
-      <SectionRow title="Top Artists" subtitle="Most streamed voices">
-        {data.topArtists.map(a => <ArtistCard key={a.id} artist={a} />)}
-      </SectionRow>
-
-      <SectionRow title="New Releases" subtitle="Fresh albums">
-        {data.newReleases.map(a => <AlbumCard key={a.id} album={a} />)}
-      </SectionRow>
-
-      <SectionRow title="Global Charts" subtitle="Deezer Top 20">
-        {data.charts.map(t => <SongCard key={t.id} track={t} context={data.charts} />)}
-      </SectionRow>
+      {data.newReleases?.length > 0 && (
+        <SectionRow title="New Albums & EPs" subtitle="Latest releases">
+          {data.newReleases.map(a => <AlbumCard key={a.id} album={a} />)}
+        </SectionRow>
+      )}
 
       <div className="grid md:grid-cols-2 gap-4 mt-7">
-        <div className="card p-3">
-          <h3 className="font-extrabold mb-2">😌 Chill Zone</h3>
-          {data.mood.chill.slice(0, 5).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.mood.chill} />)}
-        </div>
-        <div className="card p-3">
-          <h3 className="font-extrabold mb-2">⚡ Workout Energy</h3>
-          {data.mood.workout.slice(0, 5).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.mood.workout} />)}
-        </div>
+        {data.party?.length > 0 && (
+          <div className="card p-3">
+            <h3 className="font-extrabold mb-2">⚡ Party Energy</h3>
+            {data.party.slice(0, 5).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.party} />)}
+          </div>
+        )}
+        {data.romantic?.length > 0 && (
+          <div className="card p-3">
+            <h3 className="font-extrabold mb-2">❤️ Romantic</h3>
+            {data.romantic.slice(0, 5).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.romantic} />)}
+          </div>
+        )}
       </div>
-
-      {data.featuredPlaylists?.length > 0 && (
-        <SectionRow title="Featured Playlists">
-          {data.featuredPlaylists.map(p => <PlaylistCard key={p.id} playlist={p} />)}
-        </SectionRow>
-      )}
     </div>
   );
 }
