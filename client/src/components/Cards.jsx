@@ -10,7 +10,8 @@ export function Img({ src, alt, className = '' }) {
 
 export function SourceBadge({ track }) {
   let cls = 'bg-amber-500/20 text-amber-400', label = 'PREVIEW';
-  if (track.isLive) { cls = 'bg-red-600 text-white'; label = '● LIVE'; }
+  if (track.source === 'mono') { cls = 'bg-cyan-500/20 text-cyan-300'; label = 'HI-RES·30s'; }
+  else if (track.isLive) { cls = 'bg-red-600 text-white'; label = '● LIVE'; }
   else if (track.source === 'ytmusic') {
     cls = 'bg-violet-500/25 text-violet-300';
     label = track.codec ? track.codec.toUpperCase() : 'YT · OPUS';

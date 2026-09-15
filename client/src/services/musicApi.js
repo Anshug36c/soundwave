@@ -30,7 +30,7 @@ export const api = {
     if (title) p.set('title', title);
     return get(`/lyrics?${p.toString()}`);
   },
-  streamProxy: (url) => `${BASE}/stream?url=${encodeURIComponent(url)}`,
+  streamProxy: (url) => (url.startsWith('/api/') ? url : `${BASE}/stream?url=${encodeURIComponent(url)}`),
 };
 
 export function streamFor(track, quality = 'high') {

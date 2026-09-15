@@ -447,6 +447,7 @@ app.get('/api/sources', async (req, res) => {
     archive: fetchJson('https://archive.org/advancedsearch.php?q=test&fl[]=identifier&rows=1&output=json', {}, 10000).then(() => 'ok'),
     radio: radioFetch('/json/stations/topvote/1').then(() => 'ok'),
     ytplayer: fetch('https://www.youtube.com/iframe_api', { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(8000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return 'ok'; }),
+    mono: monoFetch('/search/?s=test').then(() => 'ok'),
   };
   const out = {};
   await Promise.all(Object.entries(probes).map(async ([k, p]) => {
@@ -495,6 +496,103 @@ app.get('/api/home', async (req, res) => {
   }
 });
 
+// ---------------- Monochrome API (Tidal catalog: search + Hi-Res DASH previews) ----------------
+const MONO_API = (process.env.MONO_API_URL || 'https://monochrome-api.samidy.com').replace(/\/$/, '');
+async function monoFetch(path, timeout = 20000) {
+  const r = await fetch(`${MONO_API}${path}`, { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(timeout) });
+  if (!r.ok) throw new Error(`Mono HTTP ${r.status} for ${path}`);
+  return r.json();
+}
+function tidalImg(uuid, size = 640) {
+  if (!uuid) return '';
+  return `https://resources.tidal.com/images/${String(uuid).replace(/-/g, '/')}/${size}x${size}.jpg`;
+}
+function normalizeMonoTrack(t) {
+  if (!t?.id) return null;
+  const artists = (t.artists || (t.artist ? [t.artist] : [])).filter(Boolean);
+  const a0 = artists[0] || {};
+  const alb = t.album || {};
+  return {
+    id: `mono:${t.id}`, source: 'mono', sourceId: String(t.id), type: 'track',
+    title: t.title || 'Unknown',
+    artist: { id: a0.id ? `mono:ar:${a0.id}` : '', name: a0.name || 'Unknown', image: tidalImg(a0.picture, 320) },
+    artists: artists.map(a => ({ id: a.id ? `mono:ar:${a.id}` : '', name: a.name || '', image: tidalImg(a.picture, 320) })),
+    album: { id: alb.id ? `mono:al:${alb.id}` : '', name: alb.title || '', image: tidalImg(alb.cover, 640), year: (alb.releaseDate || '').slice(0, 4) },
+    duration: t.duration || 30, image: tidalImg(alb.cover, 640),
+    streamUrl: `/api/mono-audio?id=${t.id}`, previewUrl: `/api/mono-audio?id=${t.id}`,
+    isPreview: true, codec: 'flac', explicit: !!t.explicit,
+    popularity: t.popularity || 0, isrc: t.isrc || '', playCount: 0,
+  };
+}
+function normalizeMonoArtist(a) {
+  if (!a?.id) return null;
+  return { id: `mono:ar:${a.id}`, source: 'mono', sourceId: String(a.id), type: 'artist', name: a.name || 'Unknown', image: tidalImg(a.picture, 640) || (a.selectedAlbumCoverFallback ? tidalImg(a.selectedAlbumCoverFallback, 640) : ''), popularity: a.popularity || 0 };
+}
+function normalizeMonoAlbum(al) {
+  if (!al?.id) return null;
+  const a0 = (al.artists || [])[0] || {};
+  return { id: `mono:al:${al.id}`, source: 'mono', sourceId: String(al.id), type: 'album', name: al.title || 'Album', artist: a0.name || '', image: tidalImg(al.cover, 640), year: (al.releaseDate || '').slice(0, 4), trackCount: al.numberOfTracks || 0 };
+}
+function normalizeMonoPlaylist(pl) {
+  const pid = pl.uuid || pl.id;
+  if (!pid) return null;
+  return { id: `mono:pl:${pid}`, source: 'mono', sourceId: String(pid), type: 'playlist', name: pl.title || 'Playlist', description: pl.description || '', image: pl.squareImage ? tidalImg(pl.squareImage, 640) : '', trackCount: pl.numberOfTracks || 0 };
+}
+async function monoSearchSongs(q, limit = 10) {
+  const j = await monoFetch(`/search/?s=${encodeURIComponent(q)}`);
+  return (j?.data?.items || []).slice(0, limit).map(normalizeMonoTrack).filter(Boolean);
+}
+async function monoSearchArtists(q, limit = 8) {
+  const j = await monoFetch(`/search/?a=${encodeURIComponent(q)}`);
+  return (j?.data?.artists?.items || []).slice(0, limit).map(normalizeMonoArtist).filter(Boolean);
+}
+async function monoSearchAlbums(q, limit = 8) {
+  const j = await monoFetch(`/search/?al=${encodeURIComponent(q)}`);
+  return (j?.data?.albums?.items || []).slice(0, limit).map(normalizeMonoAlbum).filter(Boolean);
+}
+async function monoSearchPlaylists(q, limit = 6) {
+  const j = await monoFetch(`/search/?p=${encodeURIComponent(q)}`);
+  return (j?.data?.playlists?.items || []).slice(0, limit).map(normalizeMonoPlaylist).filter(Boolean);
+}
+// Stitched DASH preview cache: id -> { buf, time }
+const monoAudioCache = new Map();
+async function monoStitchedAudio(id) {
+  const hit = monoAudioCache.get(String(id));
+  if (hit && Date.now() - hit.time < 15 * 60 * 1000) return hit.buf;
+  const j = await monoFetch(`/track/?id=${encodeURIComponent(id)}`, 30000);
+  const b64 = j?.data?.manifest;
+  if (!b64) throw new Error(j?.detail || 'No manifest');
+  const xml = Buffer.from(b64, 'base64').toString('utf8');
+  const tpl = xml.match(/<SegmentTemplate[^>]*>/)?.[0] || '';
+  const init = (tpl.match(/initialization="([^"]+)"/)?.[1] || '').replace(/&amp;/g, '&');
+  const media = (tpl.match(/media="([^"]+)"/)?.[1] || '').replace(/&amp;/g, '&');
+  if (!init || !media || !media.includes('$Number$')) throw new Error('Unsupported manifest');
+  let count = 0;
+  for (const m of xml.matchAll(/<S\b[^>]*>/g)) {
+    const tag = m[0];
+    const r = parseInt(tag.match(/\br="(\d+)"/)?.[1] || '0', 10);
+    count += r + 1;
+  }
+  if (!count || count > 60) throw new Error('Bad segment timeline');
+  const urls = [init, ...Array.from({ length: count }, (_, i) => media.replace('$Number$', String(i + 1)))];
+  const parts = new Array(urls.length);
+  let next = 0;
+  const workers = Array.from({ length: 4 }, async () => {
+    while (next < urls.length) {
+      const i = next++;
+      const r = await fetch(urls[i], { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(25000) });
+      if (!r.ok) throw new Error(`Segment ${i} HTTP ${r.status}`);
+      parts[i] = Buffer.from(await r.arrayBuffer());
+    }
+  });
+  await Promise.all(workers);
+  const buf = Buffer.concat(parts);
+  if (buf.length < 10000) throw new Error('Stitched audio too small');
+  if (monoAudioCache.size > 4) monoAudioCache.delete(monoAudioCache.keys().next().value);
+  monoAudioCache.set(String(id), { buf, time: Date.now() });
+  return buf;
+}
+
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').trim();
   const type = (req.query.type || 'all').toLowerCase();
@@ -504,20 +602,21 @@ app.get('/api/search', async (req, res) => {
   try {
     let songs = [], albums = [], artists = [], playlists = [];
     if (type === 'all' || type === 'songs') {
-      const [a, b, c, d] = await Promise.allSettled([saavnSearchSongs(q, 20), itunesSearchSongs(q, 20), deezerSearchTracks(q, 12), audiusSearch(q, 8)]);
-      songs = dedupe([...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(c.status === 'fulfilled' ? c.value : []), ...(d.status === 'fulfilled' ? d.value : [])]);
+      const [a, b, c, d, e] = await Promise.allSettled([saavnSearchSongs(q, 20), audiusSearch(q, 8), monoSearchSongs(q, 10), itunesSearchSongs(q, 20), deezerSearchTracks(q, 12)]);
+      // order = quality priority: full tracks first, then HI-RES previews, then standard previews
+      songs = dedupe([...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(c.status === 'fulfilled' ? c.value : []), ...(d.status === 'fulfilled' ? d.value : []), ...(e.status === 'fulfilled' ? e.value : [])]);
     }
     if (type === 'all' || type === 'albums') {
-      const [a, b] = await Promise.allSettled([saavnSearchAlbums(q, 10), itunesSearchAlbums(q, 10)]);
-      albums = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : [])];
+      const [a, b, e] = await Promise.allSettled([saavnSearchAlbums(q, 10), itunesSearchAlbums(q, 10), monoSearchAlbums(q, 8)]);
+      albums = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(e.status === 'fulfilled' ? e.value : [])];
     }
     if (type === 'all' || type === 'artists') {
-      const [a, b] = await Promise.allSettled([saavnSearchArtists(q, 8), itunesSearchArtists(q, 8)]);
-      artists = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : [])];
+      const [a, b, e] = await Promise.allSettled([saavnSearchArtists(q, 8), itunesSearchArtists(q, 8), monoSearchArtists(q, 8)]);
+      artists = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(e.status === 'fulfilled' ? e.value : [])];
     }
     if (type === 'all' || type === 'playlists') {
-      const [a] = await Promise.allSettled([saavnSearchPlaylists(q, 10)]);
-      playlists = a.status === 'fulfilled' ? a.value : [];
+      const [a, e] = await Promise.allSettled([saavnSearchPlaylists(q, 10), monoSearchPlaylists(q, 6)]);
+      playlists = [...(a.status === 'fulfilled' ? a.value : []), ...(e.status === 'fulfilled' ? e.value : [])];
     }
     const payload = { songs, albums, artists, playlists };
     setCache(req.originalUrl, payload);
@@ -556,6 +655,13 @@ app.get('/api/song/:source/:id', async (req, res) => {
       setCache(req.originalUrl, track);
       return res.json(track);
     }
+    if (source === 'mono') {
+      const j = await monoFetch(`/info/?id=${encodeURIComponent(id)}`);
+      const track = normalizeMonoTrack(j?.data);
+      if (!track) return res.status(404).json({ error: 'Song not found' });
+      setCache(req.originalUrl, track);
+      return res.json(track);
+    }
     res.status(400).json({ error: 'Unknown source' });
   } catch (e) { res.status(502).json({ error: 'Failed to resolve song', detail: e.message }); }
 });
@@ -584,6 +690,16 @@ app.get('/api/album/:source/:id', async (req, res) => {
       const j = await fetchJson(`${DEEZER}/album/${encodeURIComponent(id)}`);
       const songs = (j?.tracks?.data || []).map(t => normalizeDeezerTrack({ ...t, artist: t.artist || j.artist, album: { id: j.id, title: j.title, cover_xl: j.cover_xl, cover_big: j.cover_big } })).filter(Boolean);
       const payload = { ...normalizeDeezerAlbum(j), description: '', songs };
+      setCache(req.originalUrl, payload);
+      return res.json(payload);
+    }
+    if (source === 'mono') {
+      const j = await monoFetch(`/album/?id=${encodeURIComponent(id)}&limit=100`);
+      const d = j?.data || {};
+      const songs = (d.items || []).map(x => normalizeMonoTrack(x?.item)).filter(Boolean);
+      const payload = { ...normalizeMonoAlbum(d), description: d.copyright || '', songs };
+      if (!payload.artist && songs[0]) payload.artist = songs[0].artist?.name || '';
+      if (!payload.image && songs[0]) payload.image = songs[0].image || '';
       setCache(req.originalUrl, payload);
       return res.json(payload);
     }
@@ -628,6 +744,19 @@ app.get('/api/artist/:source/:id', async (req, res) => {
         fetchJson(`${DEEZER}/artist/${encodeURIComponent(id)}/top?limit=10`).catch(() => ({ data: [] })),
       ]);
       payload = { ...normalizeDeezerArtist(a), bio: '', topSongs: (top?.data || []).map(normalizeDeezerTrack).filter(Boolean), topAlbums: [], similar: [] };
+    } else if (source === 'mono') {
+      const j = await monoFetch(`/artist/?id=${encodeURIComponent(id)}`);
+      const a = j?.artist || {};
+      const [top, sim] = await Promise.all([
+        monoSearchSongs(a.name || id, 10).catch(() => []),
+        monoFetch(`/artist/similar/?id=${encodeURIComponent(id)}`).catch(() => null),
+      ]);
+      const simItems = sim?.artists?.items || sim?.data?.artists?.items || (Array.isArray(sim?.data) ? sim.data : []) || [];
+      payload = {
+        ...normalizeMonoArtist(a), bio: '',
+        topSongs: top, topAlbums: [],
+        similar: simItems.map(normalizeMonoArtist).filter(Boolean).slice(0, 8),
+      };
     } else return res.status(400).json({ error: 'Unknown source' });
 
     // Enrichment: AudioDB (free) + LastFM (optional key)
@@ -678,6 +807,15 @@ app.get('/api/playlist/:source/:id', async (req, res) => {
         name: j.title, description: j.description || '', image: j.picture_xl || j.picture_big || '',
         songs: (j?.tracks?.data || []).map(normalizeDeezerTrack).filter(Boolean),
       };
+      setCache(req.originalUrl, payload);
+      return res.json(payload);
+    }
+    if (source === 'mono') {
+      const j = await monoFetch(`/playlist/?id=${encodeURIComponent(id)}&limit=100`);
+      const d = j?.data || j?.playlist || {};
+      const items = d.items || d.tracks?.items || [];
+      const songs = items.map(x => normalizeMonoTrack(x?.item || x)).filter(Boolean);
+      const payload = { ...normalizeMonoPlaylist({ uuid: id, title: d.title, description: d.description, numberOfTracks: d.numberOfTracks, squareImage: d.squareImage }), description: d.description || '', image: songs[0]?.image || '', songs };
       setCache(req.originalUrl, payload);
       return res.json(payload);
     }
@@ -774,6 +912,32 @@ app.get('/api/alternates', async (req, res) => {
     setCache(req.originalUrl, result);
     res.json(result);
   } catch (e) { res.json({ track: null }); }
+});
+
+// Monochrome/Tidal Hi-Res preview, stitched from DASH segments into one seekable MP4
+app.get('/api/mono-audio', async (req, res) => {
+  const id = req.query.id;
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+  try {
+    const buf = await monoStitchedAudio(id);
+    res.setHeader('Content-Type', 'audio/mp4');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=600');
+    const range = req.headers.range;
+    if (range) {
+      const m = range.match(/bytes=(\d*)-(\d*)/);
+      const start = m?.[1] ? parseInt(m[1], 10) : 0;
+      const end = m?.[2] ? parseInt(m[2], 10) : buf.length - 1;
+      const s = Math.min(start, buf.length - 1), e = Math.min(end, buf.length - 1);
+      if (s > e) return res.status(416).end();
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${s}-${e}/${buf.length}`);
+      res.setHeader('Content-Length', String(e - s + 1));
+      return res.end(buf.subarray(s, e + 1));
+    }
+    res.setHeader('Content-Length', String(buf.length));
+    res.end(buf);
+  } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'Mono audio failed', detail: e.message }); }
 });
 
 app.get('/api/lyrics', async (req, res) => {
