@@ -61,7 +61,7 @@ async function fetchBuf(url, timeout = 90000, referer = null) {
 const INDEX_TTL = 6 * 3600 * 1000;
 const PAGE_TTL = 6 * 3600 * 1000;
 const AUDIO_TTL = 60 * 60 * 1000;
-const AUDIO_MAX = 10;
+const AUDIO_MAX = 24;
 
 function djpScore(slug, words) {
   const s = ` ${String(slug || '').toLowerCase().replace(/-/g, ' ')} `;
@@ -1028,12 +1028,12 @@ function refererFor(url) {
   return null;
 }
 
-async function resolveMirror(source, sid) {
-  try {
+async function resolveMirrorInner(source, sid) {
     if (source === 'djp') {
       const e = (await djpLoadIndex()).get(String(sid));
       if (!e || e.album) return null;
-      const pg = await djpSongPage(e.url);
+      const pg = await djpSongPage(e.url).catch(() => null);
+      if (!pg) return null;
       return pg.mp3s && Object.keys(pg.mp3s).length ? { mp3s: pg.mp3s } : null;
     }
     if (source === 'dj') {
@@ -1046,21 +1046,34 @@ async function resolveMirror(source, sid) {
       }
       const e = (await djLoadIndex()).get(String(sid).toLowerCase());
       if (!e || e.album) return null;
-      const pg = await djSongPage(e.url);
+      const pg = await djSongPage(e.url).catch(() => null);
+      if (!pg) return null;
       return pg.mp3s && Object.keys(pg.mp3s).length ? { mp3s: pg.mp3s } : null;
     }
     if (source === 'mrj') {
       const e = (await mrjLoadIndex()).get(String(sid));
       if (!e || e.album) return null;
-      const pg = await mrjSongPage(e.url);
+      const pg = await mrjSongPage(e.url).catch(() => null);
+      if (!pg) return null;
       return pg.mp3s && Object.keys(pg.mp3s).length ? { mp3s: pg.mp3s } : null;
     }
     if (source === 'saavn') {
       const urls = await saavnStreamUrls(String(sid)).catch(() => null);
       return urls && Object.keys(urls).length ? { mp3s: urls, type: 'audio/mp4' } : null;
     }
-  } catch { /* unresolvable mirror */ }
   return null;
+}
+async function resolveMirror(source, sid) {
+  const h = srcHealth[source];
+  if (h && Date.now() < h.until) return null; // circuit open: skip dead source fast
+  try {
+    const r = await resolveMirrorInner(source, sid);
+    if (h) { h.fails = 0; h.until = 0; }
+    return r;
+  } catch (e) {
+    if (h && ++h.fails >= 3) { h.until = Date.now() + 60000; console.error(`[health] ${source} unavailable, skipping for 60s`); }
+    return null;
+  }
 }
 
 const audioCache = new Map(); // key -> { buf, br, time }
@@ -1086,6 +1099,149 @@ function serveBuf(res, req, buf, cached, br, type = 'audio/mpeg') {
   res.end(buf);
 }
 
+
+// ---------------- self-healing sources: circuit breaker + cross-source recovery ----------------
+const srcHealth = { djp: { fails: 0, until: 0 }, dj: { fails: 0, until: 0 }, mrj: { fails: 0, until: 0 }, saavn: { fails: 0, until: 0 } };
+function tripSource(source, ms = 60000) { const h = srcHealth[source]; if (h) { h.fails = 3; h.until = Date.now() + ms; } }
+function srcDegraded() { const now = Date.now(); return Object.keys(srcHealth).filter(s => srcHealth[s].until > now); }
+
+function splitArtists(name) {
+  return String(name || '').split(/\s*(?:,|;|&|\/|\+|\bfeat\.?\b|\bft\.?\b|\band\b|\bwith\b|\bx\b)\s*/i)
+    .map(s => s.trim()).filter(s => s.length > 1 && !/^(various|unknown|artists?)$/i.test(s)).slice(0, 3);
+}
+const SIM_STOP = new Set(['the', 'a', 'an', 'song', 'songs', 'official', 'audio', 'video', 'lyric', 'lyrics', 'full', 'hd', 'hq', '4k', 'mp3', 'punjabi', 'hindi']);
+function titleTokens(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2 && !SIM_STOP.has(w));
+}
+function overlapScore(a, b) {
+  const A = new Set(a), B = new Set(b);
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  A.forEach(x => { if (B.has(x)) inter++; });
+  return inter / Math.max(A.size, B.size);
+}
+function recoveryScore(title, artist, cand) {
+  const ct = cand.title || '', ca = cand.artist?.name || '';
+  if (normKey(title, artist) === normKey(ct, ca)) return 100;
+  let s = overlapScore(titleTokens(title), titleTokens(ct)) * 60;
+  const qa = splitArtists(artist).map(x => x.toLowerCase());
+  const cla = (ca || '').toLowerCase();
+  if (qa.some(n => n && cla.includes(n))) s += 40;
+  return s;
+}
+function audioKey(src, sid, q, t = '', ar = '') {
+  return `${src}:${sid}:${q}:${t}|${ar}`.toLowerCase().replace(/[^a-z0-9:|]/g, '');
+}
+const recoverCache = new Map(); // key -> { mirrors, time }
+async function recoverMirrors(title, artist, tried = []) {
+  const key = `${title}|${artist}`.toLowerCase().replace(/[^a-z0-9|]/g, '');
+  const hit = recoverCache.get(key);
+  if (hit && Date.now() - hit.time < 30 * 60 * 1000) return hit.mirrors;
+  const q = `${title} ${artist}`.trim();
+  const down = new Set(srcDegraded());
+  const triedKeys = new Set(tried.map(t => `${t.source}:${t.sid}`));
+  const pick = (lists) => {
+    let best = null, bestS = 24;
+    for (const list of lists) for (const t of list) {
+      const s = recoveryScore(title, artist, t);
+      if (s > bestS) { bestS = s; best = t; }
+    }
+    return best ? { best, score: bestS } : null;
+  };
+  const toMirrors = (lists, best) => {
+    const m = mergeTracks(lists).find(t => normKey(t.title, t.artist?.name) === normKey(best.title, best.artist?.name));
+    return (m?.mirrors || [{ source: best.source, sourceId: best.sourceId }])
+      .map(x => ({ source: x.source, sid: x.sourceId }))
+      .filter(x => !triedKeys.has(`${x.source}:${x.sid}`)).slice(0, 4);
+  };
+  // tier 1: fast API source first (usually enough, ~2s)
+  const fast = down.has('saavn') ? [] : await saavnSearchSongs(q, 5, false).catch(() => []);
+  let found = pick([fast]);
+  let mirrors = [];
+  if (found && found.score >= 60) mirrors = toMirrors([fast], found.best);
+  else {
+    // tier 2: full sweep of remaining sources (reuses tier-1 results)
+    const lists = await Promise.all([
+      down.has('djp') ? [] : djpSearchSongs(q, 5).catch(() => []),
+      down.has('dj') ? [] : djSearchSongs(q, 5).catch(() => []),
+      down.has('mrj') ? [] : mrjSearchSongs(q, 5).catch(() => []),
+    ]);
+    found = pick([fast, ...lists]);
+    if (found) mirrors = toMirrors([fast, ...lists], found.best);
+  }
+  if (recoverCache.size > 200) recoverCache.delete(recoverCache.keys().next().value);
+  recoverCache.set(key, { mirrors, time: Date.now() });
+  return mirrors;
+}
+
+// ---------------- similar songs (same artist + title kin, merged with mirrors) ----------------
+const similarCache = new Map(); // key -> { data, time }
+function similarRank(title, artist, t) {
+  const ca = (t.artist?.name || '').toLowerCase();
+  const qa = splitArtists(artist).map(x => x.toLowerCase());
+  let s = overlapScore(titleTokens(title), titleTokens(t.title)) * 30;
+  if (qa.some(n => n && ca === n)) s += 70;
+  else if (qa.some(n => n && (ca.includes(n) || n.includes(ca)))) s += 50;
+  return s;
+}
+app.get('/api/similar', async (req, res) => {
+  const title = (req.query.title || '').trim(), artist = (req.query.artist || '').trim();
+  const limit = Math.min(parseInt(req.query.limit || '12', 10) || 12, 24);
+  if (!title && !artist) return res.json({ songs: [] });
+  const key = `sim:${title}|${artist}`.toLowerCase().replace(/[^a-z0-9|:]/g, '');
+  const hit = similarCache.get(key);
+  if (hit && Date.now() - hit.time < 60 * 60 * 1000) return res.json({ songs: hit.data.slice(0, limit) });
+  try {
+    const names = splitArtists(artist).slice(0, 2);
+    const jobs = [];
+    for (const n of names) {
+      const slug = slugifyName(n);
+      jobs.push(djpArtistDetail(slug).catch(() => null));
+      jobs.push(djArtistDetail(slug).catch(() => null));
+      jobs.push(mrjArtistDetail(slug).catch(() => null));
+      jobs.push(saavnArtistDetail(slug).catch(() => null));
+    }
+    const kws = titleTokens(title).slice(0, 2).join(' ');
+    if (kws) {
+      jobs.push(djpSearchSongs(kws, 4).then(r => ({ topSongs: r })).catch(() => null));
+      jobs.push(djSearchSongs(kws, 4).then(r => ({ topSongs: r })).catch(() => null));
+      jobs.push(mrjSearchSongs(kws, 4).then(r => ({ topSongs: r })).catch(() => null));
+      jobs.push(saavnSearchSongs(kws, 4, false).then(r => ({ topSongs: r })).catch(() => null));
+    }
+    const got = (await Promise.all(jobs)).filter(Boolean);
+    const per = { djp: [], dj: [], mrj: [], saavn: [] };
+    for (const g of got) for (const t of (g.topSongs || g.songs || [])) if (t?.source && per[t.source]) per[t.source].push(t);
+    const merged = mergeTracks([per.djp, per.dj, per.mrj, per.saavn]).filter(t => recoveryScore(title, artist, t) < 60);
+    for (const t of merged) t._s = similarRank(title, artist, t);
+    merged.sort((a, b) => b._s - a._s);
+    const data = merged.slice(0, 24).map(t => { const { _s, ...rest } = t; return rest; });
+    if (similarCache.size > 200) similarCache.delete(similarCache.keys().next().value);
+    similarCache.set(key, { data, time: Date.now() });
+    res.json({ songs: data.slice(0, limit) });
+  } catch (e) { res.status(502).json({ error: 'Similar failed', detail: e.message }); }
+});
+
+// ---------------- prefetch warmer: fill server audio cache ahead of playback ----------------
+const warmInflight = new Map(); // key -> time
+app.get('/api/warm', async (req, res) => {
+  const src = req.query.src, sid = req.query.id;
+  const q = QUALITY_ORDER[req.query.quality] ? req.query.quality : 'high';
+  if (!src || !sid) return res.status(400).json({ error: 'Missing src/id' });
+  const key = audioKey(src, sid, q, req.query.t || '', req.query.ar || '');
+  const hit = audioCache.get(key);
+  if (hit && Date.now() - hit.time < AUDIO_TTL) return res.json({ cached: true });
+  if (warmInflight.has(key)) return res.status(202).json({ warming: true });
+  warmInflight.set(key, Date.now());
+  const qs = new URLSearchParams();
+  qs.set('src', src); qs.set('id', String(sid)); qs.set('quality', q);
+  for (const m of [req.query.m || []].flat()) qs.append('m', String(m));
+  if (req.query.t) qs.set('t', String(req.query.t));
+  if (req.query.ar) qs.set('ar', String(req.query.ar));
+  fetch(`http://127.0.0.1:${PORT}/api/audio?${qs.toString()}`, { signal: AbortSignal.timeout(120000) })
+    .then(r => r.arrayBuffer()).catch(() => {}).finally(() => warmInflight.delete(key));
+  res.status(202).json({ warming: true });
+});
+
 app.get('/api/audio', async (req, res) => {
   const src = req.query.src, sid = req.query.id;
   const q = QUALITY_ORDER[req.query.quality] ? req.query.quality : 'high';
@@ -1095,12 +1251,13 @@ app.get('/api/audio', async (req, res) => {
     return i > 0 ? { source: s.slice(0, i), sid: s.slice(i + 1) } : null;
   }).filter(Boolean);
   const mirrors = [{ source: src, sid: String(sid) }, ...ms].slice(0, 4);
-  const key = `${src}:${sid}:${q}`;
+  const recT = (req.query.t || '').trim(), recAr = (req.query.ar || '').trim();
+  const key = audioKey(src, sid, q, recT, recAr);
   const hit = audioCache.get(key);
   if (hit && Date.now() - hit.time < AUDIO_TTL) return serveBuf(res, req, hit.buf, true, hit.br, hit.type || 'audio/mpeg');
   try {
     const resolved = (await Promise.all(mirrors.map(async m => ({ ...m, r: await resolveMirror(m.source, m.sid) })))).filter(x => x.r);
-    if (!resolved.length) return res.status(502).json({ error: 'No working mirror' });
+    // (no early return: empty lists fall through to cross-source recovery below)
     const order = QUALITY_ORDER[q];
     const hostOf = (m) => {
       for (const br of order) {
@@ -1109,10 +1266,11 @@ app.get('/api/audio', async (req, res) => {
       }
       return '';
     };
-    resolved.sort((a, b) => cdnScore(hostOf(a)) - cdnScore(hostOf(b)));
+    const tryStream = async (list, recovered = false) => {
+    const ranked = [...list].sort((a, b) => cdnScore(hostOf(a)) - cdnScore(hostOf(b)));
     const wantRange = !!req.headers.range;
     for (const br of order) {
-      for (const m of resolved) {
+      for (const m of ranked) {
         const urls = [m.r.mp3s[br] || []].flat().filter(Boolean);
         for (const url of urls) {
         const t0 = Date.now();
@@ -1137,6 +1295,7 @@ app.get('/api/audio', async (req, res) => {
           res.setHeader('X-Audio-Cache', 'MISS');
           res.setHeader('X-Audio-Bitrate', br);
           res.setHeader('X-Audio-Mirror', m.source);
+          if (recovered) res.setHeader('X-Audio-Recovered', '1');
           const reader = up.body.getReader();
           const chunks = up.status === 200 ? [] : null;
           let received = 0, aborted = false;
@@ -1155,9 +1314,19 @@ app.get('/api/audio', async (req, res) => {
             if (audioCache.size >= AUDIO_MAX) audioCache.delete(audioCache.keys().next().value);
             audioCache.set(key, { buf: Buffer.concat(chunks), br, time: Date.now(), type: m.r.type || 'audio/mpeg' });
           }
-          return;
+          return true;
         } catch { /* next candidate */ }
         }
+      }
+    }
+    return false;
+    };
+    if (await tryStream(resolved)) return;
+    if (recT) {
+      const rec = await recoverMirrors(recT, recAr, mirrors).catch(() => []);
+      if (rec.length) {
+        const resolvedRec = (await Promise.all(rec.map(async m => ({ ...m, r: await resolveMirror(m.source, m.sid) })))).filter(x => x.r);
+        if (resolvedRec.length && await tryStream(resolvedRec, true)) return;
       }
     }
     if (!res.headersSent) res.status(502).json({ error: 'All mirrors failed' });
@@ -1276,16 +1445,17 @@ app.get('/api/health', (req, res) => res.json({ ok: true, sources: ['djpunjab', 
 app.get('/api/sources', async (req, res) => {
   const out = {};
   try { const m = await djpLoadIndex(); out.djpunjab = m.size > 100 ? 'ok' : 'empty'; out.djpunjab_index = m.size; }
-  catch (e) { out.djpunjab = `down: ${e.message}`; }
+  catch (e) { out.djpunjab = `down: ${e.message}`; tripSource('djp'); }
   try { const m = await djLoadIndex(); out.djjohal = m.size > 1000 ? 'ok' : 'empty'; out.djjohal_index = m.size; }
-  catch (e) { out.djjohal = `down: ${e.message}`; }
+  catch (e) { out.djjohal = `down: ${e.message}`; tripSource('dj'); }
   try { const m = await mrjLoadIndex(); out.mrjatt = m.size > 1000 ? 'ok' : 'empty'; out.mrjatt_index = m.size; }
-  catch (e) { out.mrjatt = `down: ${e.message}`; }
+  catch (e) { out.mrjatt = `down: ${e.message}`; tripSource('mrj'); }
   out.pendujatt = 'mirror';
-  try { const t = await rthmx('/api/songs?q=test'); out.saavn = t?.results ? 'ok' : 'empty'; } catch (e) { out.saavn = `down: ${e.message}`; }
+  try { const t = await rthmx('/api/songs?q=test'); out.saavn = t?.results ? 'ok' : 'empty'; } catch (e) { out.saavn = `down: ${e.message}`; tripSource('saavn'); }
   try { await tidalToken(); out.tidal = 'ok (preview only)'; } catch (e) { out.tidal = `down: ${e.message}`; }
   out.cdn = Object.fromEntries([...cdnMs.entries()].map(([h, ms]) => [h, Math.round(ms)]));
   out.uptime = Math.round(process.uptime());
+  out.degraded = srcDegraded();
   res.json(out);
 });
 

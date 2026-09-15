@@ -281,6 +281,17 @@ export function useAudioEngine() {
       const q = useStore.getState().queue;
       const nxt = q[useStore.getState().index + 1];
       if (nxt?.streamUrl) { const l = new Audio(); l.preload = 'auto'; l.src = streamFor(nxt, quality); }
+      // warm server cache for next track (instant start even on cold browser cache)
+      try { if (nxt?.streamUrl) api.warm(streamFor(nxt, quality)); } catch { /* noop */ }
+      // similar songs for current track (also pre-warmed so they start instantly)
+      if (track.title) {
+        api.similar(track.title, track.artist?.name || '', 8).then(j => {
+          if (cancelled) return;
+          const songs = j?.songs || [];
+          useStore.getState().setSimilar(songs);
+          songs.slice(0, 4).forEach(t => { try { if (t.streamUrl) api.warm(streamFor(t, quality)); } catch { /* noop */ } });
+        }).catch(() => { if (!cancelled) useStore.getState().setSimilar([]); });
+      } else useStore.getState().setSimilar([]);
       // media session
       if ('mediaSession' in navigator && track) {
         try {

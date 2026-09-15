@@ -18,6 +18,8 @@ export const useStore = create(
       duration: 0,
       showFullPlayer: false,
       showQueue: false,
+      similar: [], // similar songs for current track (transient, not persisted)
+      setSimilar: (s) => set({ similar: s || [] }),
       sleepTimerMin: 0,
       instantPreview: true, // instant FLAC preview, then auto-switch to full MP3
 

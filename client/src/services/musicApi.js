@@ -19,12 +19,21 @@ export const api = {
   artist: (source, id) => get(`/artist/${source}/${encodeURIComponent(id)}`),
   lyrics: ({ artist, title }) => get(`/lyrics?artist=${encodeURIComponent(artist || '')}&title=${encodeURIComponent(title || '')}`),
   tidalPreview: (title, artist) => `${BASE}/tidal-preview?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}`,
+  similar: (title, artist, limit = 12) => get(`/similar?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}&limit=${limit}`),
+  // fire-and-forget: warm server audio cache ahead of playback (zero-delay starts)
+  warm: (streamUrl) => {
+    try {
+      const u = String(streamUrl || '').replace('/api/audio', '/api/warm');
+      if (u !== streamUrl) fetch(u).catch(() => {});
+    } catch { /* prefetch is best-effort */ }
+  },
 };
 
 export function streamFor(track, quality = 'high') {
   if (!track?.streamUrl) return '';
   const q = ['high', 'medium', 'low'].includes(quality) ? quality : 'high';
-  return `${track.streamUrl}${track.streamUrl.includes('?') ? '&' : '?'}quality=${q}`;
+  const meta = `&t=${encodeURIComponent(track.title || '')}&ar=${encodeURIComponent(track.artist?.name || '')}`;
+  return `${track.streamUrl}${track.streamUrl.includes('?') ? '&' : '?'}quality=${q}${meta}`;
 }
 
 export function parseTrackId(id) {

@@ -3,6 +3,7 @@ import { useStore } from '../store/useStore';
 import { api, formatTime } from '../services/musicApi';
 import { seekTo } from '../hooks/useAudioEngine';
 import { Img, EqIcon } from './Cards';
+import { SimilarSongs } from './SimilarSongs';
 import Equalizer from './Equalizer';
 import Visualizer from './Visualizer';
 
@@ -249,6 +250,7 @@ export function QueueDrawer() {
           ))}
           {queue.length === 0 && <p className="text-sm text-dim">Queue is empty. Play something!</p>}
         </div>
+        <SimilarSongs />
       </div>
     </div>
   );
