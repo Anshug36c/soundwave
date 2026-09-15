@@ -98,7 +98,9 @@ export default function Search() {
       {q && tab === 'YouTube' && (
         <div className="mt-4">
           {ytLoading && <SkeletonList />}
-          {!ytLoading && ytError && <p className="card p-4 text-sm text-dim">⚠️ {ytError} — YouTube Music needs a direct connection to YouTube from your browser.</p>}
+          {!ytLoading && ytError && <div className="card p-4 text-sm text-dim flex items-center gap-3 flex-wrap">⚠️ {ytError}
+            <button onClick={() => { setYtError(''); setYtLoading(true); import('../services/ytmusic').then(m => m.ytSearch(q.trim())).then(r => setYtm(r)).catch(e => setYtError(e.message || 'YouTube Music unavailable')).finally(() => setYtLoading(false)); }} className="btn-accent px-4 py-1.5 text-xs">Retry</button>
+          </div>}
           {!ytLoading && !ytError && (
             <>
               {(ytm.songs.length > 0 || ytm.videos.length > 0) ? (

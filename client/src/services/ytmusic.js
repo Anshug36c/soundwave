@@ -15,8 +15,28 @@ export function getInnertube() {
           const code = `${data.output}\nreturn process(${JSON.stringify(env?.n ?? '')}, ${JSON.stringify(env?.sp ?? '')}, ${JSON.stringify(env?.sig ?? '')});`;
           return new Function(code)();
         };
+        // YouTube's static player assets send no CORS headers → route via backend.
+        if (!Platform.shim.__swProxy) {
+          const origFetch = Platform.shim.fetch.bind(Platform.shim);
+          Platform.shim.fetch = (input, init) => {
+            const url = typeof input === 'string' ? input : input?.url || '';
+            if (url.includes('/s/player/')) {
+              const m = url.match(/\/s\/player\/([^/]+)\//);
+              return fetch(`/api/yt/player-js?id=${encodeURIComponent(m?.[1] || '')}`);
+            }
+            return origFetch(input, init);
+          };
+          Platform.shim.__swProxy = true;
+        }
       }
-      const yt = await Innertube.create({});
+      // iframe_api has no CORS either → resolve the player id via backend so
+      // Innertube.create() skips that fetch entirely.
+      let playerId;
+      try {
+        const r = await fetch('/api/yt/player-id');
+        if (r.ok) playerId = (await r.json()).playerId;
+      } catch { /* fall through — direct attempt will surface the real error */ }
+      const yt = await Innertube.create(playerId ? { player_id: playerId } : {});
       return yt;
     })().catch((e) => {
       ytPromise = null;

@@ -1,6 +1,6 @@
 /* SoundWave service worker — app-shell caching + offline audio via Cache Storage */
-const SHELL = 'soundwave-shell-v1';
-const AUDIO = 'soundwave-audio-v1';
+const SHELL = 'soundwave-shell-v2';
+const AUDIO = 'soundwave-audio-v2';
 const SHELL_URLS = ['/', '/index.html', '/manifest.json', '/icons/icon.svg'];
 
 self.addEventListener('install', (e) => {
@@ -27,6 +27,9 @@ self.addEventListener('fetch', (e) => {
   const { request } = e;
   const url = new URL(request.url);
   if (request.method !== 'GET') return;
+  // Never intercept cross-origin requests (YouTube API, streams, CDNs) —
+  // the offline fallback below must only serve same-origin app routes.
+  if (url.origin !== self.location.origin) return;
   // Audio: cache-first (offline playback), then network
   if (request.destination === 'audio' || url.pathname.startsWith('/api/stream')) {
     e.respondWith(caches.match(request).then((hit) => hit || fetch(request).then((res) => {

@@ -620,6 +620,57 @@ app.get('/api/lyrics', async (req, res) => {
   } catch (e) { res.json(result); }
 });
 
+// ---- YouTube player assets (proxied — YouTube serves these WITHOUT CORS
+// headers, so browsers can't fetch them directly; required for deciphering) ----
+const YT_PLAYER_ID_TTL = 1000 * 60 * 60;
+let ytPlayerIdCache = { id: null, t: 0 };
+app.get('/api/yt/player-id', async (req, res) => {
+  try {
+    if (ytPlayerIdCache.id && Date.now() - ytPlayerIdCache.t < YT_PLAYER_ID_TTL) {
+      return res.json({ playerId: ytPlayerIdCache.id, cached: true });
+    }
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 10000);
+    let r;
+    try {
+      r = await fetch('https://www.youtube.com/iframe_api', { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    } finally { clearTimeout(to); }
+    if (!r.ok) return res.status(502).json({ error: `iframe_api HTTP ${r.status}` });
+    const js = await r.text();
+    const i = js.indexOf('player\\/');
+    if (i < 0) return res.status(502).json({ error: 'player id pattern not found' });
+    const id = js.slice(i + 8).split('\\/')[0];
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) return res.status(502).json({ error: 'invalid player id' });
+    ytPlayerIdCache = { id, t: Date.now() };
+    res.json({ playerId: id, cached: false });
+  } catch (e) { res.status(502).json({ error: 'player-id fetch failed', detail: e.message }); }
+});
+
+const ytJsCache = new Map(); // playerId -> base.js text
+app.get('/api/yt/player-js', async (req, res) => {
+  const id = String(req.query.id || '');
+  if (!/^[A-Za-z0-9_-]{4,32}$/.test(id)) return res.status(400).json({ error: 'bad id' });
+  try {
+    if (!ytJsCache.has(id)) {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 25000);
+      let r;
+      try {
+        r = await fetch(`https://www.youtube.com/s/player/${id}/player_es6.vflset/en_US/base.js`, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
+      } finally { clearTimeout(to); }
+      if (!r.ok) return res.status(502).json({ error: `player js HTTP ${r.status}` });
+      const js = await r.text();
+      if (js.length < 100000) return res.status(502).json({ error: 'unexpected player js' });
+      if (ytJsCache.size > 3) ytJsCache.clear();
+      ytJsCache.set(id, js);
+    }
+    res.setHeader('Content-Type', 'application/javascript');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(ytJsCache.get(id));
+  } catch (e) { res.status(502).json({ error: 'player-js fetch failed', detail: e.message }); }
+});
+
 app.get('/api/stream', async (req, res) => {
   const url = req.query.url;
   if (!url || !/^https?:\/\//.test(url)) return res.status(400).json({ error: 'Missing url' });
