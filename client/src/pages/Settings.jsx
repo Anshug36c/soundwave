@@ -28,6 +28,10 @@ export default function Settings() {
   const playlists = useStore(s => s.playlists);
   const followedArtists = useStore(s => s.followedArtists);
   const clearHistory = useStore(s => s.clearHistory);
+  const hiddenArtists = useStore(s => s.hiddenArtists);
+  const unhideArtist = useStore(s => s.unhideArtist);
+  const resetTaste = useStore(s => s.resetTaste);
+  const disliked = useStore(s => s.disliked);
   const toast = useStore(s => s.toast);
   const [name, setName] = useState(profile.name);
   const [deferred, setDeferred] = useState(null);
@@ -98,6 +102,14 @@ export default function Settings() {
         <Row label="Install app" desc="Add SoundWave to your home screen (PWA)">
           <button onClick={async () => { if (deferred) { deferred.prompt(); await deferred.userChoice; setDeferred(null); } else toast('Use browser menu → Install/Add to Home Screen'); }} className="btn-accent px-4 py-1.5 text-sm">📲 Install</button>
         </Row>
+        <Row label="Taste profile" desc={`${Object.keys(liked).length} liked · ${Object.keys(disliked).length} disliked · ${Object.keys(hiddenArtists).length} artists hidden`}>
+          <button onClick={resetTaste} className="px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Reset taste</button>
+        </Row>
+        {Object.keys(hiddenArtists).length > 0 && (
+        <Row label="Hidden artists" desc="Filtered from recommendations & song results">
+          <span className="flex flex-wrap gap-1.5 justify-end">{Object.entries(hiddenArtists).map(([k, n]) => <button key={k} onClick={() => unhideArtist(k)} className="px-3 py-1 rounded-full text-xs font-bold bg-white/10" title="Unhide">{n} ✕</button>)}</span>
+        </Row>
+        )}
         <Row label="Listening history" desc={`${history.length} tracks stored locally`}>
           <button onClick={() => { clearHistory(); toast('History cleared'); }} className="px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Clear</button>
         </Row>

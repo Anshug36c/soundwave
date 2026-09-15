@@ -59,14 +59,18 @@ export function ArtistPage() {
   const playTracks = useStore(s => s.playTracks);
   const followedArtists = useStore(s => s.followedArtists);
   const toggleFollowArtist = useStore(s => s.toggleFollowArtist);
+  const hiddenArtists = useStore(s => s.hiddenArtists);
+  const hideArtist = useStore(s => s.hideArtist);
+  const unhideArtist = useStore(s => s.unhideArtist);
   if (error) return <p className="p-8 text-center text-dim">{error}</p>;
   if (!data) return <SkeletonList />;
   const following = !!followedArtists[data.id];
+  const isHidden = !!hiddenArtists[String(data.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')];
   return (
     <div className="pb-8">
       <Header image={data.image} round kicker="ARTIST" title={data.name} sub={(data.topSongs?.length || 0) + ' top songs · full tracks'}
         onPlay={data.topSongs?.length ? () => playTracks(data.topSongs, 0) : null}
-        extra={<button onClick={() => toggleFollowArtist(data)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">{following ? '✓ Following' : '＋ Follow'}</button>} />
+        extra={<span className="flex gap-2"><button onClick={() => toggleFollowArtist(data)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">{following ? '✓ Following' : '＋ Follow'}</button><button onClick={() => isHidden ? unhideArtist(data.name) : hideArtist(data.name)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">{isHidden ? 'Unhide' : 'Hide'}</button></span>} />
       <h2 className="text-xl font-extrabold mt-6 mb-2">Top Songs</h2>
       <div className="card p-2 flex flex-col">
         {(data.topSongs || []).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.topSongs} />)}

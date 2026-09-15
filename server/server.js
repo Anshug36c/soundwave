@@ -199,7 +199,7 @@ function normalizeDjpSong(id, pg) {
     artists: [], album: { id: '', name: '', image: pg.cover || '' },
     duration: pg.duration || 0, image: pg.cover || '',
     streamUrl: `/api/djp-audio?id=${id}`, previewUrl: '', isPreview: false,
-    codec: 'mp3', quality: pg.quality, explicit: false, year: '', language: '',
+    codec: 'mp3', quality: pg.quality, explicit: false, year: '', language: '', plays: 0,
   };
 }
 
@@ -506,7 +506,7 @@ function normalizeDjSong(slug, pg) {
     artists: [], album: { id: '', name: '', image: pg.cover || '' },
     duration: pg.duration || 0, image: pg.cover || '',
     streamUrl: `/api/audio?src=dj&id=${encodeURIComponent(slug)}`, previewUrl: '', isPreview: false,
-    codec: 'mp3', quality, explicit: false, year: '', language: '',
+    codec: 'mp3', quality, explicit: false, year: '', language: '', plays: 0,
   };
 }
 
@@ -520,7 +520,7 @@ function normalizeDjTrack(tr, cover) {
     artists: [], album: { id: '', name: '', image: cover || '' },
     duration: tr.duration || 0, image: cover || '',
     streamUrl: `/api/audio?src=dj&id=t:${tr.numId}`, previewUrl: '', isPreview: false,
-    codec: 'mp3', quality: '320', explicit: false, year: '', language: '',
+    codec: 'mp3', quality: '320', explicit: false, year: '', language: '', plays: 0,
   };
 }
 
@@ -746,7 +746,7 @@ function normalizeMrjSong(id, pg) {
     artists: [], album: { id: '', name: '', image: pg.cover || '' },
     duration: pg.duration || 0, image: pg.cover || '',
     streamUrl: `/api/audio?src=mrj&id=${id}`, previewUrl: '', isPreview: false,
-    codec: 'mp3', quality: pg.quality || '320', explicit: false, year: '', language: '',
+    codec: 'mp3', quality: pg.quality || '320', explicit: false, year: '', language: '', plays: 0,
   };
 }
 
@@ -918,7 +918,7 @@ function normalizeSaavnSong(item) {
     artists: [], album: { id: '', name: '', image: img },
     duration: parseInt(item.duration || item.more_info?.duration || '0', 10) || 0, image: img,
     streamUrl: `/api/audio?src=saavn&id=${encodeURIComponent(token)}`, previewUrl: '', isPreview: false,
-    codec: 'aac', quality: '320', explicit: !!item.isExplicit, year: item.year || '', language: (item.language || '').toLowerCase(),
+    codec: 'aac', quality: '320', explicit: !!item.isExplicit, year: item.year || '', language: (item.language || '').toLowerCase(), plays: parseInt(item.play_count || '0', 10) || 0,
   };
 }
 async function saavnSearchSongs(q, limit = 8, enrich = true) {
@@ -1188,6 +1188,173 @@ function similarRank(title, artist, t) {
   else if (qa.some(n => n && (ca.includes(n) || n.includes(ca)))) s += 50;
   return s;
 }
+
+// ---------------- recommendations: deep cuts, for-you, time machine ----------------
+function fmtPlays(n) {
+  n = n || 0;
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(n);
+}
+function withTimeout(p, ms, fb = null) {
+  return Promise.race([Promise.resolve(p).catch(() => fb), new Promise(r => setTimeout(() => r(fb), ms))]);
+}
+async function artistSongsAll(name) {
+  const slug = slugifyName(name);
+  const got = (await Promise.all([
+    withTimeout(djpArtistDetail(slug), 20000),
+    withTimeout(djArtistDetail(slug), 20000),
+    withTimeout(mrjArtistDetail(slug), 20000),
+    withTimeout(saavnArtistDetail(slug), 20000),
+  ])).filter(Boolean);
+  const per = { djp: [], dj: [], mrj: [], saavn: [] };
+  for (const g of got) for (const t of (g.topSongs || g.songs || [])) if (t?.source && per[t.source]) per[t.source].push(t);
+  return mergeTracks([per.djp, per.dj, per.mrj, per.saavn]);
+}
+app.get('/api/deep-cuts', async (req, res) => {
+  const artist = (req.query.artist || '').trim();
+  const limit = Math.min(parseInt(req.query.limit || '10', 10) || 10, 15);
+  if (!artist) return res.json({ songs: [] });
+  const ck = `deep:${artist}`.toLowerCase();
+  const hit = getCache(ck);
+  if (hit) return res.json({ songs: hit.slice(0, limit) });
+  try {
+    const songs = await artistSongsAll(splitArtists(artist)[0] || artist);
+    const qa = artist.toLowerCase();
+    const mine = songs.filter(t => {
+      const ca = (t.artist?.name || '').toLowerCase();
+      return ca.includes(qa.split(' ')[0]) || qa.includes(ca.split(' ')[0]);
+    });
+    const withPlays = mine.filter(t => (t.plays || 0) > 0).sort((a, b) => a.plays - b.plays);
+    const unknown = mine.filter(t => !(t.plays > 0));
+    const data = [...withPlays, ...unknown].slice(0, 15).map(t => ({ ...t, reason: t.plays > 0 ? (t.plays < 2000000 ? `Deep cut · ${fmtPlays(t.plays)} plays` : `From the vault · ${fmtPlays(t.plays)} plays`) : 'Deep cut · rare find' }));
+    setCache(ck, data, 60 * 60 * 1000);
+    res.json({ songs: data.slice(0, limit) });
+  } catch (e) { res.status(502).json({ error: 'Deep cuts failed', detail: e.message }); }
+});
+async function randomIndexTracks(n = 5) {
+  const maps = await warmMaps();
+  const pools = maps.filter(([, m]) => m?.size > 50);
+  if (!pools.length) return [];
+  const cands = [];
+  for (let i = 0; i < n * 4 && cands.length < n * 2; i++) {
+    const [src, map] = pools[Math.floor(Math.random() * pools.length)];
+    const keys = [...map.keys()];
+    const e = map.get(keys[Math.floor(Math.random() * keys.length)]);
+    if (e && !e.album) cands.push([src, e]);
+  }
+  const got = (await Promise.all(cands.map(([src, e]) => withTimeout((async () => {
+    try {
+      const pg = src === 'djp' ? await djpSongPage(e.url) : src === 'dj' ? await djSongPage(e.url) : await mrjSongPage(e.url);
+      const t = src === 'djp' ? normalizeDjpSong(e.id, pg) : src === 'dj' ? normalizeDjSong(e.id, pg) : normalizeMrjSong(e.id, pg);
+      return t?.title ? t : null;
+    } catch { return null; }
+  })(), 15000, null)))).filter(Boolean);
+  const seen = new Set(), out = [];
+  for (const t of got) {
+    const k = normKey(t.title, t.artist?.name);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ ...t, reason: 'Adventurous pick · from the deep catalog' });
+    if (out.length >= n) break;
+  }
+  return out;
+}
+async function similarInternal(title, artist, limit = 8) {
+  try {
+    const r = await fetch(`http://127.0.0.1:${PORT}/api/similar?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&limit=${limit}`, { signal: AbortSignal.timeout(60000) });
+    if (!r.ok) return [];
+    return (await r.json())?.songs || [];
+  } catch (e) { console.error('similarInternal failed:', e.message); return []; }
+}
+app.get('/api/for-you', async (req, res) => {
+  const mix = Math.min(Math.max(parseInt(req.query.mix || '30', 10) || 0, 0), 100);
+  const limit = Math.min(parseInt(req.query.limit || '15', 10) || 15, 24);
+  let seeds = [];
+  try { seeds = JSON.parse(req.query.seeds || '[]').filter(s => s?.t).slice(0, 3); } catch {}
+  const artists = String(req.query.artists || '').split('|').map(s => s.trim()).filter(Boolean).slice(0, 4);
+  const ck = `foryou:${mix}:${limit}:${fold(JSON.stringify(seeds))}:${fold(artists.join('|'))}`;
+  const hit = getCache(ck);
+  if (hit) return res.json({ songs: hit });
+  try {
+    const advN = Math.round(limit * mix / 100);
+    const famN = limit - advN;
+    let famLists = [], deepList = [], advList = [];
+    const pFam = Promise.all(seeds.map(s => similarInternal(s.t, s.a || '').catch(() => []))).then(r => { famLists = r; }).catch(() => {});
+    const pDeep = (async () => {
+      const an = splitArtists(seeds[0]?.a || artists[0] || '')[0] || artists[0] || '';
+      if (!an) return [];
+      const r = await fetch(`http://127.0.0.1:${PORT}/api/deep-cuts?artist=${encodeURIComponent(an)}&limit=5`, { signal: AbortSignal.timeout(60000) }).catch(() => null);
+      if (!r?.ok) return [];
+      return (await r.json().catch(() => ({})))?.songs || [];
+    })().then(r => { deepList = r; }).catch(() => {});
+    const pAdv = (advN ? randomIndexTracks(advN + 2).catch(() => []) : Promise.resolve([])).then(r => { advList = r; }).catch(() => {});
+    const finished = await Promise.race([Promise.all([pFam, pDeep, pAdv]).then(() => true), new Promise(r => setTimeout(() => r(false), 45000))]);
+    if (!finished) console.error(`[for-you] partial after 45s (fam:${famLists.flat().length} deep:${deepList.length} adv:${advList.length})`);
+    const perSeedLists = seeds.map((s, i) => (famLists[i] || []).map(t => ({ ...t, reason: `Because you listened to “${s.t}”` })));
+    const picked = [];
+    for (let r = 0; r < 8 && picked.length < famN; r++)
+      for (const L of perSeedLists) { if (L[r]) picked.push(L[r]); if (picked.length >= famN) break; }
+    const all = [...picked, ...(deepList || []).slice(0, 3), ...(advList || [])];
+    const seen = new Set(), data = [];
+    for (const t of all) {
+      const k = normKey(t.title, t.artist?.name);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      data.push(t);
+      if (data.length >= limit) break;
+    }
+    setCache(ck, data, 10 * 60 * 1000);
+    res.json({ songs: data });
+  } catch (e) { res.status(502).json({ error: 'For-you failed', detail: e.message }); }
+});
+const DECADES = { '80s': 1980, '90s': 1990, '2000s': 2000, '2010s': 2010, '2020s': 2020 };
+app.get('/api/time-machine', async (req, res) => {
+  const dkey = String(req.query.decade || '2000s').toLowerCase();
+  const start = DECADES[dkey] ?? 2000;
+  const limit = Math.min(parseInt(req.query.limit || '15', 10) || 15, 24);
+  const artists = String(req.query.artists || '').split('|').map(s => s.trim()).filter(Boolean).slice(0, 4);
+  const ERA_DEFAULTS = { 1980: ['Gurdas Maan', 'Malkit Singh', 'Harbhajan Mann', 'Hans Raj Hans'], 1990: ['Gurdas Maan', 'Malkit Singh', 'Harbhajan Mann', 'Hans Raj Hans'], 2000: ['Diljit Dosanjh', 'Jazzy B', 'Sukshinder Shinda', 'Miss Pooja'], 2010: ['Diljit Dosanjh', 'Guru Randhawa', 'Jasmine Sandlas', 'Badshah'], 2020: ['AP Dhillon', 'Karan Aujla', 'Shubh', 'Prem Dhillon'] };
+  const seeds = artists.length ? artists : (ERA_DEFAULTS[start] || ERA_DEFAULTS[2020]);
+  const ck = `tm:${start}:${fold(seeds.join('|'))}`;
+  const hit = getCache(ck);
+  if (hit) return res.json({ songs: hit.slice(0, limit), decade: `${start}s` });
+  try {
+    const lists = await Promise.all(seeds.map(async (n) => {
+      const [sv, djp, albs] = await Promise.all([
+        saavnArtistDetail(slugifyName(n)).catch(() => null),
+        djpArtistDetail(slugifyName(n)).catch(() => null),
+        saavnSearchAlbums(n, 4).catch(() => []),
+      ]);
+      const albDetails = await Promise.all((albs || []).slice(0, 3).map(a => saavnAlbumDetail(a.sourceId).catch(() => null)));
+      return [sv, djp, ...albDetails];
+    }));
+    const per = { djp: [], dj: [], mrj: [], saavn: [] };
+    for (const pair of lists) for (const g of pair) for (const t of (g?.topSongs || g?.songs || [])) if (t?.source && per[t.source]) per[t.source].push(t);
+    const merged = mergeTracks([per.djp, per.dj, per.mrj, per.saavn]);
+    const inDecade = merged.filter(t => {
+      const m = String(t.year || '').match(/(19|20)\d{2}/);
+      const yr = m ? parseInt(m[0], 10) : 0;
+      return yr >= start && yr < start + 10;
+    }).sort((a, b) => (b.plays || 0) - (a.plays || 0));
+    let data = inDecade.slice(0, 24).map(t => ({ ...t, reason: `From the ${start}s` }));
+    if (data.length < 3 && artists.length) {
+      // user artists have nothing dated in this decade — fall back to era classics
+      const fb = await Promise.all((ERA_DEFAULTS[start] || []).map(n => saavnArtistDetail(slugifyName(n)).catch(() => null)));
+      const pool = [];
+      for (const g of fb) for (const t of (g?.topSongs || [])) pool.push(t);
+      const fbIn = mergeTracks([pool.filter(t => t.source === 'saavn')]).filter(t => {
+        const m = String(t.year || '').match(/(19|20)\d{2}/);
+        const yr = m ? parseInt(m[0], 10) : 0;
+        return yr >= start && yr < start + 10;
+      }).sort((a, b) => (b.plays || 0) - (a.plays || 0)).slice(0, 24).map(t => ({ ...t, reason: `From the ${start}s · era classic` }));
+      if (fbIn.length > data.length) data = fbIn;
+    }
+    setCache(ck, data, 60 * 60 * 1000);
+    res.json({ songs: data.slice(0, limit), decade: `${start}s` });
+  } catch (e) { res.status(502).json({ error: 'Time machine failed', detail: e.message }); }
+});
+
 app.get('/api/similar', async (req, res) => {
   const title = (req.query.title || '').trim(), artist = (req.query.artist || '').trim();
   const limit = Math.min(parseInt(req.query.limit || '12', 10) || 12, 24);
@@ -1212,7 +1379,7 @@ app.get('/api/similar', async (req, res) => {
       jobs.push(mrjSearchSongs(kws, 4).then(r => ({ topSongs: r })).catch(() => null));
       jobs.push(saavnSearchSongs(kws, 4, false).then(r => ({ topSongs: r })).catch(() => null));
     }
-    const got = (await Promise.all(jobs)).filter(Boolean);
+    const got = (await Promise.all(jobs.map(j => withTimeout(j, 20000)))).filter(Boolean);
     const per = { djp: [], dj: [], mrj: [], saavn: [] };
     for (const g of got) for (const t of (g.topSongs || g.songs || [])) if (t?.source && per[t.source]) per[t.source].push(t);
     const merged = mergeTracks([per.djp, per.dj, per.mrj, per.saavn]).filter(t => recoveryScore(title, artist, t) < 60);
@@ -1755,7 +1922,7 @@ app.get('/api/song/:source/:id', async (req, res) => {
     } else if (source === 'dj') {
       if (String(id).startsWith('t:')) {
         const c = djCustom.get(String(id)) || { title: 'Unknown Track', artist: 'Unknown', cover: '', duration: 0 };
-        track = { id: `dj:${id}`, source: 'dj', sourceId: String(id), type: 'track', title: c.title, artist: { id: '', name: c.artist, image: c.cover || '' }, artists: [], album: { id: '', name: '', image: c.cover || '' }, duration: c.duration || 0, image: c.cover || '', streamUrl: `/api/audio?src=dj&id=${id}`, previewUrl: '', isPreview: false, codec: 'mp3', quality: '320', explicit: false, year: '', language: '' };
+        track = { id: `dj:${id}`, source: 'dj', sourceId: String(id), type: 'track', title: c.title, artist: { id: '', name: c.artist, image: c.cover || '' }, artists: [], album: { id: '', name: '', image: c.cover || '' }, duration: c.duration || 0, image: c.cover || '', streamUrl: `/api/audio?src=dj&id=${id}`, previewUrl: '', isPreview: false, codec: 'mp3', quality: '320', explicit: false, year: '', language: '', plays: 0 };
       } else {
         const e = (await djLoadIndex()).get(String(id).toLowerCase());
         if (!e || e.album) return res.status(404).json({ error: 'Song not indexed' });

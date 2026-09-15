@@ -20,6 +20,18 @@ export const useStore = create(
       showQueue: false,
       similar: [], // similar songs for current track (transient, not persisted)
       setSimilar: (s) => set({ similar: s || [] }),
+      disliked: {}, // trackId -> true (excluded from recommendations)
+      hiddenArtists: {}, // folded name -> display name
+      discoverMix: 30, // 0 familiar .. 100 adventurous
+      toggleDislike: (track) => set(s => {
+        const d = { ...s.disliked };
+        if (d[track.id]) delete d[track.id]; else d[track.id] = true;
+        return { disliked: d };
+      }),
+      hideArtist: (name) => { const k = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, ''); if (k) set(s => ({ hiddenArtists: { ...s.hiddenArtists, [k]: name } })); },
+      unhideArtist: (name) => { const k = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, ''); set(s => { const h = { ...s.hiddenArtists }; delete h[k]; return { hiddenArtists: h }; }); },
+      setDiscoverMix: (v) => set({ discoverMix: v }),
+      resetTaste: () => { set({ liked: {}, disliked: {}, hiddenArtists: {}, similar: [] }); get().toast('Taste profile reset', 'info'); },
       sleepTimerMin: 0,
       instantPreview: true, // instant FLAC preview, then auto-switch to full MP3
 
@@ -194,7 +206,7 @@ export const useStore = create(
         studioOn: s.studioOn, eqEnabled: s.eqEnabled, eqGains: s.eqGains,
         eqPreset: s.eqPreset, eqPreamp: s.eqPreamp, normalizeOn: s.normalizeOn,
         profile: s.profile, searchHistory: s.searchHistory, volume: s.volume,
-        instantPreview: s.instantPreview,
+        instantPreview: s.instantPreview, disliked: s.disliked, hiddenArtists: s.hiddenArtists, discoverMix: s.discoverMix,
       }),
     }
   )

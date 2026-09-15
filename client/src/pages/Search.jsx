@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api, debounce } from '../services/musicApi';
+import { api, debounce, tasteFiltered } from '../services/musicApi';
 import { useStore } from '../store/useStore';
 import { SongRow, AlbumCard, ArtistCard, SkeletonList } from '../components/Cards';
 
@@ -25,6 +25,8 @@ export default function Search() {
   const pushSearch = useStore(s => s.pushSearch);
   const searchHistory = useStore(s => s.searchHistory);
   const clearSearchHistory = useStore(s => s.clearSearchHistory);
+  const disliked = useStore(s => s.disliked);
+  const hiddenArtists = useStore(s => s.hiddenArtists);
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
   const recogRef = useRef(null);
@@ -197,10 +199,15 @@ export default function Search() {
 
       {loading && <div className="mt-5"><SkeletonList /></div>}
 
-      {!loading && q && tab === 'Songs' && (
-        <div className="card p-2 mt-4 flex flex-col">{results.songs.map((t, i) => <SongRow key={t.id} track={t} index={i} context={results.songs} />)}
-          {results.songs.length === 0 && <p className="p-4 text-sm text-dim">No songs found{filtersActive ? ' with these filters' : ''}.</p>}</div>
-      )}
+      {!loading && q && tab === 'Songs' && (() => {
+        const visible = tasteFiltered(results.songs, disliked, hiddenArtists);
+        const hidden = results.songs.length - visible.length;
+        return (
+        <div className="card p-2 mt-4 flex flex-col">{visible.map((t, i) => <SongRow key={t.id} track={t} index={i} context={visible} />)}
+          {visible.length === 0 && <p className="p-4 text-sm text-dim">No songs found{filtersActive ? ' with these filters' : ''}.</p>}
+          {hidden > 0 && <p className="px-4 py-1 text-[11px] text-dim font-semibold">{hidden} hidden by your taste filters.</p>}</div>
+        );
+      })()}
       {!loading && q && tab === 'Albums' && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4">{results.albums.map(a => <AlbumCard key={a.id} album={a} />)}
           {results.albums.length === 0 && <p className="p-4 text-sm text-dim col-span-full">No albums found.</p>}</div>

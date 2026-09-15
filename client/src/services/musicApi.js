@@ -23,6 +23,9 @@ export const api = {
     return get(`/search?${p.toString()}`);
   },
   suggest: (q, limit = 8) => get(`/suggest?q=${encodeURIComponent(q)}&limit=${limit}`),
+  forYou: (mix, seeds, artists, limit = 15) => get(`/for-you?mix=${mix}&limit=${limit}&seeds=${encodeURIComponent(JSON.stringify(seeds || []))}&artists=${encodeURIComponent((artists || []).join('|'))}`),
+  deepCuts: (artist, limit = 10) => get(`/deep-cuts?artist=${encodeURIComponent(artist)}&limit=${limit}`),
+  timeMachine: (decade, artists, limit = 15) => get(`/time-machine?decade=${encodeURIComponent(decade)}&artists=${encodeURIComponent((artists || []).join('|'))}`),
   song: (source, id) => get(`/song/${source}/${encodeURIComponent(id)}`),
   album: (source, id) => get(`/album/${source}/${encodeURIComponent(id)}`),
   artist: (source, id) => get(`/artist/${source}/${encodeURIComponent(id)}`),
@@ -57,6 +60,11 @@ export function formatTime(sec = 0) {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+export function tasteFiltered(tracks, disliked = {}, hidden = {}) {
+  const foldName = (n) => String(n || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return (tracks || []).filter(t => !disliked[t.id] && !hidden[foldName(t.artist?.name)]);
 }
 
 export function debounce(fn, ms = 300) {

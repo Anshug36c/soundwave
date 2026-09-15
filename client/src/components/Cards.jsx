@@ -21,9 +21,12 @@ export function SongRow({ track, index, context, showIndex = true, onRemove }) {
   const isPlaying = useStore(s => s.isPlaying);
   const liked = useStore(s => s.liked);
   const toggleLike = useStore(s => s.toggleLike);
+  const toggleDislike = useStore(s => s.toggleDislike);
+  const disliked = useStore(s => s.disliked);
   const addToQueue = useStore(s => s.addToQueue);
   const isCurrent = queue[idx]?.id === track.id;
   const isLiked = !!liked[track.id];
+  const isDisliked = !!disliked[track.id];
 
   return (
     <div className={`group flex items-center gap-3 px-3 py-2 rounded-lg ${isCurrent ? 'bg-accent/10' : 'bg-hoverable'}`} role="row">
@@ -37,6 +40,7 @@ export function SongRow({ track, index, context, showIndex = true, onRemove }) {
         <p className="truncate text-xs text-dim">{track.artist?.name} <SourceBadge track={track} /></p>
       </button>
       <button onClick={() => toggleLike(track)} className={`text-lg px-1 ${isLiked ? 'text-green-500' : 'opacity-0 group-hover:opacity-100 text-dim'}`} aria-label="Like">{isLiked ? '♥' : '♡'}</button>
+      <button onClick={() => toggleDislike(track)} className={`px-1 ${isDisliked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 text-dim'}`} aria-label="Dislike" title="Don't recommend this">👎</button>
       <span className="text-xs text-dim w-10 text-right">{formatTime(track.duration)}</span>
       <button onClick={() => addToQueue(track)} className="text-dim opacity-0 group-hover:opacity-100 px-1" aria-label="Add to queue" title="Add to queue">⏭＋</button>
       {onRemove && <button onClick={onRemove} className="text-dim px-1" aria-label="Remove">✕</button>}
