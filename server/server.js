@@ -448,6 +448,7 @@ app.get('/api/sources', async (req, res) => {
     radio: radioFetch('/json/stations/topvote/1').then(() => 'ok'),
     ytplayer: fetch('https://www.youtube.com/iframe_api', { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(8000) }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return 'ok'; }),
     mono: monoFetch('/search/?s=test').then(() => 'ok'),
+    tidal: tidalSearchSongs('test', 1).then(() => 'ok'),
   };
   const out = {};
   await Promise.all(Object.entries(probes).map(async ([k, p]) => {
@@ -495,6 +496,125 @@ app.get('/api/home', async (req, res) => {
     res.status(502).json({ error: 'Failed to load home feed', detail: e.message });
   }
 });
+
+// ---------------- Tidal pipeline from scratch (own tokens, no middleman) ----------------
+const TIDAL_CID = process.env.TIDAL_CLIENT_ID || 'txNoH4kkV41MfH25';
+const TIDAL_SECRET = process.env.TIDAL_CLIENT_SECRET || 'dQjy0MinCEvxi1O4UmxvxWnDjt4cgHBPw8ll6nYBk98=';
+let tidalTok = null, tidalTokExp = 0, tidalTokPromise = null;
+async function tidalToken(force = false) {
+  if (!force && tidalTok && Date.now() < tidalTokExp) return tidalTok;
+  if (!tidalTokPromise) {
+    tidalTokPromise = (async () => {
+      const body = new URLSearchParams({ client_id: TIDAL_CID, client_secret: TIDAL_SECRET, grant_type: 'client_credentials' });
+      const r = await fetch('https://auth.tidal.com/v1/oauth2/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: 'Basic ' + Buffer.from(`${TIDAL_CID}:${TIDAL_SECRET}`).toString('base64') },
+        body, signal: AbortSignal.timeout(15000),
+      });
+      if (!r.ok) throw new Error(`Tidal token HTTP ${r.status}`);
+      const j = await r.json();
+      if (!j.access_token) throw new Error('Tidal token missing');
+      tidalTok = j.access_token;
+      tidalTokExp = Date.now() + ((j.expires_in || 3600) - 60) * 1000;
+      return tidalTok;
+    })().finally(() => { tidalTokPromise = null; });
+  }
+  return tidalTokPromise;
+}
+async function tidalFetch(path, timeout = 20000, retry = true) {
+  const tok = await tidalToken();
+  const sep = path.includes('?') ? '&' : '?';
+  const r = await fetch(`https://api.tidal.com${path}${sep}countryCode=US`, { headers: { Authorization: `Bearer ${tok}`, 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(timeout) });
+  if (r.status === 401 && retry) { await tidalToken(true); return tidalFetch(path, timeout, false); }
+  if (!r.ok) throw new Error(`Tidal HTTP ${r.status} for ${path}`);
+  return r.json();
+}
+function normalizeTidalTrack(t) {
+  const x = normalizeMonoTrack(t);
+  if (!x) return null;
+  x.id = String(x.id).replace(/^mono:/, 'tidal:');
+  x.source = 'tidal';
+  x.streamUrl = `/api/tidal-audio?id=${t.id}`;
+  x.previewUrl = x.streamUrl;
+  if (x.artist) x.artist.id = String(x.artist.id || '').replace(/^mono:/, 'tidal:');
+  x.artists = (x.artists || []).map(a => ({ ...a, id: String(a.id || '').replace(/^mono:/, 'tidal:') }));
+  if (x.album) x.album.id = String(x.album.id || '').replace(/^mono:/, 'tidal:');
+  return x;
+}
+function normalizeTidalArtist(a) {
+  const x = normalizeMonoArtist(a);
+  if (!x) return null;
+  x.id = String(x.id).replace(/^mono:/, 'tidal:');
+  x.source = 'tidal';
+  return x;
+}
+function normalizeTidalAlbum(al) {
+  const x = normalizeMonoAlbum(al);
+  if (!x) return null;
+  x.id = String(x.id).replace(/^mono:/, 'tidal:');
+  x.source = 'tidal';
+  return x;
+}
+function normalizeTidalPlaylist(pl) {
+  const x = normalizeMonoPlaylist(pl);
+  if (!x) return null;
+  x.id = String(x.id).replace(/^mono:/, 'tidal:');
+  x.source = 'tidal';
+  return x;
+}
+async function tidalSearchSongs(q, limit = 10) {
+  const j = await tidalFetch(`/v1/search/tracks?query=${encodeURIComponent(q)}&limit=${limit}`);
+  return (j?.items || []).slice(0, limit).map(normalizeTidalTrack).filter(Boolean);
+}
+async function tidalSearchArtists(q, limit = 8) {
+  const j = await tidalFetch(`/v1/search/artists?query=${encodeURIComponent(q)}&limit=${limit}`);
+  return (j?.items || []).slice(0, limit).map(normalizeTidalArtist).filter(Boolean);
+}
+async function tidalSearchAlbums(q, limit = 8) {
+  const j = await tidalFetch(`/v1/search/albums?query=${encodeURIComponent(q)}&limit=${limit}`);
+  return (j?.items || []).slice(0, limit).map(normalizeTidalAlbum).filter(Boolean);
+}
+async function tidalSearchPlaylists(q, limit = 6) {
+  const j = await tidalFetch(`/v1/search/playlists?query=${encodeURIComponent(q)}&limit=${limit}`);
+  return (j?.items || []).slice(0, limit).map(normalizeTidalPlaylist).filter(Boolean);
+}
+const tidalAudioCache = new Map();
+async function tidalStitchedAudio(id) {
+  const hit = tidalAudioCache.get(String(id));
+  if (hit && Date.now() - hit.time < 15 * 60 * 1000) return hit.buf;
+  const j = await tidalFetch(`/v1/tracks/${encodeURIComponent(id)}/playbackinfo?audioquality=HI_RES_LOSSLESS&playbackmode=STREAM&assetpresentation=FULL`, 30000);
+  const b64 = j?.manifest;
+  if (!b64) throw new Error(j?.userMessage || 'No manifest');
+  const xml = Buffer.from(b64, 'base64').toString('utf8');
+  const tpl = xml.match(/<SegmentTemplate[^>]*>/)?.[0] || '';
+  const init = (tpl.match(/initialization="([^"]+)"/)?.[1] || '').replace(/&amp;/g, '&');
+  const media = (tpl.match(/media="([^"]+)"/)?.[1] || '').replace(/&amp;/g, '&');
+  if (!init || !media || !media.includes('$Number$')) throw new Error('Unsupported manifest');
+  let count = 0;
+  for (const m of xml.matchAll(/<S\b[^>]*>/g)) {
+    const tag = m[0];
+    const r = parseInt(tag.match(/\br="(\d+)"/)?.[1] || '0', 10);
+    count += r + 1;
+  }
+  if (!count || count > 60) throw new Error('Bad segment timeline');
+  const urls = [init, ...Array.from({ length: count }, (_, i) => media.replace('$Number$', String(i + 1)))];
+  const parts = new Array(urls.length);
+  let next = 0;
+  const workers = Array.from({ length: 4 }, async () => {
+    while (next < urls.length) {
+      const i = next++;
+      const r = await fetch(urls[i], { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(25000) });
+      if (!r.ok) throw new Error(`Segment ${i} HTTP ${r.status}`);
+      parts[i] = Buffer.from(await r.arrayBuffer());
+    }
+  });
+  await Promise.all(workers);
+  const buf = Buffer.concat(parts);
+  if (buf.length < 10000) throw new Error('Stitched audio too small');
+  if (tidalAudioCache.size > 4) tidalAudioCache.delete(tidalAudioCache.keys().next().value);
+  tidalAudioCache.set(String(id), { buf, time: Date.now() });
+  return buf;
+}
 
 // ---------------- Monochrome API (Tidal catalog: search + Hi-Res DASH previews) ----------------
 const MONO_API = (process.env.MONO_API_URL || 'https://monochrome-api.samidy.com').replace(/\/$/, '');
@@ -602,21 +722,21 @@ app.get('/api/search', async (req, res) => {
   try {
     let songs = [], albums = [], artists = [], playlists = [];
     if (type === 'all' || type === 'songs') {
-      const [a, b, c, d, e] = await Promise.allSettled([saavnSearchSongs(q, 20), audiusSearch(q, 8), monoSearchSongs(q, 10), itunesSearchSongs(q, 20), deezerSearchTracks(q, 12)]);
+      const [a, b, c, d, e, f] = await Promise.allSettled([saavnSearchSongs(q, 20), audiusSearch(q, 8), monoSearchSongs(q, 10), tidalSearchSongs(q, 10), itunesSearchSongs(q, 20), deezerSearchTracks(q, 12)]);
       // order = quality priority: full tracks first, then HI-RES previews, then standard previews
-      songs = dedupe([...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(c.status === 'fulfilled' ? c.value : []), ...(d.status === 'fulfilled' ? d.value : []), ...(e.status === 'fulfilled' ? e.value : [])]);
+      songs = dedupe([...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(c.status === 'fulfilled' ? c.value : []), ...(d.status === 'fulfilled' ? d.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : [])]);
     }
     if (type === 'all' || type === 'albums') {
-      const [a, b, e] = await Promise.allSettled([saavnSearchAlbums(q, 10), itunesSearchAlbums(q, 10), monoSearchAlbums(q, 8)]);
-      albums = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(e.status === 'fulfilled' ? e.value : [])];
+      const [a, b, e, f] = await Promise.allSettled([saavnSearchAlbums(q, 10), itunesSearchAlbums(q, 10), monoSearchAlbums(q, 8), tidalSearchAlbums(q, 8)]);
+      albums = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : [])];
     }
     if (type === 'all' || type === 'artists') {
-      const [a, b, e] = await Promise.allSettled([saavnSearchArtists(q, 8), itunesSearchArtists(q, 8), monoSearchArtists(q, 8)]);
-      artists = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(e.status === 'fulfilled' ? e.value : [])];
+      const [a, b, e, f] = await Promise.allSettled([saavnSearchArtists(q, 8), itunesSearchArtists(q, 8), monoSearchArtists(q, 8), tidalSearchArtists(q, 8)]);
+      artists = [...(a.status === 'fulfilled' ? a.value : []), ...(b.status === 'fulfilled' ? b.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : [])];
     }
     if (type === 'all' || type === 'playlists') {
-      const [a, e] = await Promise.allSettled([saavnSearchPlaylists(q, 10), monoSearchPlaylists(q, 6)]);
-      playlists = [...(a.status === 'fulfilled' ? a.value : []), ...(e.status === 'fulfilled' ? e.value : [])];
+      const [a, e, f] = await Promise.allSettled([saavnSearchPlaylists(q, 10), monoSearchPlaylists(q, 6), tidalSearchPlaylists(q, 6)]);
+      playlists = [...(a.status === 'fulfilled' ? a.value : []), ...(e.status === 'fulfilled' ? e.value : []), ...(f.status === 'fulfilled' ? f.value : [])];
     }
     const payload = { songs, albums, artists, playlists };
     setCache(req.originalUrl, payload);
@@ -662,6 +782,12 @@ app.get('/api/song/:source/:id', async (req, res) => {
       setCache(req.originalUrl, track);
       return res.json(track);
     }
+    if (source === 'tidal') {
+      const track = normalizeTidalTrack(await tidalFetch(`/v1/tracks/${encodeURIComponent(id)}/`));
+      if (!track) return res.status(404).json({ error: 'Song not found' });
+      setCache(req.originalUrl, track);
+      return res.json(track);
+    }
     res.status(400).json({ error: 'Unknown source' });
   } catch (e) { res.status(502).json({ error: 'Failed to resolve song', detail: e.message }); }
 });
@@ -698,6 +824,24 @@ app.get('/api/album/:source/:id', async (req, res) => {
       const d = j?.data || {};
       const songs = (d.items || []).map(x => normalizeMonoTrack(x?.item)).filter(Boolean);
       const payload = { ...normalizeMonoAlbum(d), description: d.copyright || '', songs };
+      if (!payload.artist && songs[0]) payload.artist = songs[0].artist?.name || '';
+      if (!payload.image && songs[0]) payload.image = songs[0].image || '';
+      setCache(req.originalUrl, payload);
+      return res.json(payload);
+    }
+    if (source === 'tidal') {
+      const [meta, tr] = await Promise.all([
+        tidalFetch(`/v1/albums/${encodeURIComponent(id)}/`),
+        (async () => {
+          const p1 = await tidalFetch(`/v1/albums/${encodeURIComponent(id)}/tracks?limit=50`).catch(() => ({ items: [] }));
+          let items = p1?.items || [];
+          if ((p1?.totalNumberOfItems || 0) > items.length)
+            items = items.concat((await tidalFetch(`/v1/albums/${encodeURIComponent(id)}/tracks?limit=50&offset=50`).catch(() => ({ items: [] })))?.items || []);
+          return { items };
+        })(),
+      ]);
+      const songs = (tr?.items || []).map(normalizeTidalTrack).filter(Boolean);
+      const payload = { ...normalizeTidalAlbum(meta), description: meta?.copyright || '', songs };
       if (!payload.artist && songs[0]) payload.artist = songs[0].artist?.name || '';
       if (!payload.image && songs[0]) payload.image = songs[0].image || '';
       setCache(req.originalUrl, payload);
@@ -756,6 +900,18 @@ app.get('/api/artist/:source/:id', async (req, res) => {
         ...normalizeMonoArtist(a), bio: '',
         topSongs: top, topAlbums: [],
         similar: simItems.map(normalizeMonoArtist).filter(Boolean).slice(0, 8),
+      };
+    } else if (source === 'tidal') {
+      const [a, top, albs] = await Promise.all([
+        tidalFetch(`/v1/artists/${encodeURIComponent(id)}/`),
+        tidalFetch(`/v1/artists/${encodeURIComponent(id)}/toptracks?limit=10`).catch(() => ({ items: [] })),
+        tidalFetch(`/v1/artists/${encodeURIComponent(id)}/albums?limit=8`).catch(() => ({ items: [] })),
+      ]);
+      payload = {
+        ...normalizeTidalArtist(a), bio: '',
+        topSongs: (top?.items || []).map(normalizeTidalTrack).filter(Boolean),
+        topAlbums: (albs?.items || []).map(normalizeTidalAlbum).filter(Boolean),
+        similar: [],
       };
     } else return res.status(400).json({ error: 'Unknown source' });
 
@@ -837,6 +993,22 @@ app.get('/api/playlist/:source/:id', async (req, res) => {
       }));
       const cname = `${md.creator || ''} — ${md.coverage || md.date || ''}`.trim() || md.title || 'Concert';
       const payload = { id: `archive:pl:${id}`, source: 'archive', sourceId: id, type: 'playlist', name: cname, description: String(md.description || '').slice(0, 500), image: thumb, songs };
+      setCache(req.originalUrl, payload);
+      return res.json(payload);
+    }
+    if (source === 'tidal') {
+      const [meta, tr] = await Promise.all([
+        tidalFetch(`/v1/playlists/${encodeURIComponent(id)}/`).catch(() => ({})),
+        (async () => {
+          const p1 = await tidalFetch(`/v1/playlists/${encodeURIComponent(id)}/tracks?limit=50`).catch(() => ({ items: [] }));
+          let items = p1?.items || [];
+          if ((p1?.totalNumberOfItems || 0) > items.length)
+            items = items.concat((await tidalFetch(`/v1/playlists/${encodeURIComponent(id)}/tracks?limit=50&offset=50`).catch(() => ({ items: [] })))?.items || []);
+          return { items };
+        })(),
+      ]);
+      const songs = (tr?.items || []).map(normalizeTidalTrack).filter(Boolean);
+      const payload = { ...normalizeTidalPlaylist({ uuid: id, title: meta?.title, description: meta?.description, numberOfTracks: meta?.numberOfTracks, squareImage: meta?.squareImage }), description: meta?.description || '', image: songs[0]?.image || '', songs };
       setCache(req.originalUrl, payload);
       return res.json(payload);
     }
@@ -945,6 +1117,32 @@ app.get('/api/alternates', async (req, res) => {
     setCache(req.originalUrl, result);
     res.json(result);
   } catch (e) { res.json({ track: null }); }
+});
+
+// Own Tidal pipeline: CD-quality preview stitched from DASH into one seekable MP4
+app.get('/api/tidal-audio', async (req, res) => {
+  const id = req.query.id;
+  if (!id) return res.status(400).json({ error: 'Missing id' });
+  try {
+    const buf = await tidalStitchedAudio(id);
+    res.setHeader('Content-Type', 'audio/mp4');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=600');
+    const range = req.headers.range;
+    if (range) {
+      const m = range.match(/bytes=(\d*)-(\d*)/);
+      const start = m?.[1] ? parseInt(m[1], 10) : 0;
+      const end = m?.[2] ? parseInt(m[2], 10) : buf.length - 1;
+      const s = Math.min(start, buf.length - 1), e = Math.min(end, buf.length - 1);
+      if (s > e) return res.status(416).end();
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${s}-${e}/${buf.length}`);
+      res.setHeader('Content-Length', String(e - s + 1));
+      return res.end(buf.subarray(s, e + 1));
+    }
+    res.setHeader('Content-Length', String(buf.length));
+    res.end(buf);
+  } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'Tidal audio failed', detail: e.message }); }
 });
 
 // Monochrome/Tidal Hi-Res preview, stitched from DASH segments into one seekable MP4
