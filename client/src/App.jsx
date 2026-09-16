@@ -44,6 +44,7 @@ export default function App() {
 
   return (
     <div className="h-full flex bg-app">
+      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:z-[100] focus:m-2 focus:px-4 focus:py-2 focus:rounded-lg focus:bg-accent focus:text-black focus:font-bold focus:text-sm">Skip to content</a>
       <Sidebar />
       <div className="flex-1 min-w-0 flex flex-col h-full">
         <TopBar />
