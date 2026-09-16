@@ -73,7 +73,7 @@ export default function GoogleLogin() {
     return () => { dead = true; started.current = false; };
   }, [loginWithGoogle, toast]);
 
-  if (state === 'missing') return null;
+  if (state === 'missing') return <p className="text-xs text-dim font-semibold">Google sign-in isn&apos;t set up on this server yet.</p>;
   if (state === 'error') return <p className="text-xs text-dim">Could not load Google sign-in (offline?).</p>;
   return (
     <span>
@@ -98,8 +98,8 @@ export function AuthAvatar() {
 
   if (!authUser) {
     return (
-      <Link to="/settings" className="w-9 h-9 rounded-full bg-accent grid place-items-center font-bold text-black shrink-0" aria-label="Profile and settings" title={profile.name}>
-        {(profile.name?.[0] || 'G').toUpperCase()}
+      <Link to="/settings" className="h-9 px-4 rounded-full bg-accent grid place-items-center font-bold text-black text-sm shrink-0" aria-label="Sign in" title="Sign in with Google">
+        Sign in
       </Link>
     );
   }
