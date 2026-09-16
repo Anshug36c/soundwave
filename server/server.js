@@ -353,53 +353,6 @@ async function djpSearchArtists(q, limit = 8) {
   return [...seen.values()];
 }
 
-async function djpLatestSongs(n = 12) {
-  const idx = await djpLoadIndex().catch(() => new Map());
-  let ids = [...djpLatestIds];
-  if (!ids.length && idx.size) {
-    ids = [...idx.entries()].filter(([, e]) => !e.album).map(([id]) => id)
-      .sort((a, b) => Number(b) - Number(a)).slice(0, n * 2);
-  }
-  const out = [];
-  for (const id of ids.slice(0, n * 2)) {
-    if (out.length >= n) break;
-    try {
-      const e = idx.get(String(id));
-      const t = e ? normalizeDjpSong(id, await djpSongPage(e.url)) : null;
-      if (t) out.push(t);
-    } catch { /* skip duds */ }
-  }
-  return out;
-}
-
-async function djpLatestAlbums(n = 8) {
-  let links = [];
-  try {
-    const html = await fetchText(`${DJP_BASE}/punjabi_music/latest.php`, { timeout: 20000, referer: `${DJP_BASE}/` });
-    for (const m of html.matchAll(/href="([^"]*?-album-\d+\.html)"/gi)) {
-      const u = (m[1].startsWith('http') ? m[1] : DJP_BASE + m[1]).replace(/&amp;/g, '&');
-      const p = parseDjpLoc(u);
-      if (p) links.push(p);
-    }
-  } catch (e) { console.error('djp latest albums failed:', e.message); }
-  if (!links.length) {
-    const idx = await djpLoadIndex().catch(() => new Map());
-    links = [...idx.values()].filter(e => e.album).sort((a, b) => Number(b.id) - Number(a.id)).slice(0, n * 2);
-  }
-  const pages = await Promise.all(links.slice(0, n * 2).map(p => djpAlbumPage(p.url).then(pg => ({ p, pg })).catch(() => null)));
-  return pages.filter(Boolean).slice(0, n).map(({ p, pg }) => ({
-    id: `djp:al:${p.id}`, source: 'djp', sourceId: String(p.id), type: 'album',
-    name: pg.title || prettySlug(p.slug), artist: '', image: pg.cover || '', year: '',
-    trackCount: (pg.trackUrls || []).length,
-  }));
-}
-
-const TRENDING_QUERIES = ['ap dhillon', 'diljit dosanjh', 'guru randhawa', 'jasmine sandlas', 'tulsi kumar', 'prem dhillon'];
-async function djpTrending(per = 2) {
-  const parts = await Promise.all(TRENDING_QUERIES.map(q => djpSearchSongs(q, per).catch(() => [])));
-  return parts.flat().slice(0, 12);
-}
-
 async function djpArtistDetail(slug) {
   slug = slugifyName(slug);
   const words = slug.split('-').filter(w => w.length > 1);
@@ -1441,52 +1394,6 @@ app.get('/api/for-you', async (req, res) => {
     res.json({ songs: data });
   } catch (e) { res.status(502).json({ error: 'For-you failed', detail: e.message }); }
 });
-const DECADES = { '80s': 1980, '90s': 1990, '2000s': 2000, '2010s': 2010, '2020s': 2020 };
-app.get('/api/time-machine', async (req, res) => {
-  const dkey = String(req.query.decade || '2000s').toLowerCase();
-  const start = DECADES[dkey] ?? 2000;
-  const limit = Math.min(parseInt(req.query.limit || '15', 10) || 15, 24);
-  const artists = String(req.query.artists || '').split('|').map(s => s.trim()).filter(Boolean).slice(0, 4);
-  const ERA_DEFAULTS = { 1980: ['Gurdas Maan', 'Malkit Singh', 'Harbhajan Mann', 'Hans Raj Hans'], 1990: ['Gurdas Maan', 'Malkit Singh', 'Harbhajan Mann', 'Hans Raj Hans'], 2000: ['Diljit Dosanjh', 'Jazzy B', 'Sukshinder Shinda', 'Miss Pooja'], 2010: ['Diljit Dosanjh', 'Guru Randhawa', 'Jasmine Sandlas', 'Badshah'], 2020: ['AP Dhillon', 'Karan Aujla', 'Shubh', 'Prem Dhillon'] };
-  const seeds = artists.length ? artists : (ERA_DEFAULTS[start] || ERA_DEFAULTS[2020]);
-  const ck = `tm:${start}:${fold(seeds.join('|'))}`;
-  const hit = getCache(ck);
-  if (hit) return res.json({ songs: hit.slice(0, limit), decade: `${start}s` });
-  try {
-    const lists = await Promise.all(seeds.map(async (n) => {
-      const [sv, djp, albs] = await Promise.all([
-        saavnArtistDetail(slugifyName(n)).catch(() => null),
-        djpArtistDetail(slugifyName(n)).catch(() => null),
-        saavnSearchAlbums(n, 4).catch(() => []),
-      ]);
-      const albDetails = await Promise.all((albs || []).slice(0, 3).map(a => saavnAlbumDetail(a.sourceId).catch(() => null)));
-      return [sv, djp, ...albDetails];
-    }));
-    const per = { djp: [], dj: [], mrj: [], saavn: [] };
-    for (const pair of lists) for (const g of pair) for (const t of (g?.topSongs || g?.songs || [])) if (t?.source && per[t.source]) per[t.source].push(t);
-    const merged = mergeTracks([per.djp, per.dj, per.mrj, per.saavn]);
-    const inDecade = merged.filter(t => {
-      const m = String(t.year || '').match(/(19|20)\d{2}/);
-      const yr = m ? parseInt(m[0], 10) : 0;
-      return yr >= start && yr < start + 10;
-    }).sort((a, b) => (b.plays || 0) - (a.plays || 0));
-    let data = inDecade.slice(0, 24).map(t => ({ ...t, reason: `From the ${start}s` }));
-    if (data.length < 3 && artists.length) {
-      // user artists have nothing dated in this decade — fall back to era classics
-      const fb = await Promise.all((ERA_DEFAULTS[start] || []).map(n => saavnArtistDetail(slugifyName(n)).catch(() => null)));
-      const pool = [];
-      for (const g of fb) for (const t of (g?.topSongs || [])) pool.push(t);
-      const fbIn = mergeTracks([pool.filter(t => t.source === 'saavn')]).filter(t => {
-        const m = String(t.year || '').match(/(19|20)\d{2}/);
-        const yr = m ? parseInt(m[0], 10) : 0;
-        return yr >= start && yr < start + 10;
-      }).sort((a, b) => (b.plays || 0) - (a.plays || 0)).slice(0, 24).map(t => ({ ...t, reason: `From the ${start}s · era classic` }));
-      if (fbIn.length > data.length) data = fbIn;
-    }
-    setCache(ck, data, 60 * 60 * 1000);
-    res.json({ songs: data.slice(0, limit), decade: `${start}s` });
-  } catch (e) { res.status(502).json({ error: 'Time machine failed', detail: e.message }); }
-});
 
 app.get('/api/similar', async (req, res) => {
   const title = (req.query.title || '').trim(), artist = (req.query.artist || '').trim();
@@ -2236,39 +2143,6 @@ app.get('/api/search', async (req, res) => {
     setCache(req.originalUrl, payload);
     res.json(payload);
   } catch (e) { res.status(502).json({ error: 'Search failed', detail: e.message }); }
-});
-
-app.get('/api/home', async (req, res) => {
-  const cached = getCache('home:v1');
-  if (cached) return res.json(cached);
-  try {
-    const [latest, trending, newReleases] = await Promise.all([
-      djpLatestSongs(12).catch(() => []),
-      djpTrending(2).catch(() => []),
-      djpLatestAlbums(8).catch(() => []),
-    ]);
-    const hero = latest.filter(t => t.image).slice(0, 5);
-    const seen = new Map();
-    for (const t of [...trending, ...latest]) {
-      const n = t.artist?.name || '';
-      if (!n || n === 'Unknown') continue;
-      const slug = slugifyName(n);
-      if (!slug || seen.has(slug)) continue;
-      seen.set(slug, { id: `djp:ar:${slug}`, source: 'djp', type: 'artist', name: n, image: t.image || '' });
-    }
-    const [party, romantic] = await Promise.all([
-      djpSearchSongs('jasmine sandlas guru randhawa', 6).catch(() => []),
-      djpSearchSongs('tulsi kumar', 6).catch(() => []),
-    ]);
-    const payload = {
-      hero, newDrops: latest, trendingNow: trending.slice(0, 10),
-      topArtists: [...seen.values()].slice(0, 10), newReleases,
-      party: party.length ? party : trending.slice(0, 5),
-      romantic: romantic.length ? romantic : latest.slice(0, 5),
-    };
-    setCache('home:v1', payload, 10 * 60 * 1000);
-    res.json(payload);
-  } catch (e) { res.status(502).json({ error: 'Home feed failed', detail: e.message }); }
 });
 
 app.get('/api/song/:source/:id', async (req, res) => {

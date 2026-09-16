@@ -46,7 +46,9 @@ Everything below exists in the codebase today.
 - Typo-tolerant suggestions ("did you mean"-style), exact-match-first ranking
 - Artist pages: top songs + complete cross-provider discography, follow/unfollow, hide
 - Album pages with track lists; "Shuffle artist" and "add artist songs to queue"
-- Time Machine (browse by year/decade), For You (deep cuts per top artist)
+- Home: search entry, Recently Played rail, and Recommended — a mix built from
+  your last plays (seeded songs + top artists, deep cuts per artist) with a
+  Familiar/Adventurous discovery slider
 
 ### Playback
 - Play / pause / next / previous (previous restarts the track if > 3s in — like Spotify)
@@ -414,7 +416,7 @@ soundwave/
 | `client/src/components/Player.jsx` | Player bar, full player, queue drawer, lyrics/EQ/details tabs, sleep/speed/menus |
 | `client/src/audio/studio.js` | WebAudio routing: 10-band EQ, preamp, loudness normalize, visualizer analyser |
 | `client/public/sw.js` | PWA shell cache + exact-URL offline audio cache with Range support |
-| `server/server.js` | Search fan-out, `/api/audio` proxy+cache+dedup+failover, warm, lyrics, tidal-preview, home feeds, indexes, health |
+| `server/server.js` | Search fan-out, `/api/audio` proxy+cache+dedup+failover, warm, lyrics, tidal-preview, for-you recommendations, indexes, health |
 | `server/auth.js` | Google sign-in verify + cookie sessions (optional; guest works without) |
 
 ---
