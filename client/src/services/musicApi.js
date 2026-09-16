@@ -1,35 +1,46 @@
 // SoundWave API client — DJPunjab-only backend.
 const BASE = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
 
-async function get(path) {
-  const r = await fetch(`${BASE}${path}`);
-  if (!r.ok) {
-    const body = await r.json().catch(() => ({}));
-    throw new Error(body.error || `Request failed: ${r.status}`);
+// fetch with a hard client-side timeout so loaders can never hang forever.
+// Pass { signal } to let callers cancel stale requests (fast typing).
+async function get(path, { signal = null, timeout = 60000 } = {}) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(new Error('Request timed out')), timeout);
+  const onAbort = () => ctrl.abort(signal.reason);
+  try { signal?.addEventListener?.('abort', onAbort, { once: true }); } catch { /* noop */ }
+  try {
+    const r = await fetch(`${BASE}${path}`, { signal: ctrl.signal });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.error || `Request failed: ${r.status}`);
+    }
+    return r.json();
+  } finally {
+    clearTimeout(to);
+    try { signal?.removeEventListener?.('abort', onAbort); } catch { /* noop */ }
   }
-  return r.json();
 }
 
 export const api = {
   health: () => get('/health'),
   home: () => get('/home'),
-  search: (q, type = 'all', f = {}) => {
+  search: (q, type = 'all', f = {}, opts = {}) => {
     const p = new URLSearchParams({ q, type });
     if (f.y) p.set('y', f.y);
     if (f.minD) p.set('minD', f.minD);
     if (f.maxD) p.set('maxD', f.maxD);
     if (f.lang) p.set('lang', f.lang);
     if (f.exp) p.set('exp', f.exp);
-    return get(`/search?${p.toString()}`);
+    return get(`/search?${p.toString()}`, opts);
   },
-  suggest: (q, limit = 8) => get(`/suggest?q=${encodeURIComponent(q)}&limit=${limit}`),
+  suggest: (q, limit = 8, opts = {}) => get(`/suggest?q=${encodeURIComponent(q)}&limit=${limit}`, { timeout: 15000, ...opts }),
   forYou: (mix, seeds, artists, limit = 15) => get(`/for-you?mix=${mix}&limit=${limit}&seeds=${encodeURIComponent(JSON.stringify(seeds || []))}&artists=${encodeURIComponent((artists || []).join('|'))}`),
   deepCuts: (artist, limit = 10) => get(`/deep-cuts?artist=${encodeURIComponent(artist)}&limit=${limit}`),
   timeMachine: (decade, artists, limit = 15) => get(`/time-machine?decade=${encodeURIComponent(decade)}&artists=${encodeURIComponent((artists || []).join('|'))}`),
   song: (source, id) => get(`/song/${source}/${encodeURIComponent(id)}`),
   album: (source, id) => get(`/album/${source}/${encodeURIComponent(id)}`),
   artist: (source, id) => get(`/artist/${source}/${encodeURIComponent(id)}`),
-  artistSongs: (name) => get(`/artist-songs?name=${encodeURIComponent(name || '')}`),
+  artistSongs: (name, opts = {}) => get(`/artist-songs?name=${encodeURIComponent(name || '')}`, opts),
   lyrics: ({ artist, title }) => get(`/lyrics?artist=${encodeURIComponent(artist || '')}&title=${encodeURIComponent(title || '')}`),
   tidalPreview: (title, artist) => `${BASE}/tidal-preview?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}`,
   similar: (title, artist, limit = 12) => get(`/similar?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}&limit=${limit}`),
@@ -70,5 +81,7 @@ export function tasteFiltered(tracks, disliked = {}, hidden = {}) {
 
 export function debounce(fn, ms = 300) {
   let t;
-  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  const d = (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  d.cancel = () => clearTimeout(t);
+  return d;
 }

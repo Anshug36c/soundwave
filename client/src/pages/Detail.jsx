@@ -64,7 +64,7 @@ export function ArtistPage() {
         name: j.name || allName, image: j.songs?.[0]?.image || '',
         topSongs: j.songs || [], topAlbums: [], discogMeta: j,
       }))
-    : api.artist(source, id), [source, id, name]);
+    : api.artist(source, id), [source, id, name, reload]);
   const playTracks = useStore(s => s.playTracks);
   const followedArtists = useStore(s => s.followedArtists);
   const toggleFollowArtist = useStore(s => s.toggleFollowArtist);
@@ -73,8 +73,9 @@ export function ArtistPage() {
   const unhideArtist = useStore(s => s.unhideArtist);
   const [discog, setDiscog] = useState(null);
   const [discogLoading, setDiscogLoading] = useState(false);
+  const [reload, setReload] = useState(0);
   const loadDiscog = () => {
-    if (!data || discog || discogLoading) return;
+    if (!data || discogLoading || (discog && !discog.partial)) return;
     setDiscogLoading(true);
     api.artistSongs(data.name).then(setDiscog).catch(() => setDiscog({ songs: [] })).finally(() => setDiscogLoading(false));
   };
@@ -98,11 +99,13 @@ export function ArtistPage() {
         {(!data.topSongs || !data.topSongs.length) && <p className="p-4 text-sm text-dim">No songs found.</p>}
       </div>
       {isAll && meta?.truncated && <p className="mt-2 text-xs text-dim font-semibold">Showing {(data.topSongs || []).length} of {meta.totalMatched} matched tracks across all providers.</p>}
+      {isAll && meta?.partial && <button onClick={() => setReload(r => r + 1)} className="mt-2 text-xs font-bold text-green-500 underline">Some providers timed out — retry for the complete list</button>}
       {!isAll && (discog ? (<><h2 className="text-xl font-extrabold mt-6 mb-1">Complete discography</h2>
         <p className="text-xs text-dim font-semibold mb-2">Every provider combined{provLine}</p>
         <div className="panel p-2 flex flex-col">
           {extra.map((t, i) => <SongRow key={t.id} track={t} index={i} context={extra} />)}
           {extra.length === 0 && <p className="p-4 text-sm text-dim">No further tracks found beyond the top songs.</p>}
+          {discog.partial && <button onClick={loadDiscog} disabled={discogLoading} className="m-2 text-xs font-bold text-green-500 underline disabled:opacity-60">{discogLoading ? 'Retrying…' : 'Some providers timed out — retry'}</button>}
         </div></>) : (
         <button onClick={loadDiscog} disabled={discogLoading}
           className="mt-6 w-full card p-4 text-left font-bold text-sm flex items-center justify-between gap-2 disabled:opacity-60">

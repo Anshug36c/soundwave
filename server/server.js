@@ -26,7 +26,12 @@ app.use('/api', (req, res, next) => {
   const max = audio ? 600 : 240;
   const now = Date.now();
   let b = rateBuckets.get(key);
-  if (!b || now - b.t > 60000) { b = { t: now, n: 0 }; rateBuckets.set(key, b); }
+  if (!b || now - b.t > 60000) {
+    b = { t: now, n: 0 }; rateBuckets.set(key, b);
+    if (rateBuckets.size > 2000) {
+      for (const [k, v] of rateBuckets) { if (now - v.t > 60000) rateBuckets.delete(k); }
+    }
+  }
   if (++b.n > max) { res.setHeader('Retry-After', '30'); return res.status(429).json({ error: 'Too many requests, slow down' }); }
   next();
 });
@@ -128,7 +133,7 @@ async function fetchBuf(url, timeout = 90000, referer = null) {
 const INDEX_TTL = 6 * 3600 * 1000;
 const PAGE_TTL = 6 * 3600 * 1000;
 const AUDIO_TTL = 60 * 60 * 1000;
-const AUDIO_MAX = 16;
+const AUDIO_MAX = 12;
 
 function djpScore(slug, words) {
   const s = ` ${fold(slug).replace(/-/g, ' ')} `;
@@ -1699,7 +1704,7 @@ app.get('/api/tidal-preview', async (req, res) => {
       return res.status(404).json({ error: 'No preview match' });
     }
     const buf = await tidalStitchedAudio(best.id);
-    if (tidalPreviewCache.size >= 12) tidalPreviewCache.delete(tidalPreviewCache.keys().next().value);
+    if (tidalPreviewCache.size >= 8) tidalPreviewCache.delete(tidalPreviewCache.keys().next().value);
     tidalPreviewCache.set(key, { buf, time: Date.now() });
     serveBuf(res, req, buf, false, 'FLAC', 'audio/mp4');
   } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'Preview failed', detail: e.message }); }
@@ -1811,13 +1816,17 @@ app.get('/api/suggest', async (req, res) => {
   const q = (req.query.q || '').trim();
   const limit = Math.min(parseInt(req.query.limit || '8', 10) || 8, 12);
   if (q.length < 2) return res.json({ songs: [], albums: [], artists: [] });
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
   try {
     const { songs, albums } = await scanSuggest(q, limit);
     const fq = fold(q);
     const artists = [...suggestArtists.values()]
       .filter(a => fold(a.name).includes(fq))
       .slice(0, 4).map(a => ({ kind: 'artist', text: a.name, q: a.name, image: a.image || '' }));
-    res.json({ songs, albums, artists });
+    const payload = { songs, albums, artists };
+    setCache(req.originalUrl, payload);
+    res.json(payload);
   } catch (e) { res.json({ songs: [], albums: [], artists: [] }); }
 });
 

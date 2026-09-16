@@ -80,13 +80,18 @@ function preloadTrack(track, quality) {
 // ---------- hot standby: next track staged to canplaythrough BEFORE current ends ----------
 // queue advances then cut instantly (no fade-out stall, no src-set buffering gap)
 let standbyAudio = null, standbyFor = '', standbyQ = '', standbyReady = false;
-let upcomingKey = '';
+let standbySettledFor = '', upcomingKey = '';
 function teardownStandby() {
   if (standbyAudio) {
     try { standbyAudio.removeAttribute('src'); standbyAudio.load(); } catch { /* noop */ }
     standbyAudio = null;
   }
-  standbyFor = ''; standbyReady = false;
+  standbyFor = ''; standbyReady = false; standbySettledFor = '';
+}
+function settleStandby(id) {
+  if (!id || standbySettledFor === id) return;
+  standbySettledFor = id;
+  try { refreshUpcoming(); } catch { /* noop */ } // n1 settled → now stage n2
 }
 function armStandby(track, quality) {
   const id = track?.id || '';
@@ -98,15 +103,16 @@ function armStandby(track, quality) {
   try { api.warm(url); } catch { /* noop */ }
   let saveData = false;
   try { saveData = !!navigator.connection?.saveData; } catch { /* noop */ }
-  if (saveData) return; // server is warm; spare the user's metered bytes
+  if (saveData) { settleStandby(id); return; } // server is warm; spare the user's metered bytes
   try {
     const a = new Audio();
     a.preload = 'auto';
-    a.addEventListener('canplaythrough', () => { if (standbyFor === id) standbyReady = true; });
-    a.addEventListener('error', () => { if (standbyFor === id) standbyReady = false; });
+    a.addEventListener('canplaythrough', () => { if (standbyFor === id) { standbyReady = true; settleStandby(id); } });
+    a.addEventListener('error', () => { if (standbyFor === id) { standbyReady = false; settleStandby(id); } });
     a.src = url;
     a.load();
     standbyAudio = a;
+    setTimeout(() => { if (standbyFor === id) settleStandby(id); }, 30000); // never stall n2 past 30s
   } catch { /* noop */ }
   try {
     const st = useStore.getState();
@@ -134,13 +140,17 @@ function neighborAt(off) {
 function refreshUpcoming() {
   const st = useStore.getState();
   const n1 = neighborAt(1), n2 = neighborAt(2);
-  const key = `${st.shuffle ? 'S' : ''}|${st.quality}|${n1?.id || ''}|${n2?.id || ''}`;
+  // settled flag is part of the key: when n1 finishes staging, we re-run to stage n2
+  const key = `${st.shuffle ? 'S' : ''}|${st.quality}|${n1?.id || ''}|${n2?.id || ''}|${standbySettledFor}`;
   if (key === upcomingKey) return; // nothing changed around us
   upcomingKey = key;
   if (st.shuffle) { teardownStandby(); return; } // next is random — don't stage wrong tracks
   if (n1) armStandby(n1, st.quality);
   else teardownStandby();
-  if (n2) { try { preloadTrack(n2, st.quality); } catch { /* noop */ } }
+  // stagger: n2 only starts once n1 has settled, so preloads never gang up
+  // on the bandwidth the currently playing track needs
+  const n1Settled = !n1 || standbySettledFor === (n1.id || '');
+  if (n2 && n1Settled) { try { preloadTrack(n2, st.quality); } catch { /* noop */ } }
 }
 function cleanupBg() {
   if (bgAudio) {
@@ -169,6 +179,13 @@ function trySwapToFull() {
   swapping = false;
 }
 
+// currentTime throws InvalidStateError when metadata isn't loaded — never let a seek crash playback
+function safeCurrentTime(el, t) {
+  try {
+    if (!el || !el.src) return;
+    el.currentTime = t;
+  } catch { /* not seekable yet */ }
+}
 /** Smooth volume ramp (crossfade / sleep fade-out). */
 function fadeVolume(el, to, ms) {
   return new Promise(resolve => {
@@ -204,9 +221,11 @@ async function fireSleepTimer() {
 
 // ---------- module-scope event handlers (survive element recreation) ----------
 let lastPosState = 0;
+let lastProgressAt = 0, recoverCount = 0, lastRecoverAt = 0;
 function onTime() {
   const el = getAudio();
   const st = useStore.getState();
+  lastProgressAt = Date.now();
   st.setTime(el.currentTime, el.duration || st.duration);
   try {
     if ('mediaSession' in navigator && el.duration && isFinite(el.duration)) {
@@ -297,8 +316,8 @@ function onKey(e) {
   const el = getAudio();
   const s = useStore.getState();
   if (e.code === 'Space') { e.preventDefault(); s.togglePlay(); }
-  else if (e.key === 'ArrowRight') el.currentTime = Math.min((el.duration || 0), el.currentTime + 10);
-  else if (e.key === 'ArrowLeft') el.currentTime = Math.max(0, el.currentTime - 10);
+  else if (e.key === 'ArrowRight') safeCurrentTime(el, Math.min((el.duration || 0), el.currentTime + 10));
+  else if (e.key === 'ArrowLeft') safeCurrentTime(el, Math.max(0, el.currentTime - 10));
   else if (e.key === 'ArrowUp') { e.preventDefault(); s.setVolume(Math.min(1, +(s.volume + 0.1).toFixed(2))); }
   else if (e.key === 'ArrowDown') { e.preventDefault(); s.setVolume(Math.max(0, +(s.volume - 0.1).toFixed(2))); }
   else if (e.key.toLowerCase() === 'm') s.setMuted(!s.muted);
@@ -420,7 +439,7 @@ export function useAudioEngine() {
           playMode = 'full';
           el.src = url;
         }
-        el.currentTime = 0;
+        safeCurrentTime(el, 0);
         syncPlayback();
         if (st.crossfade && !st.muted) fadeVolume(el, st.volume, 600);
         else el.volume = st.muted ? 0 : st.volume;
@@ -531,11 +550,49 @@ export function useAudioEngine() {
     return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', onVis); };
   }, []);
 
+  // stall watchdog: playback should move the audio clock — if nothing arrives for
+  // 12s (dead socket, captive portal), reload the stream; after 3 failed
+  // recoveries in a row, skip the track instead of hanging forever
+  useEffect(() => {
+    const iv = setInterval(() => {
+      try {
+        const st = useStore.getState();
+        if (!st.isPlaying) { recoverCount = 0; return; }
+        const el = getAudio();
+        if (!el.src || el.ended) return;
+        if (Date.now() - lastProgressAt < 12000) return;
+        if (Date.now() - lastRecoverAt < 30000) return;
+        lastRecoverAt = Date.now();
+        recoverCount += 1;
+        if (recoverCount >= 3) {
+          recoverCount = 0;
+          st.toast('Stream stalled — skipping to next', 'error');
+          st.next();
+          return;
+        }
+        st.toast('Connection stalled — recovering', 'info');
+        try { el.load(); } catch { /* noop */ }
+        lastProgressAt = Date.now();
+        syncPlayback();
+      } catch { /* noop */ }
+    }, 8000);
+    const onOnline = () => {
+      try {
+        const st = useStore.getState();
+        const el = getAudio();
+        if (st.isPlaying && el.src && el.paused && !el.ended) syncPlayback();
+      } catch { /* noop */ }
+    };
+    window.addEventListener('online', onOnline);
+    return () => { clearInterval(iv); window.removeEventListener('online', onOnline); };
+  }, []);
+
   return { track };
 }
 
 export function seekTo(t) {
   const el = getAudio();
-  el.currentTime = t;
+  if (!el.src) return;
+  safeCurrentTime(el, t);
   useStore.getState().setTime(t, el.duration || useStore.getState().duration);
 }

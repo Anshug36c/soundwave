@@ -31,8 +31,23 @@ export default function Search() {
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
   const recogRef = useRef(null);
+  // stale-request guards: only the newest query may touch state; older ones
+  // are aborted outright so fast typing can never show frozen/wrong results
+  const runSeq = useRef(0);
+  const runCtrl = useRef(null);
+  const sugSeq = useRef(0);
+  const sugCtrl = useRef(null);
+  const submitSeq = useRef(0);
+  useEffect(() => () => {
+    try { runCtrl.current?.abort(); } catch { /* noop */ }
+    try { sugCtrl.current?.abort(); } catch { /* noop */ }
+  }, []);
 
   const run = useMemo(() => debounce(async (query) => {
+    const my = ++runSeq.current;
+    try { runCtrl.current?.abort(); } catch { /* noop */ }
+    const ctrl = new AbortController();
+    runCtrl.current = ctrl;
     if (!query.trim()) { setResults({ songs: [], albums: [], artists: [] }); setLoading(false); return; }
     setLoading(true);
     try {
@@ -40,20 +55,26 @@ export default function Search() {
       const r = await api.search(query.trim(), 'all', {
         y: f.y.trim(), minD: f.minD ? +f.minD * 60 : '', maxD: f.maxD ? +f.maxD * 60 : '',
         lang: f.lang, exp: f.exp,
-      });
+      }, { signal: ctrl.signal });
+      if (runSeq.current !== my) return; // stale — superseded by a newer query
       setResults(r);
       pushSearch(query.trim());
-    } catch { /* keep old */ }
-    setLoading(false);
+    } catch { /* aborted/stale/failed — keep old results on screen */ }
+    if (runSeq.current === my) setLoading(false);
   }, 400), []);
 
   const fetchSuggest = useMemo(() => debounce(async (query) => {
-    if (query.trim().length < 2) { setSuggest({ songs: [], albums: [], artists: [] }); return; }
+    const my = ++sugSeq.current;
+    try { sugCtrl.current?.abort(); } catch { /* noop */ }
+    const ctrl = new AbortController();
+    sugCtrl.current = ctrl;
+    if (query.trim().length < 2) { setSuggest({ songs: [], albums: [], artists: [] }); setShowSuggest(false); return; }
     try {
-      const r = await api.suggest(query.trim());
+      const r = await api.suggest(query.trim(), 8, { signal: ctrl.signal });
+      if (sugSeq.current !== my) return;
       setSuggest(r);
       setShowSuggest(true);
-    } catch { /* no suggestions */ }
+    } catch { /* stale — ignore */ }
   }, 220), []);
 
   useEffect(() => { setQ(initial); setTab(initialTab); if (initial) { setLoading(true); run(initial); } }, [initial, params]);
@@ -61,6 +82,10 @@ export default function Search() {
   const submit = (query) => {
     const v = (query ?? q).trim();
     if (!v) return;
+    submitSeq.current++;
+    sugSeq.current++; // invalidate any suggest already fired or in flight
+    try { fetchSuggest.cancel(); } catch { /* noop */ } // kill queued-but-unfired calls
+    try { sugCtrl.current?.abort(); } catch { /* noop */ }
     setShowSuggest(false);
     setQ(v);
     setLoading(true);
@@ -89,6 +114,7 @@ export default function Search() {
   const voiceSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   const filtersActive = !!(filters.y || filters.minD || filters.maxD || filters.lang || filters.exp);
   const hasSuggest = suggest.songs.length + suggest.albums.length + suggest.artists.length > 0;
+  const emptyResults = !results.songs.length && !results.albums.length && !results.artists.length;
 
   const setF = (k, v) => {
     const nf = { ...filtersRef.current, [k]: v };
@@ -198,16 +224,17 @@ export default function Search() {
         </div>
       )}
 
-      {loading && <div className="mt-5"><SkeletonList /></div>}
+      {loading && emptyResults && <div className="mt-5"><SkeletonList /></div>}
+      {loading && !emptyResults && <div className="h-1 mt-5 rounded-full bg-white/10 overflow-hidden" aria-hidden><div className="h-full w-1/3 bg-green-500 rounded-full animate-pulse" /></div>}
 
-      {!loading && q && tab === 'Songs' && results.artist?.name && (
+      {q && tab === 'Songs' && results.artist?.name && (
         <Link to={`/artist/all/${encodeURIComponent(results.artist.name)}`}
           className="mt-4 flex items-center justify-between gap-2 card p-4 font-bold text-sm">
           <span>All songs by {results.artist.name} — every provider</span><span aria-hidden>→</span>
         </Link>
       )}
 
-      {!loading && q && tab === 'Songs' && (() => {
+      {q && tab === 'Songs' && (() => {
         const visible = tasteFiltered(results.songs, disliked, hiddenArtists);
         const hidden = results.songs.length - visible.length;
         return (
@@ -216,11 +243,11 @@ export default function Search() {
           {hidden > 0 && <p className="px-4 py-1 text-[11px] text-dim font-semibold">{hidden} hidden by your taste filters.</p>}</div>
         );
       })()}
-      {!loading && q && tab === 'Albums' && (
+      {q && tab === 'Albums' && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4 [&>*]:min-w-0 [&>*]:max-w-none">{results.albums.map(a => <AlbumCard key={a.id} album={a} />)}
           {results.albums.length === 0 && <p className="p-4 text-sm text-dim col-span-full">No albums found.</p>}</div>
       )}
-      {!loading && q && tab === 'Artists' && (
+      {q && tab === 'Artists' && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4 [&>*]:min-w-0 [&>*]:max-w-none">{results.artists.map(a => <ArtistCard key={a.id} artist={a} />)}
           {results.artists.length === 0 && <p className="p-4 text-sm text-dim col-span-full">No artists found.</p>}</div>
       )}

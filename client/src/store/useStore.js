@@ -38,8 +38,9 @@ export const useStore = create(
       playTracks: (tracks, startIndex = 0) => {
         const list = (tracks || []).filter(Boolean);
         if (!list.length) return;
-        set({ queue: list, index: Math.min(startIndex, list.length - 1), isPlaying: true, currentTime: 0 });
-        get().pushHistory(list[Math.min(startIndex, list.length - 1)]);
+        const si = Math.max(0, Math.min(startIndex | 0, list.length - 1));
+        set({ queue: list, index: si, isPlaying: true, currentTime: 0 });
+        get().pushHistory(list[si]);
       },
       playTrack: (track, context = []) => {
         if (!track) return;
@@ -76,7 +77,7 @@ export const useStore = create(
         const t = get().queue[n];
         if (t) get().pushHistory(t);
       },
-      addToQueue: (track) => set(s => ({ queue: [...s.queue, track] })),
+      addToQueue: (track) => { if (!track?.id) return; set(s => ({ queue: [...s.queue, track] })); },
       removeFromQueue: (i) => set(s => {
         const q = s.queue.filter((_, k) => k !== i);
         let idx = s.index;
