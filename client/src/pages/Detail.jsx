@@ -65,6 +65,9 @@ export function ArtistPage() {
   const { source, id, name } = useParams();
   const isAll = !!name; // :name only exists on the /artist/all/:name route
   const allName = isAll ? decodeURIComponent(name) : '';
+  // declared BEFORE useLoad: the retry flow lists `reload` in its deps —
+  // declaring it after was a TDZ crash (blank artist pages)
+  const [reload, setReload] = useState(0);
   const { data, error } = useLoad(() => isAll
     ? api.artistSongs(allName).then(j => ({
         id: `all:ar:${allName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
@@ -81,7 +84,6 @@ export function ArtistPage() {
   const unhideArtist = useStore(s => s.unhideArtist);
   const [discog, setDiscog] = useState(null);
   const [discogLoading, setDiscogLoading] = useState(false);
-  const [reload, setReload] = useState(0);
   const [artCap, setArtCap] = useState(60);
   const [allAlbums, setAllAlbums] = useState(null);
   useEffect(() => { setArtCap(60); }, [data]);
