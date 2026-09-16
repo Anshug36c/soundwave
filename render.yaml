@@ -7,7 +7,7 @@ services:
     plan: free
     # fast build: deterministic ci (no resolve/audit/fund), prod-only server deps,
     # server install runs in parallel with the client install+build
-    buildCommand: npm --prefix server ci --omit=dev --no-audit --no-fund & SRV=$!; npm --prefix client ci --no-audit --no-fund && npm --prefix client run build; CLI=$?; wait $SRV; SRV=$?; exit $((CLI || SRV))
+    buildCommand: npm --prefix server ci --omit=dev --no-audit --no-fund & SRV=$!; npm --prefix client ci --include=dev --no-audit --no-fund && npm --prefix client run build; CLI=$?; wait $SRV; SRV=$?; exit $((CLI || SRV))
     startCommand: npm --prefix server start
     healthCheckPath: /api/health
     envVars:
