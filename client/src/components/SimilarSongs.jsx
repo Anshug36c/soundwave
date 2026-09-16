@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useStore } from '../store/useStore';
 import { tasteFiltered } from '../services/musicApi';
 import { SongRow } from './Cards';
@@ -12,7 +13,7 @@ export function SimilarSongs() {
   const disliked = useStore(s => s.disliked);
   const hiddenArtists = useStore(s => s.hiddenArtists);
   const track = index >= 0 ? queue[index] : null;
-  const visible = tasteFiltered(similar, disliked, hiddenArtists);
+  const visible = useMemo(() => tasteFiltered(similar, disliked, hiddenArtists), [similar, disliked, hiddenArtists]);
   if (!visible?.length) return null;
   return (
     <div className="mt-4">

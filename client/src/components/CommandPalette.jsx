@@ -6,8 +6,8 @@ import { PlayIcon, PauseIcon, NextIcon, PrevIcon, ShuffleIcon, RepeatIcon, Heart
 
 /** Fuzzy subsequence score (Monochrome-style Ctrl+K palette, dependency-free). */
 function fuzzy(query, text) {
-  q = query.toLowerCase().trim();
-  t = String(text || '').toLowerCase();
+  const q = query.toLowerCase().trim();
+  const t = String(text || '').toLowerCase();
   if (!q) return 0;
   if (t.includes(q)) return 100 + q.length;
   let qi = 0, score = 0;
@@ -25,7 +25,28 @@ export default function CommandPalette() {
   const [live, setLive] = useState([]);
   const [searching, setSearching] = useState(false);
   const inputRef = useRef(null);
-  const s = useStore();
+  const cycleRepeat = useStore(s => s.cycleRepeat);
+  const history = useStore(s => s.history);
+  const index = useStore(s => s.index);
+  const isPlaying = useStore(s => s.isPlaying);
+  const liked = useStore(s => s.liked);
+  const next = useStore(s => s.next);
+  const playTrack = useStore(s => s.playTrack);
+  const playTracks = useStore(s => s.playTracks);
+  const playlists = useStore(s => s.playlists);
+  const prev = useStore(s => s.prev);
+  const queue = useStore(s => s.queue);
+  const repeat = useStore(s => s.repeat);
+  const setShowQueue = useStore(s => s.setShowQueue);
+  const setStudioOn = useStore(s => s.setStudioOn);
+  const setTheme = useStore(s => s.setTheme);
+  const shuffle = useStore(s => s.shuffle);
+  const studioOn = useStore(s => s.studioOn);
+  const theme = useStore(s => s.theme);
+  const toggleLike = useStore(s => s.toggleLike);
+  const togglePlay = useStore(s => s.togglePlay);
+  const toggleShuffle = useStore(s => s.toggleShuffle);
+  const s = { cycleRepeat, history, index, isPlaying, liked, next, playTrack, playTracks, playlists, prev, queue, repeat, setShowQueue, setStudioOn, setTheme, shuffle, studioOn, theme, toggleLike, togglePlay, toggleShuffle };
 
   useEffect(() => {
     const toggle = () => setOpen(v => !v);

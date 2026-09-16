@@ -1457,6 +1457,14 @@ app.get('/api/audio', async (req, res) => {
   const src = req.query.src, sid = req.query.id;
   const q = QUALITY_ORDER[req.query.quality] ? req.query.quality : 'high';
   if (!src || !sid) return res.status(400).json({ error: 'Missing src/id' });
+  // fast path: a media element's first request is always the open-ended
+  // `bytes=0-` — i.e. the whole file. Treat it as a full request so it owns
+  // download dedup and becomes cacheable; concurrent mid-file ranges then
+  // HIT instead of each firing their own upstream fetch. Returning 200 to a
+  // Range request is legal (server MAY ignore Range); players accept it.
+  if (req.headers.range && String(req.headers.range).trim() === 'bytes=0-') {
+    delete req.headers.range;
+  }
   const ms = [req.query.m || []].flat().map(s => {
     const i = String(s).indexOf(':');
     return i > 0 ? { source: s.slice(0, i), sid: s.slice(i + 1) } : null;

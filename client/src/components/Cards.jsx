@@ -1,9 +1,10 @@
+import { memo } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { PlayIcon, HeartIcon, PlusIcon, CloseIcon, NoteIcon, HideIcon } from './Icons';
 import { formatTime } from '../services/musicApi';
 
-export function Img({ src, alt, className = '' }) {
+function Img_({ src, alt, className = '' }) {
   return (
     <img src={src || '/icons/icon.svg'} alt={alt || ''} loading="lazy" decoding="async" onError={(e) => { e.currentTarget.src = '/icons/icon.svg'; }} className={className} />
   );
@@ -15,7 +16,7 @@ export function SourceBadge({ track }) {
   return <span className="sticker ml-1 text-[9px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap bg-green-500/20 text-green-400">{tag}FULL</span>;
 }
 
-export function SongRow({ track, index, context, showIndex = true, onRemove, onMoveUp, onMoveDown, badge }) {
+function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp, onMoveDown, badge }) {
   const playTrack = useStore(s => s.playTrack);
   const playNext = useStore(s => s.playNext);
   const queue = useStore(s => s.queue);
@@ -76,7 +77,7 @@ function PlayButton({ onPlay }) {
   );
 }
 
-export function SongCard({ track, context }) {
+function SongCard_({ track, context }) {
   const playTrack = useStore(s => s.playTrack);
   return (
     <div onClick={() => playTrack(track, context || [track])} className="media-card group relative p-3 cursor-pointer min-w-[150px] max-w-[190px]" role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && playTrack(track, context || [track])}>
@@ -90,7 +91,7 @@ export function SongCard({ track, context }) {
   );
 }
 
-export function AlbumCard({ album }) {
+function AlbumCard_({ album }) {
   const [source, kind, ...rest] = String(album.id).split(':');
   const to = `/album/${source}/${rest.join(':') || kind}`;
   return (
@@ -102,7 +103,7 @@ export function AlbumCard({ album }) {
   );
 }
 
-export function ArtistCard({ artist }) {
+function ArtistCard_({ artist }) {
   const [source, kind, ...rest] = String(artist.id).split(':');
   const to = `/artist/${source}/${rest.join(':') || kind}`;
   return (
@@ -164,3 +165,10 @@ export function SkeletonRow({ count = 6 }) {
 export function SkeletonList({ count = 6 }) {
   return <div className="flex flex-col gap-2">{Array.from({ length: count }).map((_, i) => <div key={i} className="skeleton h-14 rounded-lg" />)}</div>;
 }
+
+// Memoized: lists re-render only the rows whose props actually changed.
+export const Img = memo(Img_);
+export const SongRow = memo(SongRow_);
+export const SongCard = memo(SongCard_);
+export const AlbumCard = memo(AlbumCard_);
+export const ArtistCard = memo(ArtistCard_);

@@ -467,7 +467,6 @@ export function useAudioEngine() {
   const playbackRate = useStore(s => s.playbackRate);
   const quality = useStore(s => s.quality);
   const sleepTimerMin = useStore(s => s.sleepTimerMin);
-  const currentTime = useStore(s => s.currentTime);
   const studioOn = useStore(s => s.studioOn);
   const repeat = useStore(s => s.repeat);
   const shuffle = useStore(s => s.shuffle);
@@ -682,15 +681,22 @@ export function useAudioEngine() {
     try { getAudio().playbackRate = playbackRate || 1; } catch { /* noop */ }
   }, [playbackRate]);
 
-  // seek requests
+  // seek requests — subscription-driven, zero re-renders. The engine is mounted
+  // at app root, so subscribing to the 4Hz playback clock re-rendered the whole
+  // tree on every tick. Same semantics as before, without the render churn.
   const lastSeek = useRef(-1);
   useEffect(() => {
-    const el = getAudio();
-    if (lastSeek.current !== currentTime && Math.abs(el.currentTime - currentTime) > 1.5 && document.activeElement?.dataset?.seeking === '1') {
-      el.currentTime = currentTime;
-    }
-    lastSeek.current = currentTime;
-  }, [currentTime]);
+    const apply = (ct) => {
+      if (lastSeek.current === ct) return;
+      const el = getAudio();
+      if (Math.abs(el.currentTime - ct) > 1.5 && document.activeElement?.dataset?.seeking === '1') {
+        try { el.currentTime = ct; } catch { /* metadata not ready mid-drag */ }
+      }
+      lastSeek.current = ct;
+    };
+    apply(useStore.getState().currentTime);
+    return useStore.subscribe((s) => apply(s.currentTime));
+  }, []);
 
   // sleep timer: deadline checked on every audio tick + backup watchers
   // (plain setTimeout freezes in background tabs — timestamps don't lie)

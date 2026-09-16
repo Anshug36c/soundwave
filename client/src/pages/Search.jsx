@@ -45,6 +45,8 @@ export default function Search() {
   const clearSearchHistory = useStore(s => s.clearSearchHistory);
   const disliked = useStore(s => s.disliked);
   const hiddenArtists = useStore(s => s.hiddenArtists);
+  // hoisted: stable identity across keystrokes so memoized rows skip re-render
+  const visibleSongs = useMemo(() => tasteFiltered(results.songs, disliked, hiddenArtists), [results.songs, disliked, hiddenArtists]);
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
   const recogRef = useRef(null);
@@ -274,7 +276,7 @@ export default function Search() {
       )}
 
       {q && tab === 'Songs' && (() => {
-        const visible = tasteFiltered(results.songs, disliked, hiddenArtists);
+        const visible = visibleSongs;
         const hidden = results.songs.length - visible.length;
         const shown = visible.slice(0, songCap);
         return (
