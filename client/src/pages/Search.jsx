@@ -2,12 +2,25 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, debounce, tasteFiltered } from '../services/musicApi';
 import { useStore } from '../store/useStore';
-import { SongRow, AlbumCard, ArtistCard, SkeletonList } from '../components/Cards';
+import { SongRow, AlbumCard, ArtistCard, PlaylistCard, SkeletonList } from '../components/Cards';
 import { MicIcon, SlidersIcon, NoteIcon, DiscIcon, ClockIcon, BoltIcon } from '../components/Icons';
 
 const TABS = ['Songs', 'Albums', 'Artists'];
 const TRENDING = ['AP Dhillon', 'Diljit Dosanjh', 'Guru Randhawa', 'Jasmine Sandlas', 'Tulsi Kumar', 'Karan Aujla', 'Shubh', 'Prem Dhillon'];
 const EMPTY_FILTERS = { y: '', minD: '', maxD: '', lang: '', exp: '' };
+
+const PROVIDER_LABEL = { djp: 'DJPunjab', dj: 'DJJohal', mrj: 'Mr-Jatt', saavn: 'Saavn' };
+
+function SugBtn({ s, idx, active, onPick, Icon }) {
+  const on = idx === active;
+  return (
+    <button id={`sug-opt-${idx}`} role="option" aria-selected={on}
+      onMouseDown={e => e.preventDefault()} onClick={() => onPick(s.q)}
+      className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-semibold truncate ${on ? 'bg-accent text-black' : 'bg-hoverable'}`}>
+      <Icon size={14} className="inline mr-1.5 -mt-0.5" />{s.text}
+    </button>
+  );
+}
 
 export default function Search() {
   const [params] = useSearchParams();
@@ -22,6 +35,10 @@ export default function Search() {
   const [showSuggest, setShowSuggest] = useState(false);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [showFilters, setShowFilters] = useState(false);
+  const [sugActive, setSugActive] = useState(-1);
+  const [songCap, setSongCap] = useState(20);
+  const [degraded, setDegraded] = useState([]);
+  const [degradedOff, setDegradedOff] = useState(false);
   const [listening, setListening] = useState(false);
   const pushSearch = useStore(s => s.pushSearch);
   const searchHistory = useStore(s => s.searchHistory);
@@ -78,6 +95,10 @@ export default function Search() {
   }, 220), []);
 
   useEffect(() => { setQ(initial); setTab(initialTab); if (initial) { setLoading(true); run(initial); } }, [initial, params]);
+  useEffect(() => { api.health().then(h => { if (h?.degraded?.length) setDegraded(h.degraded); }).catch(() => {}); }, []);
+  useEffect(() => { setSugActive(-1); }, [suggest]);
+  useEffect(() => { setSongCap(20); }, [results]);
+  useEffect(() => { if (sugActive >= 0) { try { document.getElementById(`sug-opt-${sugActive}`)?.scrollIntoView({ block: 'nearest' }); } catch {} } }, [sugActive]);
 
   const submit = (query) => {
     const v = (query ?? q).trim();
@@ -115,6 +136,9 @@ export default function Search() {
   const filtersActive = !!(filters.y || filters.minD || filters.maxD || filters.lang || filters.exp);
   const hasSuggest = suggest.songs.length + suggest.albums.length + suggest.artists.length > 0;
   const emptyResults = !results.songs.length && !results.albums.length && !results.artists.length;
+  const sugItems = useMemo(() => [...suggest.songs, ...suggest.artists, ...suggest.albums], [suggest]);
+  const playlists = useStore(s => s.playlists);
+  const matchPlaylists = q.trim() ? playlists.filter(p => p.name.toLowerCase().includes(q.trim().toLowerCase())) : [];
 
   const setF = (k, v) => {
     const nf = { ...filtersRef.current, [k]: v };
@@ -126,11 +150,18 @@ export default function Search() {
     <div className="pb-8">
       <div className="relative">
         <div className="flex gap-2">
-          <input value={q} onChange={e => { setQ(e.target.value); setLoading(true); run(e.target.value); fetchSuggest(e.target.value); }}
+          <input value={q} onChange={e => { setQ(e.target.value); setSugActive(-1); setLoading(true); run(e.target.value); fetchSuggest(e.target.value); }}
             onFocus={() => { if (hasSuggest) setShowSuggest(true); }}
-            onKeyDown={e => { if (e.key === 'Enter') submit(); if (e.key === 'Escape') setShowSuggest(false); }}
+            onKeyDown={e => {
+              if (e.key === 'ArrowDown' && showSuggest && sugItems.length) { e.preventDefault(); setSugActive(a => (a + 1) % sugItems.length); }
+              else if (e.key === 'ArrowUp' && showSuggest && sugItems.length) { e.preventDefault(); setSugActive(a => (a - 1 + sugItems.length) % sugItems.length); }
+              else if (e.key === 'Enter') { if (showSuggest && sugActive >= 0 && sugItems[sugActive]) submit(sugItems[sugActive].q); else submit(); }
+              else if (e.key === 'Escape') setShowSuggest(false);
+            }}
             onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
             placeholder="Songs, artists, albums — try “songs like Desires”" enterKeyHint="search"
+            role="combobox" aria-expanded={showSuggest && hasSuggest} aria-controls="search-suggest" aria-autocomplete="list"
+            aria-activedescendant={sugActive >= 0 ? `sug-opt-${sugActive}` : undefined}
             className="w-full bg-soft border border-soft rounded-2xl px-5 py-3.5 text-base outline-none focus:border-green-500 font-semibold" aria-label="Search music" />
           {voiceSupported && (
             <button onClick={startVoice} title="Voice search"
@@ -143,22 +174,13 @@ export default function Search() {
         </div>
 
         {showSuggest && hasSuggest && (
-          <div className="absolute z-30 left-0 right-0 mt-2 panel p-2 max-h-80 overflow-y-auto sheet-scroll">
+          <div id="search-suggest" role="listbox" aria-label="Search suggestions" className="absolute z-30 left-0 right-0 mt-2 panel p-2 max-h-80 overflow-y-auto sheet-scroll">
             {suggest.songs.length > 0 && <p className="px-3 pt-1 text-[11px] font-extrabold text-dim tracking-wide">SONGS</p>}
-            {suggest.songs.map((s, i) => (
-              <button key={`s${i}`} onMouseDown={e => e.preventDefault()} onClick={() => submit(s.q)}
-                className="w-full text-left px-3 py-2.5 rounded-lg bg-hoverable text-sm font-semibold truncate"><NoteIcon size={14} className="inline mr-1.5 -mt-0.5" />{s.text}</button>
-            ))}
+            {suggest.songs.map((s, i) => <SugBtn key={`s${i}`} s={s} idx={i} active={sugActive} onPick={submit} Icon={NoteIcon} />)}
             {suggest.artists.length > 0 && <p className="px-3 pt-2 text-[11px] font-extrabold text-dim tracking-wide">ARTISTS</p>}
-            {suggest.artists.map((s, i) => (
-              <button key={`a${i}`} onMouseDown={e => e.preventDefault()} onClick={() => submit(s.q)}
-                className="w-full text-left px-3 py-2.5 rounded-lg bg-hoverable text-sm font-semibold truncate"><MicIcon size={14} className="inline mr-1.5 -mt-0.5" />{s.text}</button>
-            ))}
+            {suggest.artists.map((s, i) => <SugBtn key={`a${i}`} s={s} idx={suggest.songs.length + i} active={sugActive} onPick={submit} Icon={MicIcon} />)}
             {suggest.albums.length > 0 && <p className="px-3 pt-2 text-[11px] font-extrabold text-dim tracking-wide">ALBUMS</p>}
-            {suggest.albums.map((s, i) => (
-              <button key={`l${i}`} onMouseDown={e => e.preventDefault()} onClick={() => submit(s.q)}
-                className="w-full text-left px-3 py-2.5 rounded-lg bg-hoverable text-sm font-semibold truncate"><DiscIcon size={14} className="inline mr-1.5 -mt-0.5" />{s.text}</button>
-            ))}
+            {suggest.albums.map((s, i) => <SugBtn key={`l${i}`} s={s} idx={suggest.songs.length + suggest.artists.length + i} active={sugActive} onPick={submit} Icon={DiscIcon} />)}
           </div>
         )}
       </div>
@@ -201,6 +223,11 @@ export default function Search() {
           <button onClick={() => submit(results.didYouMean)} className="font-bold text-green-500 underline">{results.didYouMean}</button>?
         </div>
       )}
+      {results.didYouMean && q && !loading && results.songs.length > 0 && (
+        <div className="mt-4 text-sm">Did you mean{' '}
+          <button onClick={() => submit(results.didYouMean)} className="font-bold text-green-500 underline">{results.didYouMean}</button>?
+        </div>
+      )}
 
       {!q && (
         <div className="mt-6">
@@ -224,6 +251,18 @@ export default function Search() {
         </div>
       )}
 
+      {degraded.length > 0 && !degradedOff && q && (
+        <div className="mt-4 px-4 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-sm font-semibold flex items-center justify-between gap-2">
+          <span>{degraded.map(d => PROVIDER_LABEL[d] || d).join(', ')} {degraded.length > 1 ? 'are' : 'is'} slow right now — showing other sources.</span>
+          <button onClick={() => setDegradedOff(true)} className="text-dim font-bold shrink-0" aria-label="Dismiss">✕</button>
+        </div>
+      )}
+      {q && matchPlaylists.length > 0 && (
+        <div className="mt-5">
+          <h3 className="font-extrabold mb-2">Your playlists</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 [&>*]:min-w-0 [&>*]:max-w-none">{matchPlaylists.map(p => <PlaylistCard key={p.id} playlist={p} />)}</div>
+        </div>
+      )}
       {loading && emptyResults && <div className="mt-5"><SkeletonList /></div>}
       {loading && !emptyResults && <div className="h-1 mt-5 rounded-full bg-white/10 overflow-hidden" aria-hidden><div className="h-full w-1/3 bg-green-500 rounded-full animate-pulse" /></div>}
 
@@ -237,10 +276,12 @@ export default function Search() {
       {q && tab === 'Songs' && (() => {
         const visible = tasteFiltered(results.songs, disliked, hiddenArtists);
         const hidden = results.songs.length - visible.length;
+        const shown = visible.slice(0, songCap);
         return (
-        <div className="card p-2 mt-4 flex flex-col">{visible.map((t, i) => <SongRow key={t.id} track={t} index={i} context={visible} />)}
+        <div className="card p-2 mt-4 flex flex-col">{shown.map((t, i) => <SongRow key={t.id} track={t} index={i} context={visible} />)}
           {visible.length === 0 && <p className="p-4 text-sm text-dim">No songs found{filtersActive ? ' with these filters' : ''}.</p>}
-          {hidden > 0 && <p className="px-4 py-1 text-[11px] text-dim font-semibold">{hidden} hidden by your taste filters.</p>}</div>
+          {hidden > 0 && <p className="px-4 py-1 text-[11px] text-dim font-semibold">{hidden} hidden by your taste filters.</p>}
+          {visible.length > songCap && <button onClick={() => setSongCap(c => c + 20)} className="m-2 py-2.5 rounded-xl text-sm font-bold bg-white/10">Show more ({visible.length - songCap} more)</button>}</div>
         );
       })()}
       {q && tab === 'Albums' && (

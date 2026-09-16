@@ -1,5 +1,39 @@
 import { useState } from 'react';
 import { useStore } from '../store/useStore';
+import { diag } from '../services/musicApi';
+
+function Diagnostics() {
+  const [, setTick] = useState(0);
+  const [open, setOpen] = useState(false);
+  if (!open) return <Row label="Diagnostics" desc="Local request & playback health — this session only, never uploaded"><button onClick={() => setOpen(true)} className="px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Show</button></Row>;
+  const reqs = [...diag.reqs].reverse();
+  const slow = reqs.filter(r => r.ms > 2000);
+  return (
+    <div className="card p-4">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <p className="font-bold text-sm">Diagnostics <span className="text-xs text-dim font-semibold">(local, this session)</span></p>
+        <span className="flex gap-2">
+          <button onClick={() => setTick(t => t + 1)} className="px-3 py-1 rounded-full text-xs font-bold bg-white/10">Refresh</button>
+          <button onClick={() => { diag.reset(); setTick(t => t + 1); }} className="px-3 py-1 rounded-full text-xs font-bold bg-white/10">Reset</button>
+          <button onClick={() => setOpen(false)} className="px-3 py-1 rounded-full text-xs font-bold bg-white/10">Hide</button>
+        </span>
+      </div>
+      <div className="flex gap-4 text-xs font-bold flex-wrap mb-2">
+        <span>{diag.reqs.length} requests</span>
+        <span className={diag.fails ? 'text-red-400' : ''}>{diag.fails} failed</span>
+        <span>{diag.stalls} stalls</span>
+        <span>{diag.skips} stall-skips</span>
+      </div>
+      {slow.length > 0 && <p className="text-xs text-dim mb-1">Slow (&gt;2s): {slow.slice(0, 5).map(r => `${r.p} ${(r.ms / 1000).toFixed(1)}s`).join(' · ')}</p>}
+      <div className="max-h-40 overflow-y-auto sheet-scroll text-xs font-mono">
+        {reqs.slice(0, 20).map((r, i) => (
+          <div key={i} className={`flex justify-between gap-2 py-0.5 ${r.ok ? 'text-dim' : 'text-red-400'}`}><span className="truncate">{r.p}</span><span className="shrink-0">{r.ms}ms</span></div>
+        ))}
+        {!reqs.length && <p className="text-dim font-sans text-sm">No requests yet.</p>}
+      </div>
+    </div>
+  );
+}
 
 function Row({ label, desc, children }) {
   return (
@@ -85,9 +119,9 @@ export default function Settings() {
             {[['dark', 'Dark'], ['light', 'Light']].map(([v, l]) => <button key={v} onClick={() => setTheme(v)} className={`px-4 py-1.5 rounded-full text-sm font-bold ${theme === v ? 'bg-accent' : 'bg-white/10'}`} style={theme === v ? { color: 'var(--accent-ink, #000)' } : {}}>{l}</button>)}
           </div>
         </Row>
-        <Row label="Audio quality" desc="High = 320kbps · Medium = 128 · Low = 48 (DJPunjab MP3s, auto-fallback)">
+        <Row label="Audio quality" desc="Auto picks a tier from your network speed · High = 320kbps · Medium = 128 · Low = 48 (auto-fallback when a tier is missing)">
           <div className="flex gap-2">
-            {['low', 'medium', 'high'].map(q => <button key={q} onClick={() => { setQuality(q); toast(`Quality: ${q}`); }} className={`px-4 py-1.5 rounded-full text-sm font-bold capitalize ${quality === q ? 'bg-accent' : 'bg-white/10'}`} style={quality === q ? { color: 'var(--accent-ink, #000)' } : {}}>{q}</button>)}
+            {['auto', 'low', 'medium', 'high'].map(q => <button key={q} onClick={() => { setQuality(q); toast(`Quality: ${q}`); }} className={`px-4 py-1.5 rounded-full text-sm font-bold capitalize ${quality === q ? 'bg-accent' : 'bg-white/10'}`} style={quality === q ? { color: 'var(--accent-ink, #000)' } : {}}>{q}</button>)}
           </div>
         </Row>
         <Row label="Studio sound" desc="10-band EQ + live visualizer + normalize. Find it in the player → Studio tab.">
@@ -122,7 +156,23 @@ export default function Settings() {
             } catch { toast('Could not clear cache', 'error'); }
           }} className="px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Clear offline songs</button>
         </Row>
-        <Row label="Keyboard shortcuts" desc="Space play/pause · ←/→ seek · ↑/↓ volume · M mute · N/P next/prev · Ctrl+K palette">
+        <Row label="Privacy" desc="No account, no tracking. Likes, playlists, history & taste live only on this device; diagnostics never leave it.">
+          <button onClick={async () => {
+            if (!confirm('Delete ALL local data (likes, playlists, history, settings, offline songs)?')) return;
+            try {
+              localStorage.clear();
+              const keys = await caches.keys();
+              await Promise.all(keys.map(k => caches.delete(k)));
+              if ('serviceWorker' in navigator) {
+                const regs = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(regs.map(r => r.unregister()));
+              }
+            } catch { /* proceed to reload regardless */ }
+            location.reload();
+          }} className="px-4 py-1.5 rounded-full text-sm font-bold bg-red-500/15 text-red-400">Erase all local data</button>
+        </Row>
+        <Diagnostics />
+        <Row label="Keyboard shortcuts" desc="Space play/pause · ←/→ seek · ↑/↓ volume · M mute · N/P next/prev · S shuffle · R repeat · Q queue · Ctrl+K palette">
           <span className="text-xs text-dim font-bold">Built-in</span>
         </Row>
       </div>

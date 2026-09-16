@@ -15,6 +15,7 @@ import {
 /* Spotify-style seek bar: light fill, green + knob on hover */
 function ProgressBar({ currentTime, duration }) {
   const pct = duration ? Math.min(100, (currentTime / duration) * 100) : 0;
+  const [showRem, setShowRem] = useState(false);
   const barRef = useRef(null);
   const scrub = (clientX) => {
     const bar = barRef.current;
@@ -41,12 +42,13 @@ function ProgressBar({ currentTime, duration }) {
           </div>
         </div>
       </div>
-      <span className="text-[11px] text-dim w-10 tabular-nums">{formatTime(duration)}</span>
+      <button onClick={() => setShowRem(v => !v)} className="text-[11px] text-dim w-10 tabular-nums text-left" aria-label="Toggle remaining time" title="Elapsed / remaining">{showRem && duration ? `-${formatTime(Math.max(0, duration - currentTime))}` : formatTime(duration)}</button>
     </div>
   );
 }
 
 export function MiniPlayer() {
+  const swipeX = useRef(null);
   const queue = useStore(s => s.queue);
   const index = useStore(s => s.index);
   const isPlaying = useStore(s => s.isPlaying);
@@ -76,7 +78,15 @@ export function MiniPlayer() {
   return (
     <div className="fixed bottom-0 left-0 right-0 z-30">
       {/* mobile strip */}
-      <div className="md:hidden pb-safe ui-dark">
+      <div className="md:hidden pb-safe ui-dark"
+        onTouchStart={e => { swipeX.current = e.touches[0].clientX; }}
+        onTouchEnd={e => {
+          if (swipeX.current == null) return;
+          const dx = e.changedTouches[0].clientX - swipeX.current;
+          swipeX.current = null;
+          if (dx < -60) next();
+          else if (dx > 60) prev();
+        }}>
         <div className="h-1 bg-white/10"><div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} /></div>
         <div className="glass bg-black/85 border-t border-soft px-2 h-16 flex items-center gap-1">
           <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" aria-label="Open full player">
@@ -138,9 +148,21 @@ export function MiniPlayer() {
   );
 }
 
+function parseLRC(text) {
+  const out = [];
+  for (const ln of String(text || '').split('\n')) {
+    const m = ln.match(/^\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\](.*)$/);
+    if (!m) continue;
+    const t = (+m[1]) * 60 + (+m[2]) + (+(m[3] || '0')) / ((m[3] || '').length === 3 ? 1000 : 100);
+    if (m[4].trim()) out.push({ t, text: m[4].trim() });
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+
 function Lyrics({ track }) {
   const [lyrics, setLyrics] = useState(null);
   const [loading, setLoading] = useState(false);
+  const currentTime = useStore(s => s.currentTime);
   useEffect(() => {
     if (!track) return;
     setLoading(true); setLyrics(null);
@@ -151,7 +173,18 @@ function Lyrics({ track }) {
   }, [track?.id]);
   if (loading) return <div className="skeleton h-40 rounded-xl" />;
   if (!lyrics) return <p className="text-sm text-dim">Lyrics not available for this track.</p>;
-  return <p className="whitespace-pre-line text-sm leading-7">{lyrics}</p>;
+  const lines = parseLRC(lyrics);
+  if (!lines.length) return <p className="whitespace-pre-line text-sm leading-7">{lyrics}</p>;
+  let ai = -1;
+  lines.forEach((l, i) => { if (currentTime >= l.t) ai = i; });
+  return (
+    <div className="flex flex-col gap-1 max-h-80 overflow-y-auto sheet-scroll" aria-label="Synchronized lyrics">
+      {lines.map((l, i) => (
+        <p key={i} ref={i === ai ? (el) => { try { el?.scrollIntoView({ block: 'nearest' }); } catch {} } : undefined}
+          className={`text-sm leading-7 transition-colors ${i === ai ? 'text-white font-bold' : 'text-dim'}`}>{l.text}</p>
+      ))}
+    </div>
+  );
 }
 
 function AddToPlaylistMenu({ track, onDone }) {
@@ -200,6 +233,9 @@ export function FullPlayer() {
   const toggleDownload = useStore(s => s.toggleDownload);
   const sleepTimerMin = useStore(s => s.sleepTimerMin);
   const setSleepTimer = useStore(s => s.setSleepTimer);
+  const playbackRate = useStore(s => s.playbackRate);
+  const setPlaybackRate = useStore(s => s.setPlaybackRate);
+  const cycleSpeed = () => { const steps = [1, 1.25, 1.5, 2, 0.5]; setPlaybackRate(steps[(steps.indexOf(playbackRate) + 1) % steps.length]); };
   const setShowQueue = useStore(s => s.setShowQueue);
   const studioOn = useStore(s => s.studioOn);
   const setStudioOn = useStore(s => s.setStudioOn);
@@ -209,6 +245,17 @@ export function FullPlayer() {
   const [showSleep, setShowSleep] = useState(false);
   const touchY = useRef(null);
   const sheetRef = useRef(null);
+  useEffect(() => {
+    if (!show) return;
+    const h = (e) => {
+      if (e.key !== 'Escape') return;
+      if (showPlMenu) setShowPlMenu(false);
+      else if (showSleep) setShowSleep(false);
+      else setShow(false);
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [show, showPlMenu, showSleep]);
 
   const track = index >= 0 ? queue[index] : null;
   if (!show || !track) return null;
@@ -278,6 +325,7 @@ export function FullPlayer() {
             <div className="flex items-center gap-2 mt-4 w-full max-w-xs slider-wrap">
               <button onClick={() => setMuted(!muted)} aria-label="Mute">{muted || volume === 0 ? <MuteIcon size={20} /> : <VolumeIcon size={20} />}</button>
               <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={(e) => setVolume(Number(e.target.value))} className="slider flex-1" aria-label="Volume" />
+              <button onClick={cycleSpeed} className="text-xs font-extrabold px-2 py-1 rounded-md bg-white/10 min-w-[46px]" aria-label="Playback speed" title="Playback speed">{playbackRate}×</button>
             </div>
             <div className="flex items-center gap-2 mt-5 flex-wrap justify-center">
               <button onClick={() => toggleLike(track)} className={`px-4 py-2 rounded-full text-sm font-bold inline-flex items-center gap-1.5 ${isLiked ? 'bg-accent text-black' : 'bg-white/10'}`}><HeartIcon size={15} filled={isLiked} />{isLiked ? 'Liked' : 'Like'}</button>
@@ -335,8 +383,15 @@ export function QueueDrawer() {
   const queue = useStore(s => s.queue);
   const index = useStore(s => s.index);
   const removeFromQueue = useStore(s => s.removeFromQueue);
+  const moveInQueue = useStore(s => s.moveInQueue);
   const clearQueue = useStore(s => s.clearQueue);
   const playTracks = useStore(s => s.playTracks);
+  useEffect(() => {
+    if (!show) return;
+    const h = (e) => { if (e.key === 'Escape') setShow(false); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [show]);
   if (!show) return null;
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-label="Queue">
@@ -357,6 +412,10 @@ export function QueueDrawer() {
                 <span className="min-w-0"><p className="truncate text-sm font-semibold">{t.title}</p><p className="truncate text-xs text-dim">{t.artist?.name}</p></span>
               </button>
               {i === index && <EqIcon />}
+              <span className="flex flex-col shrink-0">
+                <button onClick={() => moveInQueue(i, i - 1)} disabled={i === 0} className="text-dim px-2.5 py-2 text-[10px] disabled:opacity-20" aria-label="Move up">▲</button>
+                <button onClick={() => moveInQueue(i, i + 1)} disabled={i === queue.length - 1} className="text-dim px-2.5 py-2 text-[10px] disabled:opacity-20" aria-label="Move down">▼</button>
+              </span>
               <button onClick={() => removeFromQueue(i)} className="text-dim px-2" aria-label="Remove from queue"><CloseIcon size={14} /></button>
             </div>
           ))}

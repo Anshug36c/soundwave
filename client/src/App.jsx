@@ -1,15 +1,18 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useEffect, lazy, Suspense } from 'react';
 import { useStore } from './store/useStore';
 import { useAudioEngine } from './hooks/useAudioEngine';
-import { Sidebar, TopBar, BottomNav, Toasts } from './components/Layout';
+import { Sidebar, TopBar, BottomNav, Toasts, OfflineBanner } from './components/Layout';
 import { MiniPlayer, FullPlayer, QueueDrawer } from './components/Player';
 import CommandPalette from './components/CommandPalette';
-import Home from './pages/Home';
-import Search from './pages/Search';
-import Library, { LikedSongs, LocalPlaylist } from './pages/Library';
-import { AlbumPage, ArtistPage } from './pages/Detail';
-import Settings from './pages/Settings';
+const Home = lazy(() => import('./pages/Home'));
+const Search = lazy(() => import('./pages/Search'));
+const Library = lazy(() => import('./pages/Library'));
+const LikedSongs = lazy(() => import('./pages/Library').then(m => ({ default: m.LikedSongs })));
+const LocalPlaylist = lazy(() => import('./pages/Library').then(m => ({ default: m.LocalPlaylist })));
+const AlbumPage = lazy(() => import('./pages/Detail').then(m => ({ default: m.AlbumPage })));
+const ArtistPage = lazy(() => import('./pages/Detail').then(m => ({ default: m.ArtistPage })));
+const Settings = lazy(() => import('./pages/Settings'));
 
 export default function App() {
   const theme = useStore(s => s.theme);
@@ -27,13 +30,27 @@ export default function App() {
   const index = useStore(s => s.index);
   const hasPlayer = index >= 0 && queue.length > 0;
 
+  // route titles (the engine owns document.title while music is playing)
+  useEffect(() => {
+    const st = useStore.getState();
+    if (st.queue.length && st.index >= 0) return;
+    const p = location.pathname;
+    const t = p.startsWith('/search') ? 'Search' : p.startsWith('/liked') ? 'Liked Songs'
+      : p.startsWith('/playlist') ? 'Playlist' : p.startsWith('/library') ? 'Library'
+      : p.startsWith('/album') ? 'Album' : p.startsWith('/artist') ? 'Artist'
+      : p.startsWith('/settings') ? 'Settings' : '';
+    document.title = t ? `${t} \u00b7 SoundWave` : 'SoundWave \u2014 Music for Everyone';
+  }, [location.pathname]);
+
   return (
     <div className="h-full flex bg-app">
       <Sidebar />
       <div className="flex-1 min-w-0 flex flex-col h-full">
         <TopBar />
+        <OfflineBanner />
         <main className={`flex-1 overflow-y-auto px-4 md:px-6 py-4 ${hasPlayer ? 'pb-40 md:pb-28' : 'pb-24 md:pb-8'}`} id="main">
           <div key={location.pathname} className="max-w-6xl mx-auto fade-up">
+            <Suspense fallback={<div className="py-8"><div className="skeleton h-40 rounded-xl" /></div>}>
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/search" element={<Search />} />
@@ -46,6 +63,7 @@ export default function App() {
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            </Suspense>
           </div>
         </main>
       </div>

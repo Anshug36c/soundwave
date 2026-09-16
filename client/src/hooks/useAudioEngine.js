@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
-import { api, streamFor } from '../services/musicApi';
+import { api, streamFor, diag } from '../services/musicApi';
 import * as studio from '../audio/studio';
 
 // Singleton audio element (plain playback). WebAudio routing is permanent per
@@ -53,6 +53,7 @@ let swapping = false;
 const preloadPool = [];
 function preloadTrack(track, quality) {
   if (!track?.streamUrl) return;
+  try { if (!navigator.onLine) return; } catch { /* noop */ }
   try { api.warm(streamFor(track, quality)); } catch { /* noop */ }
   try { if (navigator.connection?.saveData) return; } catch { /* noop */ }
   try {
@@ -98,6 +99,7 @@ function armStandby(track, quality) {
   if (standbyFor === id && standbyQ === quality) return; // already staging this one
   teardownStandby();
   if (!track?.streamUrl) return;
+  try { if (!navigator.onLine) return; } catch { /* noop */ }
   standbyFor = id; standbyQ = quality; standbyReady = false;
   const url = streamFor(track, quality);
   try { api.warm(url); } catch { /* noop */ }
@@ -323,6 +325,9 @@ function onKey(e) {
   else if (e.key.toLowerCase() === 'm') s.setMuted(!s.muted);
   else if (e.key.toLowerCase() === 'n') s.next();
   else if (e.key.toLowerCase() === 'p') s.prev();
+  else if (e.key.toLowerCase() === 's') s.toggleShuffle();
+  else if (e.key.toLowerCase() === 'r') s.cycleRepeat();
+  else if (e.key.toLowerCase() === 'q') s.setShowQueue(!s.showQueue);
 }
 
 function attachAudio(el) {
@@ -349,6 +354,7 @@ function recreateAudio() {
   el.preload = 'auto';
   el.volume = useStore.getState().muted ? 0 : useStore.getState().volume;
   el.muted = useStore.getState().muted;
+  try { el.playbackRate = useStore.getState().playbackRate || 1; } catch { /* noop */ }
   audio = el;
   attachAudio(el);
   return el;
@@ -379,6 +385,7 @@ export function useAudioEngine() {
   const isPlaying = useStore(s => s.isPlaying);
   const volume = useStore(s => s.volume);
   const muted = useStore(s => s.muted);
+  const playbackRate = useStore(s => s.playbackRate);
   const quality = useStore(s => s.quality);
   const sleepTimerMin = useStore(s => s.sleepTimerMin);
   const currentTime = useStore(s => s.currentTime);
@@ -443,6 +450,7 @@ export function useAudioEngine() {
         syncPlayback();
         if (st.crossfade && !st.muted) fadeVolume(el, st.volume, 600);
         else el.volume = st.muted ? 0 : st.volume;
+        try { el.playbackRate = st.playbackRate || 1; } catch { /* noop */ }
       }
       // hot-standby prefetch: next track fully staged, the one after warming
       try { refreshUpcoming(); } catch { /* noop */ }
@@ -526,6 +534,11 @@ export function useAudioEngine() {
     el.muted = muted;
   }, [volume, muted]);
 
+  // playback speed (pitch-preserving by default)
+  useEffect(() => {
+    try { getAudio().playbackRate = playbackRate || 1; } catch { /* noop */ }
+  }, [playbackRate]);
+
   // seek requests
   const lastSeek = useRef(-1);
   useEffect(() => {
@@ -564,8 +577,10 @@ export function useAudioEngine() {
         if (Date.now() - lastRecoverAt < 30000) return;
         lastRecoverAt = Date.now();
         recoverCount += 1;
+        try { diag.stalls++; } catch { /* noop */ }
         if (recoverCount >= 3) {
           recoverCount = 0;
+          try { diag.skips++; } catch { /* noop */ }
           st.toast('Stream stalled — skipping to next', 'error');
           st.next();
           return;

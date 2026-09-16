@@ -108,6 +108,7 @@ async function fetchText(url, { timeout = 20000, referer = null } = {}) {
           signal: ctrl.signal,
           headers: { 'User-Agent': DJP_UA, ...(referer ? { Referer: referer } : {}), Accept: 'text/html,*/*' },
         });
+        if (r.status === 429) { await sleep(3000 + attempt * 2000); throw new Error('HTTP 429'); }
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return await r.text();
       } catch (e) { lastErr = e; await sleep(400 * (attempt + 1)); }
@@ -168,6 +169,9 @@ function pageCacheGet(url) {
 function pageCacheSet(url, data) {
   if (djpPageCache.size > 600) djpPageCache.delete(djpPageCache.keys().next().value);
   djpPageCache.set(url, { data, time: Date.now() });
+}
+function pageCacheDel(url) {
+  try { djpPageCache.delete(url); } catch { /* noop */ }
 }
 
 /** Track duration via 1-byte Range probe (bytes ÷ bitrate). Non-fatal. */
@@ -1093,7 +1097,14 @@ function mergeTracks(lists) {
   for (const list of lists) {
     for (const t of list || []) {
       if (!t) continue;
-      const k = normKey(t.title, t.artist?.name);
+      let k = normKey(t.title, t.artist?.name);
+      // same name but a clearly different recording (duration differs >10s): keep separate
+      if (seen.has(k)) {
+        const m0 = seen.get(k);
+        if (m0.duration > 0 && t.duration > 0 && Math.abs(m0.duration - t.duration) > 10) {
+          k = `${k}#${t.source}:${t.sourceId}`;
+        }
+      }
       if (seen.has(k)) {
         const m = seen.get(k);
         if (m.mirrors.length < 4 && !m.mirrors.some(x => x.source === t.source && x.sourceId === t.sourceId)) {
@@ -1105,6 +1116,14 @@ function mergeTracks(lists) {
           if (m.album) m.album.image = t.image;
           if (m.artist) m.artist.image = t.image;
         }
+        // fill gaps from whichever provider has the metadata
+        if (!m.duration && t.duration) m.duration = t.duration;
+        if (!m.year && t.year) m.year = t.year;
+        if (!m.language && t.language) m.language = t.language;
+        if ((t.plays || 0) > (m.plays || 0)) m.plays = t.plays;
+        if (t.explicit && !m.explicit) m.explicit = true;
+        if (t.album?.name && m.album && !m.album.name) m.album.name = t.album.name;
+        if (t.label && !m.label) m.label = t.label;
         continue;
       }
       t.mirrors = [{ source: t.source, sourceId: t.sourceId }];
@@ -1138,7 +1157,7 @@ async function resolveMirrorInner(source, sid) {
       if (!e || e.album) return null;
       const pg = await djpSongPage(e.url).catch(() => null);
       if (!pg) return null;
-      return pg.mp3s && Object.keys(pg.mp3s).length ? { mp3s: pg.mp3s } : null;
+      return pg.mp3s && Object.keys(pg.mp3s).length ? { mp3s: pg.mp3s, page: e.url } : null;
     }
     if (source === 'dj') {
       if (String(sid).startsWith('t:')) {
@@ -1152,14 +1171,14 @@ async function resolveMirrorInner(source, sid) {
       if (!e || e.album) return null;
       const pg = await djSongPage(e.url).catch(() => null);
       if (!pg) return null;
-      return pg.mp3s && Object.keys(pg.mp3s).length ? { mp3s: pg.mp3s } : null;
+      return pg.mp3s && Object.keys(pg.mp3s).length ? { mp3s: pg.mp3s, page: e.url } : null;
     }
     if (source === 'mrj') {
       const e = (await mrjLoadIndex()).get(String(sid));
       if (!e || e.album) return null;
       const pg = await mrjSongPage(e.url).catch(() => null);
       if (!pg) return null;
-      return pg.mp3s && Object.keys(pg.mp3s).length ? { mp3s: pg.mp3s } : null;
+      return pg.mp3s && Object.keys(pg.mp3s).length ? { mp3s: pg.mp3s, page: e.url } : null;
     }
     if (source === 'saavn') {
       const urls = await saavnStreamUrls(String(sid)).catch(() => null);
@@ -1600,6 +1619,14 @@ app.get('/api/audio', async (req, res) => {
         if (resolvedRec.length && await tryStream(resolvedRec, true)) return;
       }
     }
+    // total failure: bust the cached song pages so the next attempt re-scrapes
+    // fresh URLs instead of replaying the same dead links for 6 hours
+    try {
+      for (const m of resolved) {
+        if (m?.r?.page) pageCacheDel(m.r.page);
+        if (m?.source === 'saavn' && m?.sid) saavnUrlCache.delete(String(m.sid));
+      }
+    } catch { /* noop */ }
     if (!res.headersSent) res.status(502).json({ error: 'All mirrors failed' });
   } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'Audio failed', detail: e.message }); }
 });
@@ -1718,6 +1745,7 @@ app.get('/api/health', (req, res) => res.json({
   indexes: { djp: djpIndex.size, dj: djIndex.size, mrj: mrjIndex.size },
   caches: { api: cache.size, pages: djpPageCache.size, audio: audioCache.size },
   outbound: { active: outActive, queued: outQueue.length },
+  degraded: srcDegraded(),
 }));
 
 app.get('/api/sources', async (req, res) => {
@@ -2109,6 +2137,11 @@ app.get('/api/search', async (req, res) => {
       if (artistMode) {
         const rank = t => { const n = normName(t.artist?.name); return qw.every(w => n.includes(w)) ? 0 : 1; };
         songs.sort((x, y) => rank(x) - rank(y));
+      }
+      {
+        const fq = fold(effQ);
+        const er = t => { const tt = fold(t.title || ''); return tt === fq ? 0 : (fq && tt.startsWith(fq) ? 1 : 2); };
+        songs.sort((x, y) => er(x) - er(y));
       }
       songs = songs.slice(0, artistMode ? 40 : 20);
     }

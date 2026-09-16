@@ -2,7 +2,7 @@
  * Navigations are NETWORK-FIRST: a stale cached index.html referencing deleted
  * hashed assets causes white screens after deploys. Cache is offline fallback only. */
 const SHELL = 'soundwave-shell-v4';
-const AUDIO = 'soundwave-audio-v4';
+const AUDIO = 'soundwave-audio-v5'; // v5: no more auto-cached streams (explicit offline downloads only)
 const SHELL_URLS = ['/', '/index.html', '/manifest.json', '/icons/icon.svg'];
 
 self.addEventListener('install', (e) => {
@@ -32,13 +32,10 @@ self.addEventListener('fetch', (e) => {
   // Never intercept cross-origin requests (YouTube API, streams, CDNs) —
   // the offline fallback below must only serve same-origin app routes.
   if (url.origin !== self.location.origin) return;
-  // Audio: cache-first (offline playback), then network
+  // Audio: serve explicit offline downloads from cache; never auto-cache streams.
+  // (AUDIO v4 cached every played track; v5 caches only what the user taps Offline.)
   if (request.destination === 'audio' || url.pathname.startsWith('/api/stream')) {
-    e.respondWith(caches.match(request).then((hit) => hit || fetch(request).then((res) => {
-      const copy = res.clone();
-      caches.open(AUDIO).then((c) => c.put(request, copy)).catch(() => {});
-      return res;
-    }).catch(() => caches.match(request))));
+    e.respondWith(caches.match(request).then((hit) => hit || fetch(request)));
     return;
   }
   // API: network-first with cache fallback

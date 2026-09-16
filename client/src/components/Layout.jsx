@@ -1,5 +1,5 @@
 import { NavLink, Link, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { HomeIcon, SearchIcon, LibraryIcon, PlusIcon, HeartIcon, NoteIcon, ChevronLeftIcon, ChevronRightIcon, MoonIcon, SunIcon } from './Icons';
 
@@ -138,6 +138,24 @@ export function BottomNav({ hasPlayer }) {
         ))}
       </div>
     </nav>
+  );
+}
+
+export function OfflineBanner() {
+  const [online, setOnline] = useState(() => { try { return navigator.onLine; } catch { return true; } });
+  useEffect(() => {
+    const f = () => setOnline(navigator.onLine);
+    window.addEventListener('online', f);
+    window.addEventListener('offline', f);
+    return () => { window.removeEventListener('online', f); window.removeEventListener('offline', f); };
+  }, []);
+  if (online) return null;
+  return (
+    <div className="px-4 md:px-6 pt-3">
+      <div className="max-w-6xl mx-auto px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-sm font-bold" role="alert">
+        You're offline — saved songs still play. We'll reconnect automatically.
+      </div>
+    </div>
   );
 }
 

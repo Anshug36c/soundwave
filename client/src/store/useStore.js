@@ -14,6 +14,8 @@ export const useStore = create(
       repeat: 'off', // off | one | all
       volume: 0.9,
       muted: false,
+      playbackRate: 1,
+      setPlaybackRate: (v) => set({ playbackRate: v }),
       currentTime: 0,
       duration: 0,
       showFullPlayer: false,
@@ -78,6 +80,28 @@ export const useStore = create(
         if (t) get().pushHistory(t);
       },
       addToQueue: (track) => { if (!track?.id) return; set(s => ({ queue: [...s.queue, track] })); },
+      addManyToQueue: (tracks) => {
+        const list = (tracks || []).filter(t => t?.id);
+        if (!list.length) return;
+        set(s => ({ queue: [...s.queue, ...list] }));
+        get().toast(`${list.length} song${list.length > 1 ? 's' : ''} added to queue`, 'info');
+      },
+      playNext: (track) => {
+        if (!track?.id) return;
+        set(s => { const q = [...s.queue]; q.splice(s.index + 1, 0, track); return { queue: q }; });
+        get().toast('Will play next', 'info');
+      },
+      moveInQueue: (from, to) => set(s => {
+        if (from < 0 || to < 0 || from >= s.queue.length || to >= s.queue.length || from === to) return s;
+        const q = [...s.queue];
+        const [m] = q.splice(from, 1);
+        q.splice(to, 0, m);
+        let idx = s.index;
+        if (s.index === from) idx = to;
+        else if (from < s.index && to >= s.index) idx -= 1;
+        else if (from > s.index && to <= s.index) idx += 1;
+        return { queue: q, index: idx };
+      }),
       removeFromQueue: (i) => set(s => {
         const q = s.queue.filter((_, k) => k !== i);
         let idx = s.index;
@@ -107,7 +131,7 @@ export const useStore = create(
 
       toggleLike: (track) => set(s => {
         const liked = { ...s.liked };
-        if (liked[track.id]) delete liked[track.id]; else liked[track.id] = track;
+        if (liked[track.id]) delete liked[track.id]; else liked[track.id] = { ...track, _likedAt: Date.now() };
         return { liked };
       }),
       createPlaylist: (name, description = '') => {
@@ -144,9 +168,20 @@ export const useStore = create(
         if (a[album.id]) delete a[album.id]; else a[album.id] = album;
         return { savedAlbums: a };
       }),
+      playCounts: {}, // id -> { n, last, track } for Most Played (capped)
       pushHistory: (track) => {
-        if (!track) return;
-        set(s => ({ history: [track, ...s.history.filter(t => t.id !== track.id)].slice(0, 100) }));
+        if (!track?.id) return;
+        const stamped = { ...track, _playedAt: Date.now() };
+        set(s => {
+          const pc = { ...s.playCounts };
+          pc[track.id] = { n: (pc[track.id]?.n || 0) + 1, last: Date.now(), track: stamped };
+          const keys = Object.keys(pc);
+          if (keys.length > 300) {
+            keys.sort((a, b) => pc[a].last - pc[b].last);
+            for (const k of keys.slice(0, keys.length - 300)) delete pc[k];
+          }
+          return { history: [stamped, ...s.history.filter(t => t.id !== track.id)].slice(0, 100), playCounts: pc };
+        });
       },
       clearHistory: () => set({ history: [] }),
       toggleDownload: (track) => {
@@ -166,7 +201,7 @@ export const useStore = create(
 
       // ---------- settings / profile ----------
       theme: 'dark',
-      quality: 'high',
+      quality: 'auto', // auto = pick tier from network speed (effectiveType)
       crossfade: true, // smooth fade between tracks
       studioOn: false, // Studio sound: WebAudio EQ + visualizer via proxied streams
       eqEnabled: true,
@@ -200,10 +235,16 @@ export const useStore = create(
     {
       name: 'soundwave-store-v1',
       storage: createJSONStorage(() => localStorage),
+      merge: (ps, cs) => {
+        if (!ps) return cs;
+        const q = Array.isArray(ps.queue) ? ps.queue.filter(Boolean).slice(0, 200) : [];
+        return { ...cs, ...ps, queue: q, index: q.length ? Math.max(-1, Math.min(ps.index ?? -1, q.length - 1)) : -1 };
+      },
       partialize: (s) => ({
+        queue: s.queue.slice(0, 200), index: s.index,
         liked: s.liked, playlists: s.playlists, followedArtists: s.followedArtists,
-        savedAlbums: s.savedAlbums, history: s.history, downloads: s.downloads,
-        theme: s.theme, quality: s.quality, crossfade: s.crossfade,
+        savedAlbums: s.savedAlbums, history: s.history, playCounts: s.playCounts, downloads: s.downloads,
+        theme: s.theme, quality: s.quality, playbackRate: s.playbackRate, crossfade: s.crossfade,
         studioOn: s.studioOn, eqEnabled: s.eqEnabled, eqGains: s.eqGains,
         eqPreset: s.eqPreset, eqPreamp: s.eqPreamp, normalizeOn: s.normalizeOn,
         profile: s.profile, searchHistory: s.searchHistory, volume: s.volume,

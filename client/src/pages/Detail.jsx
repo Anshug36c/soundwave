@@ -3,7 +3,14 @@ import { useParams } from 'react-router-dom';
 import { api } from '../services/musicApi';
 import { useStore } from '../store/useStore';
 import { SongRow, AlbumCard, SkeletonList, Img } from '../components/Cards';
-import { PlayIcon, CheckIcon, PlusIcon } from '../components/Icons';
+import { PlayIcon, CheckIcon, PlusIcon, ShuffleIcon, QueueIcon } from '../components/Icons';
+import { shuffleList } from '../services/musicApi';
+
+function shuffled(arr) {
+  const x = [...(arr || [])];
+  for (let i = x.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[x[i], x[j]] = [x[j], x[i]]; }
+  return x;
+}
 
 function useLoad(fn, deps) {
   const [data, setData] = useState(null);
@@ -66,6 +73,7 @@ export function ArtistPage() {
       }))
     : api.artist(source, id), [source, id, name, reload]);
   const playTracks = useStore(s => s.playTracks);
+  const addManyToQueue = useStore(s => s.addManyToQueue);
   const followedArtists = useStore(s => s.followedArtists);
   const toggleFollowArtist = useStore(s => s.toggleFollowArtist);
   const hiddenArtists = useStore(s => s.hiddenArtists);
@@ -74,6 +82,13 @@ export function ArtistPage() {
   const [discog, setDiscog] = useState(null);
   const [discogLoading, setDiscogLoading] = useState(false);
   const [reload, setReload] = useState(0);
+  const [artCap, setArtCap] = useState(60);
+  const [allAlbums, setAllAlbums] = useState(null);
+  useEffect(() => { setArtCap(60); }, [data]);
+  useEffect(() => {
+    if (!isAll || !allName) return;
+    api.search(allName, 'albums').then(r => setAllAlbums(r.albums || [])).catch(() => setAllAlbums([]));
+  }, [isAll, allName]);
   const loadDiscog = () => {
     if (!data || discogLoading || (discog && !discog.partial)) return;
     setDiscogLoading(true);
@@ -87,16 +102,19 @@ export function ArtistPage() {
   const pp = meta?.perProvider;
   const provLine = pp ? ` · DJP ${pp.djp || 0} · DJJ ${pp.dj || 0} · MRJ ${pp.mrj || 0} · SVN ${pp.saavn || 0}` : '';
   const extra = discog ? (discog.songs || []).filter(t => !(data.topSongs || []).some(x => x.id === t.id)) : [];
+  const shownTop = (data.topSongs || []).slice(0, isAll ? artCap : undefined);
+  const shownAlbums = isAll ? allAlbums : data.topAlbums;
   return (
     <div className="pb-8">
       <Header image={data.image} round kicker={isAll ? 'ARTIST · ALL PROVIDERS' : 'ARTIST'} title={data.name}
         sub={(data.topSongs?.length || 0) + (isAll ? ' songs · full tracks' : ' top songs · full tracks') + (isAll ? provLine : '')}
         onPlay={data.topSongs?.length ? () => playTracks(data.topSongs, 0) : null}
-        extra={<span className="flex gap-2"><button onClick={() => toggleFollowArtist(data)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5">{following ? <><CheckIcon size={15} />Following</> : <><PlusIcon size={15} />Follow</>}</button><button onClick={() => isHidden ? unhideArtist(data.name) : hideArtist(data.name)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">{isHidden ? 'Unhide' : 'Hide'}</button></span>} />
+        extra={<span className="flex gap-2 flex-wrap"><button onClick={() => toggleFollowArtist(data)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5">{following ? <><CheckIcon size={15} />Following</> : <><PlusIcon size={15} />Follow</>}</button><button onClick={() => isHidden ? unhideArtist(data.name) : hideArtist(data.name)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">{isHidden ? 'Unhide' : 'Hide'}</button><button onClick={() => data.topSongs?.length && playTracks(shuffleList(data.topSongs), 0)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5" aria-label="Shuffle artist"><ShuffleIcon size={15} />Shuffle</button><button onClick={() => addManyToQueue(data.topSongs)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5" aria-label="Add artist songs to queue"><QueueIcon size={15} />Queue</button></span>} />
       <h2 className="text-xl font-extrabold mt-6 mb-2">{isAll ? 'All Songs' : 'Top Songs'}</h2>
       <div className="panel p-2 flex flex-col">
-        {(data.topSongs || []).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.topSongs} />)}
+        {shownTop.map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.topSongs} />)}
         {(!data.topSongs || !data.topSongs.length) && <p className="p-4 text-sm text-dim">No songs found.</p>}
+        {isAll && (data.topSongs || []).length > artCap && <button onClick={() => setArtCap(c => c + 60)} className="m-2 py-2.5 rounded-xl text-sm font-bold bg-white/10">Show more ({(data.topSongs || []).length - artCap} more)</button>}
       </div>
       {isAll && meta?.truncated && <p className="mt-2 text-xs text-dim font-semibold">Showing {(data.topSongs || []).length} of {meta.totalMatched} matched tracks across all providers.</p>}
       {isAll && meta?.partial && <button onClick={() => setReload(r => r + 1)} className="mt-2 text-xs font-bold text-green-500 underline">Some providers timed out — retry for the complete list</button>}
@@ -112,8 +130,8 @@ export function ArtistPage() {
           {discogLoading ? 'Gathering every track from all providers…' : 'Show complete discography — all providers'}<span aria-hidden>→</span>
         </button>
       ))}
-      {(data.topAlbums?.length > 0) && (<><h2 className="text-xl font-extrabold mt-6 mb-3">Albums</h2>
-        <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">{data.topAlbums.map(a => <AlbumCard key={a.id} album={a} />)}</div></>)}
+      {(shownAlbums?.length > 0) && (<><h2 className="text-xl font-extrabold mt-6 mb-3">Albums</h2>
+        <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">{shownAlbums.map(a => <AlbumCard key={a.id} album={a} />)}</div></>)}
     </div>
   );
 }
