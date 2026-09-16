@@ -1,7 +1,7 @@
 import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { useStore } from '../store/useStore';
-import { HomeIcon, SearchIcon, LibraryIcon, PlusIcon, HeartIcon, NoteIcon, ChevronLeftIcon, ChevronRightIcon, MoonIcon, SunIcon, GhostIcon } from './Icons';
+import { HomeIcon, SearchIcon, LibraryIcon, PlusIcon, HeartIcon, NoteIcon, ChevronLeftIcon, ChevronRightIcon, MoonIcon, SunIcon } from './Icons';
 
 export function WaveLogo({ size = 34 }) {
   return (
@@ -88,7 +88,7 @@ export function TopBar() {
   const theme = useStore(s => s.theme);
   const setTheme = useStore(s => s.setTheme);
   const [q, setQ] = useState('');
-  const cycleTheme = () => setTheme(theme === 'dark' ? 'light' : theme === 'light' ? 'snap' : 'dark');
+  const cycleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
 
   return (
     <header className="sticky top-0 z-20 glass border-b border-soft">
@@ -108,7 +108,7 @@ export function TopBar() {
         </div>
         <button onClick={() => window.dispatchEvent(new Event('soundwave:palette'))} className="h-9 px-3 rounded-full bg-hoverable hidden sm:grid place-items-center text-sm font-bold shrink-0" aria-label="Command palette" title="Command palette (Ctrl+K)">⌘K</button>
         <button onClick={cycleTheme} className="w-9 h-9 rounded-full bg-hoverable grid place-items-center text-dim hover:text-white shrink-0" aria-label="Cycle theme" title={`Theme: ${theme} (click to change)`}>
-          {theme === 'dark' ? <SunIcon size={18} /> : theme === 'light' ? <GhostIcon size={18} /> : <MoonIcon size={18} />}
+          {theme === 'dark' ? <SunIcon size={18} /> : <MoonIcon size={18} />}
         </button>
         <Link to="/settings" className="w-9 h-9 rounded-full bg-accent grid place-items-center font-bold text-black shrink-0" aria-label="Profile and settings" title={profile.name}>
           {(profile.name?.[0] || 'G').toUpperCase()}

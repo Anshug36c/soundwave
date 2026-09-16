@@ -55,7 +55,7 @@ export default function CommandPalette() {
   useEffect(() => { liveSearch(q); }, [q, liveSearch]);
 
   const track = s.index >= 0 ? s.queue[s.index] : null;
-  const cycleTheme = () => s.setTheme(s.theme === 'dark' ? 'light' : s.theme === 'light' ? 'snap' : 'dark');
+  const cycleTheme = () => s.setTheme(s.theme === 'dark' ? 'light' : 'dark');
 
   const actions = [
     { icon: s.isPlaying ? <PauseIcon size={17} /> : <PlayIcon size={17} />, label: s.isPlaying ? 'Pause' : 'Play', run: () => s.togglePlay() },

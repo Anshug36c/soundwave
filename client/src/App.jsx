@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import { useStore } from './store/useStore';
 import { useAudioEngine } from './hooks/useAudioEngine';
@@ -15,8 +15,10 @@ export default function App() {
   const theme = useStore(s => s.theme);
   useAudioEngine();
 
+  const location = useLocation();
   useEffect(() => {
     window.__SOUNDWAVE_MOUNTED = true;
+    if (theme !== 'dark' && theme !== 'light') { useStore.getState().setTheme('dark'); return; }
     document.documentElement.dataset.theme = theme;
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#121212' : '#f6f6f4');
   }, [theme]);
@@ -31,7 +33,7 @@ export default function App() {
       <div className="flex-1 min-w-0 flex flex-col h-full">
         <TopBar />
         <main className={`flex-1 overflow-y-auto px-4 md:px-6 py-4 ${hasPlayer ? 'pb-40 md:pb-28' : 'pb-24 md:pb-8'}`} id="main">
-          <div className="max-w-6xl mx-auto">
+          <div key={location.pathname} className="max-w-6xl mx-auto fade-up">
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/search" element={<Search />} />

@@ -119,11 +119,43 @@ function fadeVolume(el, to, ms) {
   });
 }
 
+// ---------- sleep timer (timestamp-based: survives background-tab throttling) ----------
+let sleepTimerEndsAt = 0;
+let sleepFiring = false;
+async function fireSleepTimer() {
+  if (sleepFiring) return;
+  sleepFiring = true;
+  try {
+    const el = getAudio();
+    const s = useStore.getState();
+    if (s.isPlaying && !s.muted) await fadeVolume(el, 0, 3000);
+    s.setPlaying(false);
+    s.setSleepTimer(0);
+    el.volume = s.muted ? 0 : s.volume;
+    s.toast('Sleep timer stopped playback', 'info');
+  } catch { /* noop */ }
+  sleepFiring = false;
+}
+
 // ---------- module-scope event handlers (survive element recreation) ----------
+let lastPosState = 0;
 function onTime() {
   const el = getAudio();
   const st = useStore.getState();
   st.setTime(el.currentTime, el.duration || st.duration);
+  try {
+    if ('mediaSession' in navigator && el.duration && isFinite(el.duration)) {
+      const now = Date.now();
+      if (now - lastPosState > 1000) {
+        lastPosState = now;
+        navigator.mediaSession.setPositionState({
+          duration: el.duration, playbackRate: el.playbackRate || 1,
+          position: Math.min(el.currentTime || 0, el.duration),
+        });
+      }
+    }
+  } catch { /* noop */ }
+  if (sleepTimerEndsAt && Date.now() >= sleepTimerEndsAt) { sleepTimerEndsAt = 0; fireSleepTimer(); }
   // late prefetch: long track or seek — make sure next is hot past the halfway mark
   try {
     const q = st.queue, t = q[st.index];
@@ -137,8 +169,15 @@ function onLoaded() {
   const el = getAudio();
   useStore.getState().setTime(el.currentTime, el.duration || 0);
 }
-function onPlay() { useStore.getState().setPlaying(true); }
-function onPause() { const el = getAudio(); if (!el.ended && el.readyState > 0) useStore.getState().setPlaying(false); }
+function onPlay() {
+  useStore.getState().setPlaying(true);
+  try { navigator.mediaSession.playbackState = 'playing'; } catch { /* noop */ }
+}
+function onPause() {
+  const el = getAudio();
+  if (!el.ended && el.readyState > 0) useStore.getState().setPlaying(false);
+  try { navigator.mediaSession.playbackState = 'paused'; } catch { /* noop */ }
+}
 let recentErrors = [];
 function onError() {
   // preview failed (no Tidal match etc.) — fall through to the full MP3
@@ -162,9 +201,18 @@ function onError() {
     s.toast('Playback keeps failing — check your connection', 'error');
     return;
   }
+  // one silent retry per track (transient 502s) before giving up on it
+  const curId = s.queue[s.index]?.id || '';
+  if (errRetryFor !== curId) {
+    errRetryFor = curId;
+    try { getAudio().load(); } catch { /* noop */ }
+    syncPlayback();
+    return;
+  }
   s.toast('Stream unavailable — skipping to next', 'error');
   s.next();
 }
+let errRetryFor = '';
 function onEnded() {
   // preview finished before full was ready — start the full MP3 from 0
   if (playMode === 'preview' && fullUrl) {
@@ -235,8 +283,6 @@ function recreateAudio() {
  * - MediaSession OS controls, keyboard shortcuts
  */
 export function useAudioEngine() {
-  const sleepTimerRef = useRef(null);
-
   useEffect(() => {
     attachAudio(getAudio());
     useStore.setState({ _seekTo: (t) => { getAudio().currentTime = t; } });
@@ -267,7 +313,7 @@ export function useAudioEngine() {
     playMode = 'full';
     fullUrl = '';
     swapping = false;
-    if (!track) { el.pause(); el.removeAttribute('src'); el.load(); useStore.getState().setPlaying(false); return; }
+    if (!track) { el.pause(); el.removeAttribute('src'); el.load(); useStore.getState().setPlaying(false); document.title = 'SoundWave — Music for Everyone'; return; }
     let cancelled = false;
     (async () => {
       const url = streamFor(track, quality);
@@ -277,6 +323,7 @@ export function useAudioEngine() {
         return;
       }
       const st = useStore.getState();
+      try { document.title = `${track.title} — ${track.artist?.name || ''} · SoundWave`; } catch { /* noop */ }
       if (st.studioOn) {
         try {
           studio.ensureGraph(el);
@@ -341,6 +388,8 @@ export function useAudioEngine() {
           navigator.mediaSession.setActionHandler('pause', () => useStore.getState().setPlaying(false));
           navigator.mediaSession.setActionHandler('previoustrack', () => s.prev());
           navigator.mediaSession.setActionHandler('nexttrack', () => s.next());
+          try { navigator.mediaSession.setActionHandler('seekto', d => { if (typeof d.seekTime === 'number') seekTo(d.seekTime); }); } catch { /* noop */ }
+          try { navigator.mediaSession.setActionHandler('stop', () => useStore.getState().setPlaying(false)); } catch { /* noop */ }
         } catch { /* noop */ }
       }
     })();
@@ -399,22 +448,19 @@ export function useAudioEngine() {
     lastSeek.current = currentTime;
   }, [currentTime]);
 
-  // sleep timer (fades out gently, then stops)
+  // sleep timer: deadline checked on every audio tick + backup watchers
+  // (plain setTimeout freezes in background tabs — timestamps don't lie)
   useEffect(() => {
-    if (sleepTimerRef.current) { clearTimeout(sleepTimerRef.current); sleepTimerRef.current = null; }
-    if (sleepTimerMin > 0) {
-      sleepTimerRef.current = setTimeout(async () => {
-        const el = getAudio();
-        const s = useStore.getState();
-        if (!s.muted) await fadeVolume(el, 0, 3000);
-        s.setPlaying(false);
-        s.setSleepTimer(0);
-        el.volume = s.muted ? 0 : s.volume;
-        s.toast('Sleep timer stopped playback', 'info');
-      }, sleepTimerMin * 60 * 1000);
-    }
-    return () => { if (sleepTimerRef.current) clearTimeout(sleepTimerRef.current); };
+    sleepTimerEndsAt = sleepTimerMin > 0 ? Date.now() + sleepTimerMin * 60 * 1000 : 0;
   }, [sleepTimerMin]);
+  useEffect(() => {
+    const check = () => { if (sleepTimerEndsAt && Date.now() >= sleepTimerEndsAt) { sleepTimerEndsAt = 0; fireSleepTimer(); } };
+    const iv = setInterval(check, 20000);
+    const onVis = () => check();
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
+    return () => { clearInterval(iv); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', onVis); };
+  }, []);
 
   return { track };
 }

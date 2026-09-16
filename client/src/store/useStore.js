@@ -164,7 +164,7 @@ export const useStore = create(
       },
 
       // ---------- settings / profile ----------
-      theme: 'snap',
+      theme: 'dark',
       quality: 'high',
       crossfade: true, // smooth fade between tracks
       studioOn: false, // Studio sound: WebAudio EQ + visualizer via proxied streams

@@ -38,6 +38,15 @@ app.use('/api', (req, res, next) => {
   res.on('finish', () => clearTimeout(to));
   next();
 });
+// slow-endpoint log (scaling observability)
+app.use('/api', (req, res, next) => {
+  const t0 = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - t0;
+    if (ms > 8000) console.log(`[slow] ${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms`);
+  });
+  next();
+});
 
 // ---------------- tiny TTL cache ----------------
 const cache = new Map(); // key -> { v, t, ttl }
@@ -48,13 +57,15 @@ function getCache(key) {
   return h.v;
 }
 function setCache(key, val, ttl = 5 * 60 * 1000) {
-  if (cache.size > 500) cache.clear();
+  if (cache.size > 500) cache.delete(cache.keys().next().value);
   cache.set(key, { v: val, t: Date.now(), ttl });
 }
 
 // ---------------- shared fetch ----------------
 const DJP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36';
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+/** Provider call with a hard cap — stragglers resolve empty instead of stalling. */
+function safeSearch(p, ms) { return Promise.race([p.catch(() => []), sleep(ms).then(() => [])]); }
 
 // outbound concurrency guard: many users x deep fan-out must not pile up sockets
 // or trip provider rate limits — metadata fetches queue here instead.
@@ -1695,7 +1706,14 @@ app.get('/api/tidal-preview', async (req, res) => {
 });
 
 // ---------------- API ----------------
-app.get('/api/health', (req, res) => res.json({ ok: true, sources: ['djpunjab', 'djjohal', 'mr-jatt', 'pendujatt'], time: new Date().toISOString() }));
+app.get('/api/health', (req, res) => res.json({
+  ok: true, sources: ['djpunjab', 'djjohal', 'mr-jatt', 'pendujatt'], time: new Date().toISOString(),
+  uptimeSec: Math.round(process.uptime()),
+  memMB: Math.round(process.memoryUsage().heapUsed / 1048576),
+  indexes: { djp: djpIndex.size, dj: djIndex.size, mrj: mrjIndex.size },
+  caches: { api: cache.size, pages: djpPageCache.size, audio: audioCache.size },
+  outbound: { active: outActive, queued: outQueue.length },
+}));
 
 app.get('/api/sources', async (req, res) => {
   const out = {};
@@ -1912,10 +1930,10 @@ app.get('/api/search', async (req, res) => {
     let songs = [], albums = [], artists = [];
     if (type === 'all' || type === 'artists') {
       const [a, b, c, s] = await Promise.all([
-        djpSearchArtists(effQ, 6).catch(() => []),
-        djSearchArtists(effQ, 6).catch(() => []),
-        mrjSearchArtists(effQ, 6).catch(() => []),
-        saavnSearchArtists(effQ, 6).catch(() => []),
+        safeSearch(djpSearchArtists(effQ, 6), 20000),
+        safeSearch(djSearchArtists(effQ, 6), 20000),
+        safeSearch(mrjSearchArtists(effQ, 6), 20000),
+        safeSearch(saavnSearchArtists(effQ, 6), 20000),
       ]);
       const seen = new Set();
       artists = [...a, ...b, ...c, ...s].filter(ar => {
@@ -1934,10 +1952,10 @@ app.get('/api/search', async (req, res) => {
     if (type === 'all' || type === 'songs') {
       const L = artistMode ? [18, 14, 14, 12] : [10, 8, 8, 8];
       const [a, b, c, s] = await Promise.all([
-        djpSearchSongs(effQ, L[0]).catch(() => []),
-        djSearchSongs(effQ, L[1]).catch(() => []),
-        mrjSearchSongs(effQ, L[2]).catch(() => []),
-        saavnSearchSongs(effQ, L[3]).catch(() => []),
+        safeSearch(djpSearchSongs(effQ, L[0]), 25000),
+        safeSearch(djSearchSongs(effQ, L[1]), 25000),
+        safeSearch(mrjSearchSongs(effQ, L[2]), 25000),
+        safeSearch(saavnSearchSongs(effQ, L[3]), 25000),
       ]);
       songs = mergeTracks([interleave([a, b, c, s])]);
       if (artistMode) {
@@ -1948,10 +1966,10 @@ app.get('/api/search', async (req, res) => {
     }
     if (type === 'all' || type === 'albums') {
       const [a, b, c, s] = await Promise.all([
-        djpSearchAlbums(effQ, 5).catch(() => []),
-        djSearchAlbums(effQ, 4).catch(() => []),
-        mrjSearchAlbums(effQ, 4).catch(() => []),
-        saavnSearchAlbums(effQ, 4).catch(() => []),
+        safeSearch(djpSearchAlbums(effQ, 5), 20000),
+        safeSearch(djSearchAlbums(effQ, 4), 20000),
+        safeSearch(mrjSearchAlbums(effQ, 4), 20000),
+        safeSearch(saavnSearchAlbums(effQ, 4), 20000),
       ]);
       albums = [...a, ...b, ...c, ...s].slice(0, 12);
     }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { api, formatTime } from '../services/musicApi';
 import { seekTo } from '../hooks/useAudioEngine';
@@ -15,15 +15,21 @@ import {
 /* Spotify-style seek bar: light fill, green + knob on hover */
 function ProgressBar({ currentTime, duration }) {
   const pct = duration ? Math.min(100, (currentTime / duration) * 100) : 0;
-  const onSeek = (e) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    const p = Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1);
+  const barRef = useRef(null);
+  const scrub = (clientX) => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const r = bar.getBoundingClientRect();
+    const p = Math.min(Math.max((clientX - r.left) / r.width, 0), 1);
     seekTo(p * (duration || 0));
   };
   return (
     <div className="flex items-center gap-2 w-full">
       <span className="text-[11px] text-dim w-10 text-right tabular-nums">{formatTime(currentTime)}</span>
-      <div onClick={onSeek} className="sp-progress relative flex-1 h-4 flex items-center" role="slider"
+      <div ref={barRef}
+        onPointerDown={e => { try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ } scrub(e.clientX); }}
+        onPointerMove={e => { if (e.buttons & 1) scrub(e.clientX); }}
+        className="sp-progress relative flex-1 h-4 flex items-center touch-none" role="slider"
         aria-label="Seek" aria-valuenow={Math.round(currentTime)} aria-valuemax={Math.round(duration || 0)} tabIndex={0}
         onKeyDown={e => {
           if (e.key === 'ArrowRight') seekTo(currentTime + 5);
@@ -70,7 +76,7 @@ export function MiniPlayer() {
   return (
     <div className="fixed bottom-0 left-0 right-0 z-30">
       {/* mobile strip */}
-      <div className="md:hidden pb-safe">
+      <div className="md:hidden pb-safe ui-dark">
         <div className="h-1 bg-white/10"><div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} /></div>
         <div className="glass bg-black/85 border-t border-soft px-2 h-16 flex items-center gap-1">
           <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" aria-label="Open full player">
@@ -201,6 +207,8 @@ export function FullPlayer() {
   const [tab, setTab] = useState('lyrics');
   const [showPlMenu, setShowPlMenu] = useState(false);
   const [showSleep, setShowSleep] = useState(false);
+  const touchY = useRef(null);
+  const sheetRef = useRef(null);
 
   const track = index >= 0 ? queue[index] : null;
   if (!show || !track) return null;
@@ -217,10 +225,23 @@ export function FullPlayer() {
   };
 
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto sheet-scroll" role="dialog" aria-label="Now playing">
+    <div className="fixed inset-0 z-40 overflow-y-auto sheet-scroll ui-dark" role="dialog" aria-label="Now playing"
+      onTouchStart={e => { touchY.current = e.touches[0].clientY; }}
+      onTouchMove={e => {
+        if (touchY.current == null || e.currentTarget.scrollTop > 0) return;
+        const dy = e.touches[0].clientY - touchY.current;
+        if (sheetRef.current) sheetRef.current.style.transform = dy > 0 ? `translateY(${Math.min(dy, 160)}px)` : '';
+      }}
+      onTouchEnd={e => {
+        if (touchY.current == null) return;
+        const dy = e.changedTouches[0].clientY - touchY.current;
+        touchY.current = null;
+        if (sheetRef.current) sheetRef.current.style.transform = '';
+        if (dy > 100 && e.currentTarget.scrollTop <= 0) setShow(false);
+      }}>
       <div className="absolute inset-0 hidden sm:block bg-cover bg-center blur-3xl scale-110 opacity-40" style={{ backgroundImage: `url(${track.image})` }} />
       <div className="absolute inset-0 bg-black sm:bg-black/70" />
-      <div className="relative max-w-5xl mx-auto px-4 py-6 min-h-full flex flex-col">
+      <div ref={sheetRef} className="sheet-in relative max-w-5xl mx-auto px-4 py-6 min-h-full flex flex-col">
         <div className="flex items-center justify-between">
           <button onClick={() => setShow(false)} className="text-2xl px-2" aria-label="Close player"><ChevronDownIcon size={22} /></button>
           <p className="text-xs font-bold tracking-widest text-dim">NOW PLAYING · {playLabel}{studioOn ? ' · STUDIO' : ''}</p>

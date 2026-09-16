@@ -65,11 +65,6 @@ export const DotsIcon = (p) => (
   <S {...p} filled><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></S>
 );
 export const SunIcon = (p) => <S {...p}><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4l1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></S>;
-export const GhostIcon = ({ size = 20, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
-    <path d="M12 2C7.2 2 3.5 5.8 3.5 10.6v7.9l2.4-1.9 2 1.9 2.5-1.9 2 1.9 2.5-1.9 2 1.9 2.4-1.9v-7.9C20.5 5.8 16.8 2 12 2z" />
-  </svg>
-);
 export const ClockIcon = (p) => <S {...p}><circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" /></S>;
 export const HideIcon = ({ active, ...p }) => (
   <S {...p}><circle cx="12" cy="12" r="8.5" /><path d="M8.5 12h7" /></S>

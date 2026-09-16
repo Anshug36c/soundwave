@@ -49,7 +49,7 @@ export default function Settings() {
       <h1 className="text-2xl font-extrabold tracking-tight">Profile & Settings</h1>
 
       <div className="card p-5 mt-4 flex items-center gap-4 flex-wrap">
-        <div className="w-16 h-16 rounded-full bg-accent grid place-items-center text-2xl font-extrabold shrink-0" style={{ color: '#fffc00' }}>
+        <div className="w-16 h-16 rounded-full bg-accent grid place-items-center text-2xl font-extrabold text-black shrink-0">
           {(profile.name?.[0] || 'G').toUpperCase()}
         </div>
         <div className="flex-1">
@@ -80,9 +80,9 @@ export default function Settings() {
       )}
 
       <div className="flex flex-col gap-3 mt-4">
-        <Row label="Appearance" desc="Snap (yellow) · Dark · Light">
+        <Row label="Appearance" desc="Dark · Light">
           <div className="flex gap-2">
-            {[['snap', 'Snap'], ['dark', 'Dark'], ['light', 'Light']].map(([v, l]) => <button key={v} onClick={() => setTheme(v)} className={`px-4 py-1.5 rounded-full text-sm font-bold ${theme === v ? 'bg-accent' : 'bg-white/10'}`} style={theme === v ? { color: '#fffc00' } : {}}>{l}</button>)}
+            {[['dark', 'Dark'], ['light', 'Light']].map(([v, l]) => <button key={v} onClick={() => setTheme(v)} className={`px-4 py-1.5 rounded-full text-sm font-bold ${theme === v ? 'bg-accent' : 'bg-white/10'}`} style={theme === v ? { color: 'var(--accent-ink, #000)' } : {}}>{l}</button>)}
           </div>
         </Row>
         <Row label="Audio quality" desc="High = 320kbps · Medium = 128 · Low = 48 (DJPunjab MP3s, auto-fallback)">
