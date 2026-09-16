@@ -55,28 +55,60 @@ export function AlbumPage() {
 }
 
 export function ArtistPage() {
-  const { source, id } = useParams();
-  const { data, error } = useLoad(() => api.artist(source, id), [source, id]);
+  const { source, id, name } = useParams();
+  const isAll = !!name; // :name only exists on the /artist/all/:name route
+  const allName = isAll ? decodeURIComponent(name) : '';
+  const { data, error } = useLoad(() => isAll
+    ? api.artistSongs(allName).then(j => ({
+        id: `all:ar:${allName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+        name: j.name || allName, image: j.songs?.[0]?.image || '',
+        topSongs: j.songs || [], topAlbums: [], discogMeta: j,
+      }))
+    : api.artist(source, id), [source, id, name]);
   const playTracks = useStore(s => s.playTracks);
   const followedArtists = useStore(s => s.followedArtists);
   const toggleFollowArtist = useStore(s => s.toggleFollowArtist);
   const hiddenArtists = useStore(s => s.hiddenArtists);
   const hideArtist = useStore(s => s.hideArtist);
   const unhideArtist = useStore(s => s.unhideArtist);
+  const [discog, setDiscog] = useState(null);
+  const [discogLoading, setDiscogLoading] = useState(false);
+  const loadDiscog = () => {
+    if (!data || discog || discogLoading) return;
+    setDiscogLoading(true);
+    api.artistSongs(data.name).then(setDiscog).catch(() => setDiscog({ songs: [] })).finally(() => setDiscogLoading(false));
+  };
   if (error) return <p className="p-8 text-center text-dim">{error}</p>;
   if (!data) return <SkeletonList />;
   const following = !!followedArtists[data.id];
   const isHidden = !!hiddenArtists[String(data.name || '').toLowerCase().replace(/[^a-z0-9]/g, '')];
+  const meta = isAll ? data.discogMeta : discog;
+  const pp = meta?.perProvider;
+  const provLine = pp ? ` · DJP ${pp.djp || 0} · DJJ ${pp.dj || 0} · MRJ ${pp.mrj || 0} · SVN ${pp.saavn || 0}` : '';
+  const extra = discog ? (discog.songs || []).filter(t => !(data.topSongs || []).some(x => x.id === t.id)) : [];
   return (
     <div className="pb-8">
-      <Header image={data.image} round kicker="ARTIST" title={data.name} sub={(data.topSongs?.length || 0) + ' top songs · full tracks'}
+      <Header image={data.image} round kicker={isAll ? 'ARTIST · ALL PROVIDERS' : 'ARTIST'} title={data.name}
+        sub={(data.topSongs?.length || 0) + (isAll ? ' songs · full tracks' : ' top songs · full tracks') + (isAll ? provLine : '')}
         onPlay={data.topSongs?.length ? () => playTracks(data.topSongs, 0) : null}
         extra={<span className="flex gap-2"><button onClick={() => toggleFollowArtist(data)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5">{following ? <><CheckIcon size={15} />Following</> : <><PlusIcon size={15} />Follow</>}</button><button onClick={() => isHidden ? unhideArtist(data.name) : hideArtist(data.name)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">{isHidden ? 'Unhide' : 'Hide'}</button></span>} />
-      <h2 className="text-xl font-extrabold mt-6 mb-2">Top Songs</h2>
+      <h2 className="text-xl font-extrabold mt-6 mb-2">{isAll ? 'All Songs' : 'Top Songs'}</h2>
       <div className="panel p-2 flex flex-col">
         {(data.topSongs || []).map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.topSongs} />)}
-        {(!data.topSongs || !data.topSongs.length) && <p className="p-4 text-sm text-dim">No top songs found.</p>}
+        {(!data.topSongs || !data.topSongs.length) && <p className="p-4 text-sm text-dim">No songs found.</p>}
       </div>
+      {isAll && meta?.truncated && <p className="mt-2 text-xs text-dim font-semibold">Showing {(data.topSongs || []).length} of {meta.totalMatched} matched tracks across all providers.</p>}
+      {!isAll && (discog ? (<><h2 className="text-xl font-extrabold mt-6 mb-1">Complete discography</h2>
+        <p className="text-xs text-dim font-semibold mb-2">Every provider combined{provLine}</p>
+        <div className="panel p-2 flex flex-col">
+          {extra.map((t, i) => <SongRow key={t.id} track={t} index={i} context={extra} />)}
+          {extra.length === 0 && <p className="p-4 text-sm text-dim">No further tracks found beyond the top songs.</p>}
+        </div></>) : (
+        <button onClick={loadDiscog} disabled={discogLoading}
+          className="mt-6 w-full card p-4 text-left font-bold text-sm flex items-center justify-between gap-2 disabled:opacity-60">
+          {discogLoading ? 'Gathering every track from all providers…' : 'Show complete discography — all providers'}<span aria-hidden>→</span>
+        </button>
+      ))}
       {(data.topAlbums?.length > 0) && (<><h2 className="text-xl font-extrabold mt-6 mb-3">Albums</h2>
         <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2">{data.topAlbums.map(a => <AlbumCard key={a.id} album={a} />)}</div></>)}
     </div>

@@ -1896,6 +1896,144 @@ function passFilters(t, f) {
   return true;
 }
 
+// ---------------- complete cross-provider artist discography ----------------
+function artistNameMatch(name, words) {
+  const n = normName(name);
+  return !!n && words.every(w => n.includes(w));
+}
+// scrape providers: page artist sometimes unparseable ('Unknown') — the slug
+// already matched every artist word, so keep those instead of dropping them
+function scrapeKeep(t, words) {
+  const n = t?.artist?.name || '';
+  return !n || n === 'Unknown' || artistNameMatch(n, words);
+}
+async function djpArtistSongs(name, budget = 60) {
+  const words = normName(name).split(' ').filter(w => w.length > 1);
+  if (!words.length) return { songs: [], matched: 0, scanned: 0 };
+  const idx = await djpLoadIndex().catch(() => new Map());
+  // provider's own curated list first (djp's sitemap index is small)
+  const topIds = [];
+  try {
+    const html = await fetchText(`${DJP_BASE}/artist/${slugifyName(name)}-top-songs`, { timeout: 15000, referer: `${DJP_BASE}/` });
+    for (const m of html.matchAll(/href="([^"]*?mp3-song-(\d+)\.html)"/gi)) {
+      topIds.push([m[2], (m[1].startsWith('http') ? m[1] : DJP_BASE + m[1]).replace(/&amp;/g, '&')]);
+    }
+  } catch { /* index scan below */ }
+  const hits = [];
+  for (const [id, e] of idx) {
+    if (e.album) continue;
+    if (words.every(w => String(e.slug || '').includes(w))) hits.push([id, e.url]);
+  }
+  let all = [...new Map([...topIds, ...hits]).entries()];
+  if (all.length < 15 && words.length > 1 && idx.size) {
+    // loose fallback: most distinctive word (usually the surname), post-filter keeps precision
+    const w0 = [...words].sort((a, b) => b.length - a.length)[0];
+    const loose = [];
+    for (const [id, e] of idx) {
+      if (e.album) continue;
+      if (String(e.slug || '').includes(w0)) loose.push([id, e.url]);
+    }
+    all = [...new Map([...all, ...loose]).entries()];
+  }
+  const uniq = all.slice(0, budget);
+  const songs = (await Promise.all(uniq.map(async ([id, u]) => {
+    try { return normalizeDjpSong(id, await djpSongPage(u)); } catch { return null; }
+  }))).filter(Boolean).filter(t => scrapeKeep(t, words));
+  return { songs, matched: all.length, scanned: uniq.length };
+}
+async function djArtistSongs(name, budget = 80) {
+  const words = normName(name).split(' ').filter(w => w.length > 1);
+  if (!words.length) return { songs: [], matched: 0, scanned: 0 };
+  const idx = await djLoadIndex().catch(() => new Map());
+  const hits = [];
+  for (const [key, e] of idx) {
+    if (e.album) continue;
+    if (words.every(w => String(e.slug || '').includes(w))) hits.push(key);
+  }
+  const uniq = [...new Set(hits)].slice(0, budget);
+  const songs = (await Promise.all(uniq.map(async s => {
+    try {
+      const e = idx.get(s);
+      if (!e) return null;
+      return normalizeDjSong(s, await djSongPage(e.url));
+    } catch { return null; }
+  }))).filter(Boolean).filter(t => scrapeKeep(t, words));
+  return { songs, matched: hits.length, scanned: uniq.length };
+}
+async function mrjArtistSongs(name, budget = 80) {
+  const words = normName(name).split(' ').filter(w => w.length > 1);
+  if (!words.length) return { songs: [], matched: 0, scanned: 0 };
+  const idx = await mrjLoadIndex().catch(() => new Map());
+  const hits = [];
+  for (const [key, e] of idx) {
+    if (e.album) continue;
+    if (words.every(w => String(e.slug || '').toLowerCase().includes(w))) hits.push(String(key));
+  }
+  const uniq = [...new Set(hits)].slice(0, budget);
+  const songs = (await Promise.all(uniq.map(async sid => {
+    try {
+      const e = idx.get(sid);
+      if (!e) return null;
+      return normalizeMrjSong(sid, await mrjSongPage(e.url));
+    } catch { return null; }
+  }))).filter(Boolean).filter(t => scrapeKeep(t, words));
+  return { songs, matched: hits.length, scanned: uniq.length };
+}
+async function saavnArtistSongs(name, budget = 60) {
+  const words = normName(name).split(' ').filter(w => w.length > 1);
+  if (!words.length) return { songs: [], matched: 0, scanned: 0 };
+  const [searched, albums] = await Promise.all([
+    saavnSearchSongs(name, 20).catch(() => []),
+    saavnSearchAlbums(name, 8).catch(() => []),
+  ]);
+  const pool = searched.filter(t => artistNameMatch(t.artist?.name, words));
+  // album deepening: Saavn search caps at 20 — pull the artist's albums for the rest
+  const details = await Promise.all((albums || []).slice(0, 6).map(a => saavnAlbumDetail(a.sourceId).catch(() => null)));
+  for (const d of details) {
+    if (!d) continue;
+    for (const s of (d.songs || [])) {
+      if (artistNameMatch(s.artist?.name, words)) pool.push(s);
+    }
+  }
+  const seen = new Set(), out = [];
+  for (const t of pool) {
+    if (!t || seen.has(t.id)) continue;
+    seen.add(t.id);
+    out.push(t);
+    if (out.length >= budget) break;
+  }
+  return { songs: out, matched: pool.length, scanned: pool.length };
+}
+// every song by one artist, merged across ALL providers (mirrors kept for failover)
+app.get('/api/artist-songs', async (req, res) => {
+  const name = (req.query.name || '').trim();
+  if (!name) return res.json({ songs: [], perProvider: {}, totalMatched: 0, truncated: false, name: '' });
+  const cached = getCache(req.originalUrl);
+  if (cached) return res.json(cached);
+  try {
+    const legs = (await Promise.all([
+      safeSearch(djpArtistSongs(name), 42000),
+      safeSearch(djArtistSongs(name), 42000),
+      safeSearch(mrjArtistSongs(name), 42000),
+      safeSearch(saavnArtistSongs(name), 42000),
+    ])).map(x => Array.isArray(x) ? { songs: [], matched: 0, scanned: 0, timedOut: true } : x);
+    const [D, J, M, S] = legs;
+    const CAP = 200;
+    const merged = mergeTracks([interleave([D.songs, J.songs, M.songs, S.songs])]);
+    const payload = {
+      name,
+      songs: merged.slice(0, CAP),
+      perProvider: { djp: D.songs.length, dj: J.songs.length, mrj: M.songs.length, saavn: S.songs.length },
+      matchedBy: { djp: D.matched, dj: J.matched, mrj: M.matched, saavn: S.matched },
+      totalMatched: D.matched + J.matched + M.matched + S.matched,
+      truncated: merged.length > CAP || legs.some(l => l.scanned < l.matched),
+      ...(legs.some(l => l.timedOut) ? { partial: true } : {}),
+    };
+    setCache(req.originalUrl, payload, 15 * 60 * 1000);
+    res.json(payload);
+  } catch (e) { res.status(502).json({ error: 'Artist songs failed', detail: e.message }); }
+});
+
 app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').trim();
   const type = (req.query.type || 'all').toLowerCase();
@@ -1945,10 +2083,11 @@ app.get('/api/search', async (req, res) => {
     }
     // artist query? pull deeper from EVERY provider and rank the artist's songs first
     const qw = normName(effQ).split(' ').filter(w => w.length > 1);
-    const artistMode = qw.length > 0 && artists.some(ar => {
+    const artistHit = qw.length > 0 && artists.find(ar => {
       const n = normName(ar.name);
       return n && qw.every(w => n.includes(w));
     });
+    const artistMode = !!artistHit;
     if (type === 'all' || type === 'songs') {
       const L = artistMode ? [18, 14, 14, 12] : [10, 8, 8, 8];
       const [a, b, c, s] = await Promise.all([
@@ -1983,7 +2122,7 @@ app.get('/api/search', async (req, res) => {
       const weak = !songs.length || songs.slice(0, 3).every(t => overlapScore(titleTokens(effQ), titleTokens(t.title)) < 0.3);
       if (weak) didYouMean = await suggestCorrection(effQ).catch(() => '');
     }
-    const payload = { songs, albums, artists, ...((nl.note || nl.mode || nl.year || nl.unsupported || nl.cleaned) ? { nl } : {}), ...(didYouMean ? { didYouMean } : {}) };
+    const payload = { songs, albums, artists, ...(artistMode ? { artist: { name: artistHit.name } } : {}), ...((nl.note || nl.mode || nl.year || nl.unsupported || nl.cleaned) ? { nl } : {}), ...(didYouMean ? { didYouMean } : {}) };
     setCache(req.originalUrl, payload);
     res.json(payload);
   } catch (e) { res.status(502).json({ error: 'Search failed', detail: e.message }); }

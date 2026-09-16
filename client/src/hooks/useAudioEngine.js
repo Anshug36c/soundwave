@@ -54,6 +54,7 @@ const preloadPool = [];
 function preloadTrack(track, quality) {
   if (!track?.streamUrl) return;
   try { api.warm(streamFor(track, quality)); } catch { /* noop */ }
+  try { if (navigator.connection?.saveData) return; } catch { /* noop */ }
   try {
     const a = new Audio();
     a.preload = 'auto';
@@ -76,7 +77,71 @@ function preloadTrack(track, quality) {
     }
   } catch { /* noop */ }
 }
-let deepPrefetchFor = '';
+// ---------- hot standby: next track staged to canplaythrough BEFORE current ends ----------
+// queue advances then cut instantly (no fade-out stall, no src-set buffering gap)
+let standbyAudio = null, standbyFor = '', standbyQ = '', standbyReady = false;
+let upcomingKey = '';
+function teardownStandby() {
+  if (standbyAudio) {
+    try { standbyAudio.removeAttribute('src'); standbyAudio.load(); } catch { /* noop */ }
+    standbyAudio = null;
+  }
+  standbyFor = ''; standbyReady = false;
+}
+function armStandby(track, quality) {
+  const id = track?.id || '';
+  if (standbyFor === id && standbyQ === quality) return; // already staging this one
+  teardownStandby();
+  if (!track?.streamUrl) return;
+  standbyFor = id; standbyQ = quality; standbyReady = false;
+  const url = streamFor(track, quality);
+  try { api.warm(url); } catch { /* noop */ }
+  let saveData = false;
+  try { saveData = !!navigator.connection?.saveData; } catch { /* noop */ }
+  if (saveData) return; // server is warm; spare the user's metered bytes
+  try {
+    const a = new Audio();
+    a.preload = 'auto';
+    a.addEventListener('canplaythrough', () => { if (standbyFor === id) standbyReady = true; });
+    a.addEventListener('error', () => { if (standbyFor === id) standbyReady = false; });
+    a.src = url;
+    a.load();
+    standbyAudio = a;
+  } catch { /* noop */ }
+  try {
+    const st = useStore.getState();
+    if (st.instantPreview && track.title && track.artist?.name) {
+      const p = new Audio();
+      p.preload = 'auto';
+      p.src = api.tidalPreview(track.title, track.artist.name);
+      p.load();
+      preloadPool.push(p);
+      while (preloadPool.length > 8) {
+        const old = preloadPool.shift();
+        try { old.removeAttribute('src'); old.load(); } catch { /* noop */ }
+      }
+    }
+  } catch { /* noop */ }
+}
+function neighborAt(off) {
+  const st = useStore.getState();
+  const q = st.queue, ix = st.index;
+  if (!q.length || ix < 0) return null;
+  if (ix + off < q.length) return q[ix + off];
+  if (st.repeat !== 'off') return q[(ix + off) % q.length]; // wrapped repeat target
+  return null;
+}
+function refreshUpcoming() {
+  const st = useStore.getState();
+  const n1 = neighborAt(1), n2 = neighborAt(2);
+  const key = `${st.shuffle ? 'S' : ''}|${st.quality}|${n1?.id || ''}|${n2?.id || ''}`;
+  if (key === upcomingKey) return; // nothing changed around us
+  upcomingKey = key;
+  if (st.shuffle) { teardownStandby(); return; } // next is random — don't stage wrong tracks
+  if (n1) armStandby(n1, st.quality);
+  else teardownStandby();
+  if (n2) { try { preloadTrack(n2, st.quality); } catch { /* noop */ } }
+}
 function cleanupBg() {
   if (bgAudio) {
     try { bgAudio.pause(); bgAudio.removeAttribute('src'); bgAudio.load(); } catch { /* noop */ }
@@ -156,13 +221,9 @@ function onTime() {
     }
   } catch { /* noop */ }
   if (sleepTimerEndsAt && Date.now() >= sleepTimerEndsAt) { sleepTimerEndsAt = 0; fireSleepTimer(); }
-  // late prefetch: long track or seek — make sure next is hot past the halfway mark
+  // late pre-stage: long track or seek — re-verify next is hot past the halfway mark
   try {
-    const q = st.queue, t = q[st.index];
-    if (t && el.duration > 30 && el.currentTime > el.duration * 0.55 && deepPrefetchFor !== t.id) {
-      deepPrefetchFor = t.id;
-      [q[st.index + 1], q[st.index + 2]].forEach(n => { if (n) preloadTrack(n, st.quality); });
-    }
+    if (el.duration > 30 && el.currentTime > el.duration * 0.55) refreshUpcoming();
   } catch { /* noop */ }
 }
 function onLoaded() {
@@ -303,6 +364,8 @@ export function useAudioEngine() {
   const sleepTimerMin = useStore(s => s.sleepTimerMin);
   const currentTime = useStore(s => s.currentTime);
   const studioOn = useStore(s => s.studioOn);
+  const repeat = useStore(s => s.repeat);
+  const shuffle = useStore(s => s.shuffle);
 
   const track = index >= 0 ? queue[index] : null;
 
@@ -332,7 +395,8 @@ export function useAudioEngine() {
         } catch { /* plain fallback */ }
       }
       if (el.dataset.trackId !== track.id) {
-        const doFade = st.crossfade && !st.muted && el.src && !el.paused && el.currentTime > 1;
+        const hot = standbyReady && standbyFor === track.id;
+        const doFade = st.crossfade && !st.muted && el.src && !el.paused && el.currentTime > 1 && !hot;
         if (doFade) {
           await fadeVolume(el, 0, 350);
           if (cancelled) return;
@@ -361,12 +425,8 @@ export function useAudioEngine() {
         if (st.crossfade && !st.muted) fadeVolume(el, st.volume, 600);
         else el.volume = st.muted ? 0 : st.volume;
       }
-      // prefetch next two tracks (browser cache + server warm + preview) for instant starts
-      try {
-        const q = useStore.getState().queue;
-        const ix = useStore.getState().index;
-        [q[ix + 1], q[ix + 2]].forEach(n => { if (n) preloadTrack(n, quality); });
-      } catch { /* noop */ }
+      // hot-standby prefetch: next track fully staged, the one after warming
+      try { refreshUpcoming(); } catch { /* noop */ }
       // similar songs for current track (also pre-warmed so they start instantly)
       if (track.title) {
         api.similar(track.title, track.artist?.name || '', 8).then(j => {
@@ -396,6 +456,15 @@ export function useAudioEngine() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [track?.id]);
+
+  // re-stage upcoming tracks whenever the queue around us shifts
+  // (reorder, add-to-queue, repeat/shuffle/quality toggles) — key-guarded, cheap
+  const n1id = queue[index + 1]?.id;
+  const n2id = queue[index + 2]?.id;
+  useEffect(() => {
+    try { refreshUpcoming(); } catch { /* noop */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, n1id, n2id, quality, repeat, shuffle, queue.length]);
 
   // Studio toggle: recreate element (routing is permanent), keep position + mode
   useEffect(() => {

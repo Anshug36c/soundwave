@@ -29,6 +29,7 @@ export const api = {
   song: (source, id) => get(`/song/${source}/${encodeURIComponent(id)}`),
   album: (source, id) => get(`/album/${source}/${encodeURIComponent(id)}`),
   artist: (source, id) => get(`/artist/${source}/${encodeURIComponent(id)}`),
+  artistSongs: (name) => get(`/artist-songs?name=${encodeURIComponent(name || '')}`),
   lyrics: ({ artist, title }) => get(`/lyrics?artist=${encodeURIComponent(artist || '')}&title=${encodeURIComponent(title || '')}`),
   tidalPreview: (title, artist) => `${BASE}/tidal-preview?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}`,
   similar: (title, artist, limit = 12) => get(`/similar?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}&limit=${limit}`),

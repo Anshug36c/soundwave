@@ -41,6 +41,7 @@ export default function App() {
               <Route path="/liked" element={<LikedSongs />} />
               <Route path="/playlist/:id" element={<LocalPlaylist />} />
               <Route path="/album/:source/:id" element={<AlbumPage />} />
+              <Route path="/artist/all/:name" element={<ArtistPage />} />
               <Route path="/artist/:source/:id" element={<ArtistPage />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/" replace />} />

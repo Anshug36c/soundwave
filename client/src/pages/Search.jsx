@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api, debounce, tasteFiltered } from '../services/musicApi';
 import { useStore } from '../store/useStore';
 import { SongRow, AlbumCard, ArtistCard, SkeletonList } from '../components/Cards';
@@ -199,6 +199,13 @@ export default function Search() {
       )}
 
       {loading && <div className="mt-5"><SkeletonList /></div>}
+
+      {!loading && q && tab === 'Songs' && results.artist?.name && (
+        <Link to={`/artist/all/${encodeURIComponent(results.artist.name)}`}
+          className="mt-4 flex items-center justify-between gap-2 card p-4 font-bold text-sm">
+          <span>All songs by {results.artist.name} — every provider</span><span aria-hidden>→</span>
+        </Link>
+      )}
 
       {!loading && q && tab === 'Songs' && (() => {
         const visible = tasteFiltered(results.songs, disliked, hiddenArtists);
