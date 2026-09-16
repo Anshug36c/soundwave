@@ -7,7 +7,7 @@ const DIAG_KEY = 'soundwave-diag-v1';
 function diagLoad() {
   try {
     const j = JSON.parse(sessionStorage.getItem(DIAG_KEY) || 'null');
-    if (j && Array.isArray(j.reqs)) return { reqs: j.reqs.slice(-60), fails: j.fails | 0, stalls: j.stalls | 0, skips: j.skips | 0 };
+    if (j && Array.isArray(j.reqs)) return { reqs: j.reqs.slice(-60), fails: j.fails | 0, stalls: j.stalls | 0, skips: j.skips | 0, events: Array.isArray(j.events) ? j.events.slice(-20) : [] };
   } catch { /* noop */ }
   return null;
 }
@@ -16,20 +16,28 @@ export const diag = {
   fails: 0,   // non-abort failures
   stalls: 0,  // stall-watchdog trips
   skips: 0,   // tracks skipped after repeated stall recoveries
+  events: [], // last 20 { e, ms } — playback transitions etc.
   reset() {
-    this.reqs = []; this.fails = 0; this.stalls = 0; this.skips = 0;
+    this.reqs = []; this.fails = 0; this.stalls = 0; this.skips = 0; this.events = [];
     try { sessionStorage.removeItem(DIAG_KEY); } catch { /* noop */ }
   },
   ...(diagLoad() || {}),
 };
 function diagSave() {
-  try { sessionStorage.setItem(DIAG_KEY, JSON.stringify({ reqs: diag.reqs, fails: diag.fails, stalls: diag.stalls, skips: diag.skips })); } catch { /* noop */ }
+  try { sessionStorage.setItem(DIAG_KEY, JSON.stringify({ reqs: diag.reqs, fails: diag.fails, stalls: diag.stalls, skips: diag.skips, events: diag.events })); } catch { /* noop */ }
 }
 function diagRecord(path, ms, ok) {
   try {
     diag.reqs.push({ p: String(path).split('?')[0], ms: Math.round(ms), ok: !!ok });
     if (diag.reqs.length > 60) diag.reqs.splice(0, diag.reqs.length - 60);
     if (!ok) diag.fails++;
+    diagSave();
+  } catch { /* noop */ }
+}
+export function diagEvent(name, ms) {
+  try {
+    diag.events.push({ e: String(name), ms: Math.round(ms) });
+    if (diag.events.length > 20) diag.events.splice(0, diag.events.length - 20);
     diagSave();
   } catch { /* noop */ }
 }
@@ -112,6 +120,8 @@ async function post(path, body, { timeout = 30000 } = {}) {
   }
 }
 
+const warmedUrls = new Map(); // warm-url -> last-fired time (client dedup)
+
 export const api = {
   health: () => get('/health'),
   home: () => get('/home'),
@@ -141,12 +151,20 @@ export const api = {
     me: () => get('/auth/me'),
     logout: () => post('/auth/logout', {}),
   },
-  // fire-and-forget: warm server audio cache ahead of playback (zero-delay starts)
+  // fire-and-forget: warm server audio cache ahead of playback (zero-delay starts).
+  // Deduped per URL (60s): standby + pool + similar + track-load all warm the
+  // same tracks — one warm request per song, not four.
   warm: (streamUrl) => {
     try {
       if (!navigator.onLine) return;
       const u = String(streamUrl || '').replace('/api/audio', '/api/warm');
-      if (u !== streamUrl) fetch(u).catch(() => {});
+      if (u === streamUrl) return;
+      const now = Date.now();
+      const last = warmedUrls.get(u) || 0;
+      if (now - last < 60000) return;
+      if (warmedUrls.size > 200) warmedUrls.delete(warmedUrls.keys().next().value);
+      warmedUrls.set(u, now);
+      fetch(u).catch(() => {});
     } catch { /* prefetch is best-effort */ }
   },
 };

@@ -12,6 +12,15 @@ import {
   DownloadIcon, ShareIcon, HeartIcon, PlusIcon, NoteIcon, CloseIcon, CheckIcon, MicIcon,
 } from './Icons';
 
+function SpinIcon({ size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className="animate-spin">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /* Spotify-style seek bar: light fill, green + knob on hover */
 function ProgressBar({ currentTime, duration }) {
   const pct = duration ? Math.min(100, (currentTime / duration) * 100) : 0;
@@ -55,6 +64,7 @@ export function MiniPlayer() {
   const togglePlay = useStore(s => s.togglePlay);
   const next = useStore(s => s.next);
   const prev = useStore(s => s.prev);
+  const buffering = useStore(s => s.buffering);
   const currentTime = useStore(s => s.currentTime);
   const duration = useStore(s => s.duration);
   const setShowFullPlayer = useStore(s => s.setShowFullPlayer);
@@ -97,7 +107,7 @@ export function MiniPlayer() {
             </span>
           </button>
           <button onClick={prev} className="p-2.5 text-dim hover:text-white" aria-label="Previous"><PrevIcon size={22} /></button>
-          <button onClick={togglePlay} className="w-11 h-11 rounded-full btn-accent grid place-items-center" aria-label={isPlaying ? 'Pause' : 'Play'}>{isPlaying ? <PauseIcon size={19} /> : <PlayIcon size={19} />}</button>
+          <button onClick={togglePlay} className="w-11 h-11 rounded-full btn-accent grid place-items-center" aria-label={buffering && isPlaying ? 'Loading audio' : isPlaying ? 'Pause' : 'Play'}>{buffering && isPlaying ? <SpinIcon size={19} /> : isPlaying ? <PauseIcon size={19} /> : <PlayIcon size={19} />}</button>
           <button onClick={next} className="p-2.5 text-dim hover:text-white" aria-label="Next"><NextIcon size={22} /></button>
         </div>
       </div>
@@ -120,8 +130,8 @@ export function MiniPlayer() {
               {shuffle && <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-accent" />}
             </button>
             <button onClick={prev} aria-label="Previous" className="p-1 text-dim hover:text-white transition-colors"><PrevIcon size={20} /></button>
-            <button onClick={togglePlay} aria-label={isPlaying ? 'Pause' : 'Play'} className="w-9 h-9 rounded-full btn-accent grid place-items-center">
-              {isPlaying ? <PauseIcon size={17} /> : <PlayIcon size={17} />}
+            <button onClick={togglePlay} aria-label={buffering && isPlaying ? 'Loading audio' : isPlaying ? 'Pause' : 'Play'} className="w-9 h-9 rounded-full btn-accent grid place-items-center">
+              {buffering && isPlaying ? <SpinIcon size={17} /> : isPlaying ? <PauseIcon size={17} /> : <PlayIcon size={17} />}
             </button>
             <button onClick={next} aria-label="Next" className="p-1 text-dim hover:text-white transition-colors"><NextIcon size={20} /></button>
             <button onClick={cycleRepeat} aria-label="Repeat" className={`relative p-1 transition-colors ${repeat !== 'off' ? 'accent' : 'text-dim hover:text-white'}`}>
@@ -233,6 +243,7 @@ export function FullPlayer() {
   const toggleDownload = useStore(s => s.toggleDownload);
   const sleepTimerMin = useStore(s => s.sleepTimerMin);
   const setSleepTimer = useStore(s => s.setSleepTimer);
+  const buffering = useStore(s => s.buffering);
   const playbackRate = useStore(s => s.playbackRate);
   const setPlaybackRate = useStore(s => s.setPlaybackRate);
   const cycleSpeed = () => { const steps = [1, 1.25, 1.5, 2, 0.5]; setPlaybackRate(steps[(steps.indexOf(playbackRate) + 1) % steps.length]); };
@@ -318,7 +329,7 @@ export function FullPlayer() {
             <div className="flex items-center gap-5 mt-3">
               <button onClick={toggleShuffle} className={`p-2 ${shuffle ? 'accent' : 'text-dim'}`} aria-label="Shuffle" title="Shuffle"><ShuffleIcon size={20} /></button>
               <button onClick={prev} className="p-2 text-white/80 hover:text-white" aria-label="Previous"><PrevIcon size={28} /></button>
-              <button onClick={togglePlay} className="w-16 h-16 rounded-full btn-accent grid place-items-center" aria-label={isPlaying ? 'Pause' : 'Play'}>{isPlaying ? <PauseIcon size={26} /> : <PlayIcon size={26} />}</button>
+              <button onClick={togglePlay} className="w-16 h-16 rounded-full btn-accent grid place-items-center" aria-label={buffering && isPlaying ? 'Loading audio' : isPlaying ? 'Pause' : 'Play'}>{buffering && isPlaying ? <SpinIcon size={26} /> : isPlaying ? <PauseIcon size={26} /> : <PlayIcon size={26} />}</button>
               <button onClick={next} className="p-2 text-white/80 hover:text-white" aria-label="Next"><NextIcon size={28} /></button>
               <button onClick={cycleRepeat} className={`p-2 ${repeat !== 'off' ? 'accent' : 'text-dim'}`} aria-label="Repeat" title={`Repeat: ${repeat}`}>{repeat === 'one' ? <RepeatOneIcon size={20} /> : <RepeatIcon size={20} />}</button>
             </div>

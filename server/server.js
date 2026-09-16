@@ -1200,7 +1200,16 @@ async function resolveMirror(source, sid) {
   }
 }
 
-const audioCache = new Map(); // key -> { buf, br, time }
+const audioCache = new Map(); // key -> { buf, br, time } (LRU: hits refresh recency, TTL by age)
+const audioInflight = new Map(); // key -> Promise (owner streams, waiters serve its cache)
+let audioHits = 0, audioMiss = 0;
+function touchAudio(key) {
+  const h = audioCache.get(key);
+  if (h) { audioCache.delete(key); audioCache.set(key, h); }
+}
+function waitForAudio(pending, ms) {
+  return Promise.race([Promise.resolve(pending).then(() => true), new Promise(r => setTimeout(() => r(false), ms))]);
+}
 function serveBuf(res, req, buf, cached, br, type = 'audio/mpeg') {
   res.setHeader('Content-Type', type);
   res.setHeader('Accept-Ranges', 'bytes');
@@ -1212,6 +1221,10 @@ function serveBuf(res, req, buf, cached, br, type = 'audio/mpeg') {
     const m = range.match(/bytes=(\d*)-(\d*)/);
     const start = m?.[1] ? parseInt(m[1], 10) : 0;
     const end = m?.[2] ? parseInt(m[2], 10) : buf.length - 1;
+    if (start >= buf.length) {
+      res.setHeader('Content-Range', `bytes */${buf.length}`);
+      return res.status(416).end();
+    }
     const s = Math.min(start, buf.length - 1), e = Math.min(end, buf.length - 1);
     if (s > e) return res.status(416).end();
     res.status(206);
@@ -1520,7 +1533,7 @@ app.get('/api/warm', async (req, res) => {
   if (!src || !sid) return res.status(400).json({ error: 'Missing src/id' });
   const key = audioKey(src, sid, q, req.query.t || '', req.query.ar || '');
   const hit = audioCache.get(key);
-  if (hit && Date.now() - hit.time < AUDIO_TTL) return res.json({ cached: true });
+  if (hit && Date.now() - hit.time < AUDIO_TTL) { touchAudio(key); return res.json({ cached: true }); }
   if (warmInflight.has(key)) return res.status(202).json({ warming: true });
   warmInflight.set(key, Date.now());
   const qs = new URLSearchParams();
@@ -1545,7 +1558,21 @@ app.get('/api/audio', async (req, res) => {
   const recT = (req.query.t || '').trim(), recAr = (req.query.ar || '').trim();
   const key = audioKey(src, sid, q, recT, recAr);
   const hit = audioCache.get(key);
-  if (hit && Date.now() - hit.time < AUDIO_TTL) return serveBuf(res, req, hit.buf, true, hit.br, hit.type || 'audio/mpeg');
+  if (hit && Date.now() - hit.time < AUDIO_TTL) { touchAudio(key); audioHits++; return serveBuf(res, req, hit.buf, true, hit.br, hit.type || 'audio/mpeg'); }
+  audioMiss++;
+  // download dedup: concurrent identical requests share ONE upstream fetch.
+  // First full request owns (proxies + caches); others wait, then serve its
+  // cache. Range requests never own (206s aren't cacheable) but may wait.
+  const wantRangeEarly = !!req.headers.range;
+  let releaseOwn = null;
+  const pending = audioInflight.get(key);
+  if (pending) {
+    const settled = await waitForAudio(pending, wantRangeEarly ? 8000 : 100000);
+    const h2 = audioCache.get(key);
+    if (settled && h2 && Date.now() - h2.time < AUDIO_TTL) { touchAudio(key); audioHits++; return serveBuf(res, req, h2.buf, true, h2.br, h2.type || 'audio/mpeg'); }
+  } else if (!wantRangeEarly) {
+    audioInflight.set(key, new Promise((resolve) => { releaseOwn = () => { audioInflight.delete(key); resolve(true); }; }));
+  }
   try {
     const resolved = (await Promise.all(mirrors.map(async m => ({ ...m, r: await resolveMirror(m.source, m.sid) })))).filter(x => x.r);
     // (no early return: empty lists fall through to cross-source recovery below)
@@ -1565,15 +1592,24 @@ app.get('/api/audio', async (req, res) => {
         const urls = [m.r.mp3s[br] || []].flat().filter(Boolean);
         for (const url of urls) {
         const t0 = Date.now();
+        const ctrl = new AbortController();
+        let reader = null;
+        // TTFB budget first (dead mirrors fail fast to the next candidate),
+        // then a rolling activity budget: 25s of silence mid-stream = dead socket.
+        // (No total cap: slow-but-moving streams must survive for thin clients.)
+        let to = setTimeout(() => ctrl.abort(), 20000);
+        const bumpActivity = () => {
+          clearTimeout(to);
+          to = setTimeout(() => { try { reader?.cancel(); } catch {} ctrl.abort(); }, 25000);
+        };
         try {
-          const ctrl = new AbortController();
-          const to = setTimeout(() => ctrl.abort(), 90000);
           const up = await fetch(url, {
             signal: ctrl.signal,
             headers: { 'User-Agent': DJP_UA, ...(refererFor(url) ? { Referer: refererFor(url) } : {}), ...(wantRange ? { Range: req.headers.range } : {}) },
           });
-          if (up.status !== 200 && up.status !== 206) { clearTimeout(to); continue; }
-          if (wantRange && up.status !== 206) { clearTimeout(to); continue; } // range-ignoring mirror: skip
+          clearTimeout(to);
+          if ((up.status !== 200 && up.status !== 206) || !up.body) continue;
+          if (wantRange && up.status !== 206) continue; // range-ignoring mirror: skip
           noteCdn(new URL(url).host, Date.now() - t0);
           res.status(up.status);
           res.setHeader('Content-Type', m.r.type || 'audio/mpeg');
@@ -1587,26 +1623,53 @@ app.get('/api/audio', async (req, res) => {
           res.setHeader('X-Audio-Bitrate', br);
           res.setHeader('X-Audio-Mirror', m.source);
           if (recovered) res.setHeader('X-Audio-Recovered', '1');
-          const reader = up.body.getReader();
+          reader = up.body.getReader();
           let chunks = up.status === 200 ? [] : null;
           let received = 0, aborted = false;
-          req.on('close', () => { aborted = true; clearTimeout(to); try { reader.cancel(); } catch {} });
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            received += value.length;
-            if (chunks) { if (received > 20 * 1024 * 1024) chunks = null; else chunks.push(value); }
-            if (!res.write(value)) await new Promise(r => res.once('drain', r));
+          // 'close' also fires on normal completion — only a pre-finish close is an abort
+          const onClose = () => { if (!res.writableEnded) { aborted = true; try { reader.cancel(); } catch {} } };
+          req.on('close', onClose);
+          // ONE shared close-resolver for every backpressure wait below —
+          // a per-chunk req.once('close') trips MaxListeners on big files
+          let closedResolve = null;
+          const closedP = new Promise((r) => { closedResolve = r; });
+          const onClosedDone = () => { try { closedResolve(); } catch {} };
+          req.once('close', onClosedDone);
+          bumpActivity();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              bumpActivity();
+              received += value.length;
+              if (chunks) { if (received > 20 * 1024 * 1024) chunks = null; else chunks.push(value); }
+              if (aborted) break;
+              let okWrite = true;
+              try { okWrite = res.write(value); } catch { aborted = true; break; }
+              // backpressure wait must also resolve on client disconnect,
+              // or this handler (and its inflight key) hangs forever
+              if (!okWrite && !aborted) await Promise.race([new Promise((r) => res.once('drain', r)), closedP]);
+            }
+          } finally {
+            clearTimeout(to);
+            req.removeListener('close', onClose);
+            req.removeListener('close', onClosedDone);
           }
-          clearTimeout(to);
-          res.end();
+          if (aborted) { try { res.destroy(); } catch {} return true; } // client gone: nothing to cache
+          try { res.end(); } catch {}
           const expected = len ? parseInt(len, 10) : 0;
-          if (chunks && !aborted && received > 100000 && (!expected || received === expected)) {
+          if (chunks && received > 100000 && (!expected || received === expected)) {
             if (audioCache.size >= AUDIO_MAX) audioCache.delete(audioCache.keys().next().value);
             audioCache.set(key, { buf: Buffer.concat(chunks), br, time: Date.now(), type: m.r.type || 'audio/mpeg' });
           }
           return true;
-        } catch { /* next candidate */ }
+        } catch {
+          clearTimeout(to);
+          // mid-stream death AFTER headers went out: destroy the response so the
+          // client sees a clean connection error (its retry path) instead of a hang
+          if (res.headersSent && !res.writableEnded) { try { res.destroy(); } catch {} return true; }
+          /* else: next candidate */
+        }
         }
       }
     }
@@ -1630,6 +1693,7 @@ app.get('/api/audio', async (req, res) => {
     } catch { /* noop */ }
     if (!res.headersSent) res.status(502).json({ error: 'All mirrors failed' });
   } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'Audio failed', detail: e.message }); }
+  finally { try { releaseOwn?.(); } catch { /* noop */ } }
 });
 
 // ---------------- Tidal FLAC previews (instant starter while full MP3 loads) ----------------
@@ -1747,6 +1811,7 @@ app.get('/api/health', (req, res) => res.json({
   memMB: Math.round(process.memoryUsage().heapUsed / 1048576),
   indexes: { djp: djpIndex.size, dj: djIndex.size, mrj: mrjIndex.size },
   caches: { api: cache.size, pages: djpPageCache.size, audio: audioCache.size },
+  audio: { hits: audioHits, misses: audioMiss, inflight: audioInflight.size },
   outbound: { active: outActive, queued: outQueue.length },
   degraded: srcDegraded(),
 }));

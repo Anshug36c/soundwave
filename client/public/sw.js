@@ -34,15 +34,50 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== self.location.origin) return;
   // Audio: serve explicit offline downloads from cache; never auto-cache streams.
   // (AUDIO v4 cached every played track; v5 caches only what the user taps Offline.)
+  // Range-aware: seeks send Range requests — slice the cached file into a 206,
+  // since a 200 full-body reply to a Range request fails the media load.
   if (request.destination === 'audio' || url.pathname.startsWith('/api/stream')) {
-    e.respondWith(caches.match(request).then((hit) => hit || fetch(request)));
+    e.respondWith((async () => {
+      const hit = await caches.match(request);
+      if (!hit) return fetch(request);
+      const range = request.headers.get('range');
+      if (!range) return hit;
+      const m = range.match(/bytes=(\d*)-(\d*)/);
+      const buf = await hit.arrayBuffer();
+      const start = m?.[1] ? parseInt(m[1], 10) : 0;
+      const end = m?.[2] ? parseInt(m[2], 10) : buf.byteLength - 1;
+      if (start >= buf.byteLength || start > end) {
+        return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${buf.byteLength}` } });
+      }
+      const e2 = Math.min(end, buf.byteLength - 1);
+      return new Response(buf.slice(start, e2 + 1), {
+        status: 206,
+        headers: {
+          'Content-Type': hit.headers.get('content-type') || 'audio/mpeg',
+          'Content-Range': `bytes ${start}-${e2}/${buf.byteLength}`,
+          'Content-Length': String(e2 - start + 1),
+          'Accept-Ranges': 'bytes',
+        },
+      });
+    })());
     return;
   }
-  // API: network-first with cache fallback
+  // API: network-first with cache fallback. Only small OK responses are kept
+  // (never errors, never streams), capped at 60 entries so the shell cache
+  // can't grow without bound.
   if (url.pathname.startsWith('/api/')) {
     e.respondWith(fetch(request).then((res) => {
-      const copy = res.clone();
-      caches.open(SHELL).then((c) => c.put(request, copy)).catch(() => {});
+      const len = parseInt(res.headers.get('content-length') || '0', 10) || 0;
+      if (res.ok && (!len || len < 524288)) {
+        const copy = res.clone();
+        caches.open(SHELL).then((c) => {
+          c.put(request, copy).catch(() => {});
+          c.keys().then((keys) => {
+            const apiKeys = keys.filter((k) => { try { return new URL(k.url).pathname.startsWith('/api/'); } catch { return false; } });
+            if (apiKeys.length > 60) c.delete(apiKeys[0]).catch(() => {});
+          }).catch(() => {});
+        }).catch(() => {});
+      }
       return res;
     }).catch(() => caches.match(request))));
     return;

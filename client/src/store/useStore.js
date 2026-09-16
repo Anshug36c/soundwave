@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { streamFor } from '../services/musicApi';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -32,6 +33,8 @@ export const useStore = create(
       queue: [],
       index: -1,
       isPlaying: false,
+      buffering: false, // audible stall or src assigned but not yet playing
+      setBuffering: (v) => set({ buffering: v }),
       shuffle: false,
       repeat: 'off', // off | one | all
       volume: 0.9,
@@ -128,8 +131,9 @@ export const useStore = create(
         const q = s.queue.filter((_, k) => k !== i);
         let idx = s.index;
         if (i < s.index) idx -= 1;
-        if (i === s.index) idx = Math.min(idx, q.length - 1);
-        return { queue: q, index: q.length ? idx : -1, isPlaying: q.length ? s.isPlaying : false };
+        const removedCurrent = i === s.index;
+        if (removedCurrent) idx = Math.min(idx, q.length - 1);
+        return { queue: q, index: q.length ? idx : -1, isPlaying: q.length ? s.isPlaying : false, ...(removedCurrent ? { currentTime: 0 } : null) };
       }),
       clearQueue: () => set({ queue: [], index: -1, isPlaying: false }),
       setPlaying: (v) => set({ isPlaying: v }),
@@ -209,7 +213,9 @@ export const useStore = create(
       toggleDownload: (track) => {
         const s = get();
         const dl = { ...s.downloads };
-        const url = track.streamUrl || track.previewUrl;
+        // cache the EXACT playback URL (quality params included) — the raw
+        // streamUrl never matches a playback request, so offline would always miss
+        const url = track.streamUrl ? streamFor(track, get().quality) : track.previewUrl;
         if (dl[track.id]) {
           delete dl[track.id];
           if (navigator.serviceWorker?.controller) navigator.serviceWorker.controller.postMessage({ type: 'UNCACHE_AUDIO', url });

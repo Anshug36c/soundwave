@@ -1,6 +1,18 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
-import { api, streamFor, diag } from '../services/musicApi';
+import { api, streamFor, diag, diagEvent } from '../services/musicApi';
+
+// structured dev tracing: set localStorage soundwave-debug=1 — silent otherwise
+function dbg(...a) {
+  try { if (localStorage.getItem('soundwave-debug') === '1') console.debug('[audio]', ...a); } catch { /* noop */ }
+}
+
+// refresh-during-playback: resume position (same-tab session only, consumed once)
+const POS_KEY = 'soundwave-pos-v1';
+let pendingSeek = null;
+try { pendingSeek = JSON.parse(sessionStorage.getItem(POS_KEY) || 'null'); } catch { /* noop */ }
+let lastPosSave = 0;
+let switchAt = 0, pendingSwitch = false;
 import * as studio from '../audio/studio';
 
 // Singleton audio element (plain playback). WebAudio routing is permanent per
@@ -19,6 +31,12 @@ function getAudio() {
 // increasing token, so overlapping async play() promises can never fight each
 // other (the old play/pause flicker). Stale promise outcomes are ignored.
 let playToken = 0;
+// Assigning el.src implicitly pauses the element (browser fires 'pause' with
+// timing we can't control). Tag every programmatic src swap so onPause can
+// tell OUR swap-settling apart from genuine user/OS pauses. Safe: every real
+// pause path (togglePlay, media keys, sleep timer) sets the store FIRST.
+let lastSrcAssign = 0;
+function markSrcAssign() { lastSrcAssign = Date.now(); }
 function syncPlayback() {
   const el = getAudio();
   const st = useStore.getState();
@@ -78,15 +96,24 @@ function preloadTrack(track, quality) {
     }
   } catch { /* noop */ }
 }
+// drop every pooled preload (track/queue change made them obsolete); the
+// survivors are re-staged by refreshUpcoming immediately after
+function purgePreloads() {
+  while (preloadPool.length) {
+    const old = preloadPool.shift();
+    try { old.removeAttribute('src'); old.load(); } catch { /* noop */ }
+  }
+}
 // ---------- hot standby: next track staged to canplaythrough BEFORE current ends ----------
 // queue advances then cut instantly (no fade-out stall, no src-set buffering gap)
-let standbyAudio = null, standbyFor = '', standbyQ = '', standbyReady = false;
+let standbyAudio = null, standbyFor = '', standbyQ = '', standbyReady = false, standbyTimer = 0;
 let standbySettledFor = '', upcomingKey = '';
 function teardownStandby() {
   if (standbyAudio) {
     try { standbyAudio.removeAttribute('src'); standbyAudio.load(); } catch { /* noop */ }
     standbyAudio = null;
   }
+  if (standbyTimer) { clearTimeout(standbyTimer); standbyTimer = 0; }
   standbyFor = ''; standbyReady = false; standbySettledFor = '';
 }
 function settleStandby(id) {
@@ -101,6 +128,7 @@ function armStandby(track, quality) {
   if (!track?.streamUrl) return;
   try { if (!navigator.onLine) return; } catch { /* noop */ }
   standbyFor = id; standbyQ = quality; standbyReady = false;
+  dbg('standby arm', id);
   const url = streamFor(track, quality);
   try { api.warm(url); } catch { /* noop */ }
   let saveData = false;
@@ -114,7 +142,8 @@ function armStandby(track, quality) {
     a.src = url;
     a.load();
     standbyAudio = a;
-    setTimeout(() => { if (standbyFor === id) settleStandby(id); }, 30000); // never stall n2 past 30s
+    if (standbyTimer) clearTimeout(standbyTimer);
+    standbyTimer = setTimeout(() => { standbyTimer = 0; if (standbyFor === id) settleStandby(id); }, 30000); // never stall n2 past 30s
   } catch { /* noop */ }
   try {
     const st = useStore.getState();
@@ -170,12 +199,26 @@ function trySwapToFull() {
   const t = el.currentTime || 0;
   if (t > 26) return; // let the preview finish — ended handler takes full from 0
   swapping = true;
+  dbg('preview→full swap at', Math.round(t), 's');
   playMode = 'full';
+  markSrcAssign();
   el.src = fullUrl;
-  // currentTime must be set AFTER metadata is ready, else the track restarts at 0
-  const applyTime = () => { try { el.currentTime = t; } catch { /* noop */ } };
-  if (el.readyState >= 1) applyTime();
-  else el.addEventListener('loadedmetadata', applyTime, { once: true });
+  if (useStore.getState().isPlaying) useStore.getState().setBuffering(true); // swap gap shows the spinner
+  // currentTime must be set AFTER metadata is ready, else the track restarts at 0.
+  // Token-guarded: if the user skipped while metadata was in flight, the stale
+  // seek must not yank the NEW track back to the old position.
+  const tid = el.dataset.trackId;
+  // ALWAYS wait for the new resource's metadata: readyState sampled right after
+  // a src set still describes the OLD resource, so a sync seek is silently lost.
+  el.addEventListener('loadedmetadata', () => {
+    if (getAudio().dataset.trackId !== tid) return;
+    // max-preserving: the boot-resume listener (attached earlier, same element)
+    // fires first on this metadata when the swap won the race against the tidal
+    // metadata — never yank its applied position back to our pre-swap reading.
+    // Normal swaps are unaffected (fresh resource reads ~0, so max() == t).
+    try { el.currentTime = Math.max(t, el.currentTime || 0); } catch { /* noop */ }
+    if (useStore.getState().isPlaying) syncPlayback(); // resume if the swap implicitly paused
+  }, { once: true });
   cleanupBg();
   syncPlayback();
   swapping = false;
@@ -188,14 +231,19 @@ function safeCurrentTime(el, t) {
     el.currentTime = t;
   } catch { /* not seekable yet */ }
 }
-/** Smooth volume ramp (crossfade / sleep fade-out). */
+/** Smooth volume ramp (crossfade / sleep fade-out). Token-cancelled: rapid
+ *  skips start a new fade that kills the old one instead of fighting it. */
+let fadeToken = 0;
+function cancelFade() { fadeToken++; }
 function fadeVolume(el, to, ms) {
   return new Promise(resolve => {
+    const tok = ++fadeToken;
     const from = el.volume;
     if (Math.abs(from - to) < 0.02 || ms <= 0) { el.volume = to; resolve(); return; }
     const steps = 14;
     let i = 0;
     const t = setInterval(() => {
+      if (tok !== fadeToken) { clearInterval(t); resolve(); return; } // superseded
       i++;
       try { el.volume = from + (to - from) * (i / steps); } catch { /* noop */ }
       if (i >= steps) { clearInterval(t); try { el.volume = to; } catch { /* noop */ } resolve(); }
@@ -230,6 +278,14 @@ function onTime() {
   lastProgressAt = Date.now();
   st.setTime(el.currentTime, el.duration || st.duration);
   try {
+    const now = Date.now();
+    if (now - lastPosSave > 5000 && el.currentTime > 5 && st.index >= 0) {
+      lastPosSave = now;
+      const tid = st.queue[st.index]?.id;
+      if (tid) sessionStorage.setItem(POS_KEY, JSON.stringify({ id: tid, t: Math.floor(el.currentTime) }));
+    }
+  } catch { /* noop */ }
+  try {
     if ('mediaSession' in navigator && el.duration && isFinite(el.duration)) {
       const now = Date.now();
       if (now - lastPosState > 1000) {
@@ -252,20 +308,34 @@ function onLoaded() {
   useStore.getState().setTime(el.currentTime, el.duration || 0);
 }
 function onPlay() {
-  useStore.getState().setPlaying(true);
+  const st = useStore.getState();
+  st.setPlaying(true);
+  st.setBuffering(false);
+  if (pendingSwitch) { pendingSwitch = false; try { diagEvent('switch', Date.now() - switchAt); } catch { /* noop */ } }
   try { navigator.mediaSession.playbackState = 'playing'; } catch { /* noop */ }
+}
+function onWaiting() {
+  useStore.getState().setBuffering(true); // audible stall: spinner until data flows
+}
+function onCanPlay() {
+  useStore.getState().setBuffering(false);
 }
 function onPause() {
   const el = getAudio();
-  if (!el.ended && el.readyState > 0) useStore.getState().setPlaying(false);
+  if (el.ended) return;
+  if (el.readyState === 0) return; // mid-load noise
+  if (Date.now() - lastSrcAssign < 800) return; // our own src swap settling
+  useStore.getState().setPlaying(false);
   try { navigator.mediaSession.playbackState = 'paused'; } catch { /* noop */ }
 }
 let recentErrors = [];
 function onError() {
+  useStore.getState().setBuffering(false);
   // preview failed (no Tidal match etc.) — fall through to the full MP3
   if (playMode === 'preview' && fullUrl) {
     playMode = 'full';
     const el = getAudio();
+    markSrcAssign();
     el.src = fullUrl;
     el.currentTime = 0;
     cleanupBg();
@@ -277,9 +347,11 @@ function onError() {
   const now = Date.now();
   recentErrors = recentErrors.filter(t => now - t < 15000);
   recentErrors.push(now);
+  dbg('error', { mode: playMode, src: (() => { try { return getAudio().src.slice(0, 80); } catch { return ''; } })() });
   if (recentErrors.length >= 4) {
     recentErrors = [];
     s.setPlaying(false);
+    pendingSwitch = false; // don't record a stale switch time on the next manual play
     s.toast('Playback keeps failing — check your connection', 'error');
     return;
   }
@@ -300,6 +372,7 @@ function onEnded() {
   if (playMode === 'preview' && fullUrl) {
     playMode = 'full';
     const el = getAudio();
+    markSrcAssign();
     el.src = fullUrl;
     el.currentTime = 0;
     cleanupBg();
@@ -334,6 +407,9 @@ function attachAudio(el) {
   el.addEventListener('timeupdate', onTime);
   el.addEventListener('loadedmetadata', onLoaded);
   el.addEventListener('play', onPlay);
+  el.addEventListener('playing', onCanPlay);
+  el.addEventListener('waiting', onWaiting);
+  el.addEventListener('canplay', onCanPlay);
   el.addEventListener('pause', onPause);
   el.addEventListener('error', onError);
   el.addEventListener('ended', onEnded);
@@ -342,6 +418,9 @@ function detachAudio(el) {
   el.removeEventListener('timeupdate', onTime);
   el.removeEventListener('loadedmetadata', onLoaded);
   el.removeEventListener('play', onPlay);
+  el.removeEventListener('playing', onCanPlay);
+  el.removeEventListener('waiting', onWaiting);
+  el.removeEventListener('canplay', onCanPlay);
   el.removeEventListener('pause', onPause);
   el.removeEventListener('error', onError);
   el.removeEventListener('ended', onEnded);
@@ -408,6 +487,7 @@ export function useAudioEngine() {
       const url = streamFor(track, quality);
       if (cancelled) return;
       if (!url) {
+        useStore.getState().setPlaying(false);
         useStore.getState().toast('No playable stream for this track', 'error');
         return;
       }
@@ -422,6 +502,9 @@ export function useAudioEngine() {
       }
       if (el.dataset.trackId !== track.id) {
         const hot = standbyReady && standbyFor === track.id;
+        switchAt = Date.now(); pendingSwitch = true;
+        teardownStandby(); // staged n1 is now current: free its socket before el.src starts
+        purgePreloads();   // queued skips obsolete every pool preload; rebuilt below
         const doFade = st.crossfade && !st.muted && el.src && !el.paused && el.currentTime > 1 && !hot;
         if (doFade) {
           await fadeVolume(el, 0, 350);
@@ -432,9 +515,11 @@ export function useAudioEngine() {
         el.dataset.trackId = track.id;
         fullUrl = url;
         const wantPreview = st.instantPreview && track.title && track.artist?.name;
+        dbg('load', track.id, hot ? 'hot' : 'cold', wantPreview ? 'preview' : 'full');
         if (wantPreview) {
           // race: preview plays instantly, full MP3 swaps in when ready
           playMode = 'preview';
+          markSrcAssign();
           el.src = api.tidalPreview(track.title, track.artist.name);
           bgAudio = new Audio();
           bgAudio.preload = 'auto';
@@ -444,9 +529,25 @@ export function useAudioEngine() {
           try { bgAudio.load(); } catch { /* noop */ }
         } else {
           playMode = 'full';
+          markSrcAssign();
           el.src = url;
         }
-        safeCurrentTime(el, 0);
+        if (pendingSeek && pendingSeek.id === track.id && pendingSeek.t >= 5) {
+          // boot restore: resume where a refresh interrupted (same track, once)
+          const rt = pendingSeek.t;
+          pendingSeek = null;
+          try { sessionStorage.removeItem(POS_KEY); } catch { /* noop */ }
+          const tid = track.id;
+          el.addEventListener('loadedmetadata', () => {
+            if (getAudio().dataset.trackId !== tid) return;
+            try { el.currentTime = rt; } catch { /* noop */ }
+            try { useStore.getState().setTime(rt, el.duration || 0); } catch { /* noop */ } // bar shows resume point while paused
+          }, { once: true });
+          dbg('resume', track.id, `at ${rt}s`);
+        } else {
+          safeCurrentTime(el, 0);
+        }
+        if (useStore.getState().isPlaying) useStore.getState().setBuffering(true); // preparing…
         syncPlayback();
         if (st.crossfade && !st.muted) fadeVolume(el, st.volume, 600);
         else el.volume = st.muted ? 0 : st.volume;
@@ -460,7 +561,13 @@ export function useAudioEngine() {
           if (cancelled) return;
           const songs = j?.songs || [];
           useStore.getState().setSimilar(songs);
-          songs.slice(0, 4).forEach(t => { try { if (t.streamUrl) api.warm(streamFor(t, quality)); } catch { /* noop */ } });
+          // P4 priority: similar-tracks warm waits 2.5s so n1/n2 own the
+          // bandwidth first; cancelled outright if the track changed meanwhile
+          setTimeout(() => {
+            if (cancelled) return;
+            try { if (!navigator.onLine || navigator.connection?.saveData) return; } catch { /* noop */ }
+            songs.slice(0, 4).forEach(t => { try { if (t.streamUrl) api.warm(streamFor(t, quality)); } catch { /* noop */ } });
+          }, 2500);
         }).catch(() => { if (!cancelled) useStore.getState().setSimilar([]); });
       } else useStore.getState().setSimilar([]);
       // media session
@@ -489,12 +596,19 @@ export function useAudioEngine() {
   const n1id = queue[index + 1]?.id;
   const n2id = queue[index + 2]?.id;
   useEffect(() => {
-    try { refreshUpcoming(); } catch { /* noop */ }
+    try { purgePreloads(); refreshUpcoming(); } catch { /* noop */ } // queue shifted: obsolete pool first, then re-stage
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, n1id, n2id, quality, repeat, shuffle, queue.length]);
 
-  // Studio toggle: recreate element (routing is permanent), keep position + mode
+  // Studio toggle: recreate element (routing is permanent), keep position + mode.
+  // MOUNT MUST SKIP: with sync persist rehydration a track is already restored
+  // (and the load effect above has already set el.src in this same commit), so
+  // running here would recreateAudio() away the just-configured element and
+  // orphan its resume listener. Mount-with-studioOn is already handled by the
+  // load effect's ensureGraph call — this path is for toggles only.
+  const firstStudio = useRef(true);
   useEffect(() => {
+    if (firstStudio.current) { firstStudio.current = false; return; }
     const el = getAudio();
     if (!track || !el.src) return;
     const st = useStore.getState();
@@ -504,6 +618,7 @@ export function useAudioEngine() {
     const wasPlaying = !el.paused;
     const nel = recreateAudio();
     nel.dataset.trackId = track.id;
+    markSrcAssign();
     nel.src = direct;
     if (studioOn) {
       try {
@@ -512,9 +627,8 @@ export function useAudioEngine() {
         studio.resume();
       } catch { /* plain fallback */ }
     }
-    const applyTime = () => { try { nel.currentTime = t; } catch { /* noop */ } };
-    if (nel.readyState >= 1) applyTime();
-    else nel.addEventListener('loadedmetadata', applyTime, { once: true });
+    const tid = track.id;
+    nel.addEventListener('loadedmetadata', () => { if (getAudio().dataset.trackId === tid) { try { nel.currentTime = t; } catch { /* noop */ } } }, { once: true });
     if (wasPlaying) syncPlayback();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studioOn]);
@@ -527,12 +641,41 @@ export function useAudioEngine() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying, track?.id]);
 
-  // volume
+  // volume (cancels crossfade ramps — the user's hand wins)
   useEffect(() => {
+    cancelFade();
     const el = getAudio();
     el.volume = volume;
     el.muted = muted;
   }, [volume, muted]);
+
+  // quality change: rebuild the current stream at the new tier, keep position
+  // (preview mode owns its own src — the flip to full picks the new tier up)
+  const firstQuality = useRef(true);
+  useEffect(() => {
+    if (firstQuality.current) { firstQuality.current = false; return; }
+    const el = getAudio();
+    if (!track || !el.src || playMode === 'preview') return;
+    const url = streamFor(track, quality);
+    if (!url) return;
+    const t = (pendingSeek?.id === track.id && pendingSeek.t >= 5) ? pendingSeek.t : (el.currentTime || 0);
+    const wantPlay = useStore.getState().isPlaying; // store truth, not the element's mid-swap state
+    const tid = track.id;
+    markSrcAssign();
+    el.src = url;
+    dbg('quality switch →', quality);
+    el.addEventListener('loadedmetadata', () => {
+      if (getAudio().dataset.trackId !== tid) return;
+      try { el.currentTime = t; } catch { /* noop */ }
+      // deferred resume: the src swap implicitly pauses; re-issue play only
+      // once the element has settled (early-returns if already playing)
+      if (wantPlay) syncPlayback();
+    }, { once: true });
+    teardownStandby(); purgePreloads();
+    try { refreshUpcoming(); } catch { /* noop */ } // re-stage n1/n2 at the new tier
+    if (wantPlay) syncPlayback();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quality]);
 
   // playback speed (pitch-preserving by default)
   useEffect(() => {
@@ -582,10 +725,12 @@ export function useAudioEngine() {
           recoverCount = 0;
           try { diag.skips++; } catch { /* noop */ }
           st.toast('Stream stalled — skipping to next', 'error');
+          dbg('watchdog skip after 3 recoveries');
           st.next();
           return;
         }
         st.toast('Connection stalled — recovering', 'info');
+        dbg('watchdog recover #', recoverCount);
         try { el.load(); } catch { /* noop */ }
         lastProgressAt = Date.now();
         syncPlayback();

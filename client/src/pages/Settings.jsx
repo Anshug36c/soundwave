@@ -24,6 +24,7 @@ function Diagnostics() {
         <span className={diag.fails ? 'text-red-400' : ''}>{diag.fails} failed</span>
         <span>{diag.stalls} stalls</span>
         <span>{diag.skips} stall-skips</span>
+        {diag.events.length > 0 && <span title="track switch → audible start">switches: {diag.events.slice(-4).map(e => `${e.ms}ms`).join(' · ')}</span>}
       </div>
       {slow.length > 0 && <p className="text-xs text-dim mb-1">Slow (&gt;2s): {slow.slice(0, 5).map(r => `${r.p} ${(r.ms / 1000).toFixed(1)}s`).join(' · ')}</p>}
       <div className="max-h-40 overflow-y-auto sheet-scroll text-xs font-mono">
