@@ -63,6 +63,8 @@ cd client && npm ci --include=dev && npm run dev
 |---|---|---|
 | `PORT` | `5090` | Server port |
 | `VITE_API_URL` | `/api` | Client → API base (same-origin in prod) |
+| `GOOGLE_CLIENT_ID` | _(unset)_ | Enables Google sign-in (see `AUTH_SETUP.md`) |
+| `SESSION_SECRET` | _random/boot_ | Signs session cookies — set it so logins survive restarts |
 
 No secrets, no database. Server caches live in memory (+ `server/data/*.json` indexes).
 

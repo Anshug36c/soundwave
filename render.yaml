@@ -20,3 +20,8 @@ services:
       # Optional — get free keys to enrich artist data:
       # - key: LASTFM_API_KEY
       #   sync: false
+      # Google sign-in (see AUTH_SETUP.md). Both set in the Render dashboard:
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: SESSION_SECRET
+        sync: false

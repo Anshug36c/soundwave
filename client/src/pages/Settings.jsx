@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { diag } from '../services/musicApi';
+import GoogleLogin, { signOutEverywhere } from '../components/GoogleLogin';
 
 function Diagnostics() {
   const [, setTick] = useState(0);
@@ -57,6 +58,7 @@ export default function Settings() {
   const setInstantPreview = useStore(s => s.setInstantPreview);
   const profile = useStore(s => s.profile);
   const setProfile = useStore(s => s.setProfile);
+  const authUser = useStore(s => s.authUser);
   const history = useStore(s => s.history);
   const liked = useStore(s => s.liked);
   const playlists = useStore(s => s.playlists);
@@ -83,14 +85,30 @@ export default function Settings() {
       <h1 className="text-2xl font-extrabold tracking-tight">Profile & Settings</h1>
 
       <div className="card p-5 mt-4 flex items-center gap-4 flex-wrap">
-        <div className="w-16 h-16 rounded-full bg-accent grid place-items-center text-2xl font-extrabold text-black shrink-0">
-          {(profile.name?.[0] || 'G').toUpperCase()}
-        </div>
-        <div className="flex-1">
-          <form onSubmit={(e) => { e.preventDefault(); setProfile({ name: name || 'Guest Listener' }); toast('Profile updated'); }} className="flex gap-2 flex-wrap">
-            <input value={name} onChange={e => setName(e.target.value)} className="flex-1 min-w-0 bg-soft border border-soft rounded-lg px-3 py-2 font-bold outline-none" aria-label="Display name" />
-            <button className="btn-accent px-4 text-sm">Save</button>
-          </form>
+        {authUser && profile.picture
+          ? <img src={profile.picture} alt="" referrerPolicy="no-referrer" className="w-16 h-16 rounded-full object-cover shrink-0" />
+          : <div className="w-16 h-16 rounded-full bg-accent grid place-items-center text-2xl font-extrabold text-black shrink-0">
+              {(profile.name?.[0] || 'G').toUpperCase()}
+            </div>}
+        <div className="flex-1 min-w-0">
+          {authUser ? (
+            <div>
+              <p className="font-extrabold text-lg leading-tight">{profile.name}</p>
+              <p className="text-xs text-dim font-semibold">{profile.email} · Signed in with Google</p>
+              <button onClick={signOutEverywhere} className="mt-2 px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Sign out</button>
+            </div>
+          ) : (
+            <div>
+              <form onSubmit={(e) => { e.preventDefault(); setProfile({ name: name || 'Guest Listener' }); toast('Profile updated'); }} className="flex gap-2 flex-wrap">
+                <input value={name} onChange={e => setName(e.target.value)} className="flex-1 min-w-0 bg-soft border border-soft rounded-lg px-3 py-2 font-bold outline-none" aria-label="Display name" />
+                <button className="btn-accent px-4 text-sm">Save</button>
+              </form>
+              <div className="mt-3 flex items-center gap-3 flex-wrap">
+                <GoogleLogin />
+                <p className="text-[11px] text-dim font-semibold">Sign in to keep a separate library per Google account on this device.</p>
+              </div>
+            </div>
+          )}
           <div className="flex gap-x-4 gap-y-1 mt-2 text-xs text-dim font-semibold flex-wrap">
             <span>♥ {Object.keys(liked).length} liked</span>
             <span>♪ {playlists.length} playlists</span>

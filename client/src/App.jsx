@@ -2,6 +2,7 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useEffect, lazy, Suspense } from 'react';
 import { useStore } from './store/useStore';
 import { useAudioEngine } from './hooks/useAudioEngine';
+import { api } from './services/musicApi';
 import { Sidebar, TopBar, BottomNav, Toasts, OfflineBanner } from './components/Layout';
 import { MiniPlayer, FullPlayer, QueueDrawer } from './components/Player';
 import CommandPalette from './components/CommandPalette';
@@ -29,6 +30,16 @@ export default function App() {
   const queue = useStore(s => s.queue);
   const index = useStore(s => s.index);
   const hasPlayer = index >= 0 && queue.length > 0;
+
+  // restore Google session after persist rehydration (account snapshots line up)
+  useEffect(() => {
+    const boot = () => {
+      // /me is always 200; network failure = stay on the live store (offline-safe)
+      api.auth.me().then(({ user }) => useStore.getState().reconcileSession(user)).catch(() => {});
+    };
+    if (useStore.persist.hasHydrated()) boot();
+    else useStore.persist.onFinishHydration(boot);
+  }, []);
 
   // route titles (the engine owns document.title while music is playing)
   useEffect(() => {

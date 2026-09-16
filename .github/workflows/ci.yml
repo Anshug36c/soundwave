@@ -19,6 +19,8 @@ jobs:
         working-directory: server
       - run: node --check server.js
         working-directory: server
+      - run: npm test
+        working-directory: server
       - run: npm audit --omit=dev --audit-level=high
         working-directory: server
 

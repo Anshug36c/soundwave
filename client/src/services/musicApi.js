@@ -65,7 +65,9 @@ async function getInner(path, signal, timeout) {
     const r = await fetch(`${BASE}${path}`, { signal: ctrl.signal });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
-      throw new Error(body.error || `Request failed: ${r.status}`);
+      const e = new Error(body.error || `Request failed: ${r.status}`);
+      e.status = r.status;
+      throw e;
     }
     const j = await r.json();
     diagRecord(path, performance.now() - t0, true);
@@ -77,6 +79,36 @@ async function getInner(path, signal, timeout) {
   } finally {
     clearTimeout(to);
     try { signal?.removeEventListener?.('abort', onAbort); } catch { /* noop */ }
+  }
+}
+
+// POST helper (auth) — same timeout + diagnostics as GET, never deduped
+async function post(path, body, { timeout = 30000 } = {}) {
+  const t0 = performance.now();
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(new Error('Request timed out')), timeout);
+  try {
+    const r = await fetch(`${BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+      signal: ctrl.signal,
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      const e = new Error(j.error || `Request failed: ${r.status}`);
+      e.status = r.status;
+      diagRecord(path, performance.now() - t0, false);
+      throw e;
+    }
+    const j = await r.json();
+    diagRecord(path, performance.now() - t0, true);
+    return j;
+  } catch (e) {
+    if (e.status == null) diagRecord(path, performance.now() - t0, !!ctrl.signal.aborted);
+    throw e;
+  } finally {
+    clearTimeout(to);
   }
 }
 
@@ -103,6 +135,12 @@ export const api = {
   lyrics: ({ artist, title }) => get(`/lyrics?artist=${encodeURIComponent(artist || '')}&title=${encodeURIComponent(title || '')}`),
   tidalPreview: (title, artist) => `${BASE}/tidal-preview?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}`,
   similar: (title, artist, limit = 12) => get(`/similar?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}&limit=${limit}`),
+  auth: {
+    config: () => get('/auth/config'),
+    google: (credential) => post('/auth/google', { credential }),
+    me: () => get('/auth/me'),
+    logout: () => post('/auth/logout', {}),
+  },
   // fire-and-forget: warm server audio cache ahead of playback (zero-delay starts)
   warm: (streamUrl) => {
     try {

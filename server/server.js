@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import crypto from 'crypto';
+import { mountAuth } from './auth.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -1738,6 +1739,8 @@ app.get('/api/tidal-preview', async (req, res) => {
 });
 
 // ---------------- API ----------------
+mountAuth(app); // Google sign-in: /api/auth/config, /google, /me, /logout
+
 app.get('/api/health', (req, res) => res.json({
   ok: true, sources: ['djpunjab', 'djjohal', 'mr-jatt', 'pendujatt'], time: new Date().toISOString(),
   uptimeSec: Math.round(process.uptime()),

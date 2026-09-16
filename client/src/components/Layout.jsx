@@ -1,6 +1,7 @@
 import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { useStore } from '../store/useStore';
+import { AuthAvatar } from './GoogleLogin';
 import { HomeIcon, SearchIcon, LibraryIcon, PlusIcon, HeartIcon, NoteIcon, ChevronLeftIcon, ChevronRightIcon, MoonIcon, SunIcon } from './Icons';
 
 export function WaveLogo({ size = 34 }) {
@@ -84,7 +85,6 @@ export function Sidebar() {
 
 export function TopBar() {
   const navigate = useNavigate();
-  const profile = useStore(s => s.profile);
   const theme = useStore(s => s.theme);
   const setTheme = useStore(s => s.setTheme);
   const [q, setQ] = useState('');
@@ -110,9 +110,7 @@ export function TopBar() {
         <button onClick={cycleTheme} className="w-9 h-9 rounded-full bg-hoverable grid place-items-center text-dim hover:text-white shrink-0" aria-label="Cycle theme" title={`Theme: ${theme} (click to change)`}>
           {theme === 'dark' ? <SunIcon size={18} /> : <MoonIcon size={18} />}
         </button>
-        <Link to="/settings" className="w-9 h-9 rounded-full bg-accent grid place-items-center font-bold text-black shrink-0" aria-label="Profile and settings" title={profile.name}>
-          {(profile.name?.[0] || 'G').toUpperCase()}
-        </Link>
+        <AuthAvatar />
       </div>
     </header>
   );

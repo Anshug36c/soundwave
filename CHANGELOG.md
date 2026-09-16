@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased (roadmap waves A–E)
+## Unreleased
+- Google sign-in (Gmail): official GIS button, server-verified ID tokens, signed
+  HttpOnly session cookies, per-account on-device libraries, avatar menu, session
+  restore on boot. Zero new dependencies. Needs `GOOGLE_CLIENT_ID` (see `AUTH_SETUP.md`).
+
+## Roadmap waves A–E
 
 ### Search & discovery
 - Exact-match-first ranking with stable order; typo suggestions that keep results
