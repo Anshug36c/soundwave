@@ -1,9 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { api, debounce, formatTime, tasteFiltered } from '../services/musicApi';
 import { useStore } from '../store/useStore';
 import { SongCard, SectionRow, SkeletonList, Img } from '../components/Cards';
-import { SearchIcon } from '../components/Icons';
 
 // Memoized: the list re-renders only when its own track/playing-state changes,
 // not on every unrelated store update (e.g. clock ticks elsewhere).
@@ -33,13 +31,11 @@ function greeting() {
 }
 
 export default function Home() {
-  const navigate = useNavigate();
   const history = useStore(s => s.history);
   const discoverMix = useStore(s => s.discoverMix);
   const setDiscoverMix = useStore(s => s.setDiscoverMix);
   const disliked = useStore(s => s.disliked);
   const hiddenArtists = useStore(s => s.hiddenArtists);
-  const [q, setQ] = useState('');
   const [recs, setRecs] = useState([]);
   const [recsLoading, setRecsLoading] = useState(true);
   const [recsError, setRecsError] = useState(false);
@@ -91,35 +87,11 @@ export default function Home() {
   }, [fetchRecs, discoverMix, seedsKey, artistsKey, retryTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const visibleRecs = tasteFiltered(recs, disliked, hiddenArtists);
-  const submitSearch = (e) => {
-    e.preventDefault();
-    const query = q.trim();
-    if (query) navigate(`/search?q=${encodeURIComponent(query)}`);
-  };
 
   return (
     <div className="pb-8">
       <h1 className="text-2xl font-extrabold tracking-tight mb-4 px-1">{greeting()}</h1>
 
-      {/* Search-to-play entry */}
-      <form onSubmit={submitSearch} role="search" className="flex gap-2 px-1">
-        <div className="relative flex-1">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-dim" aria-hidden>
-            <SearchIcon size={17} />
-          </span>
-          <input
-            value={q}
-            onChange={e => setQ(e.target.value)}
-            placeholder="What do you want to listen to?"
-            aria-label="Search music"
-            enterKeyHint="search"
-            className="w-full bg-soft border border-soft rounded-full pl-10 pr-4 py-2.5 text-sm font-semibold outline-none focus:border-accent"
-          />
-        </div>
-        <button type="submit" className="btn-accent px-5 text-sm shrink-0" aria-label="Search">
-          <SearchIcon size={16} />
-        </button>
-      </form>
 
       {history.length === 0 ? (
         <div className="card p-6 mt-6 text-center">

@@ -1,4 +1,4 @@
-import { NavLink, Link, useNavigate } from 'react-router-dom';
+import { NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { AuthAvatar } from './GoogleLogin';
@@ -85,6 +85,8 @@ export function Sidebar() {
 
 export function TopBar() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const onSearchPage = location.pathname === '/search';
   const theme = useStore(s => s.theme);
   const setTheme = useStore(s => s.setTheme);
   const [q, setQ] = useState('');
@@ -100,11 +102,14 @@ export function TopBar() {
           <ChevronRightIcon size={18} />
         </button>
         <div className="flex-1 max-w-xl relative">
+          {/* one search bar per page: the Search page has the rich input, so the topbar yields there */}
+          {!onSearchPage && (
           <form onSubmit={(e) => { e.preventDefault(); if (q.trim()) navigate(`/search?q=${encodeURIComponent(q.trim())}`); }}>
             <SearchIcon size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-dim pointer-events-none" />
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="What do you want to listen to?" aria-label="Search"
               className="w-full bg-soft border border-soft rounded-full pl-10 pr-4 py-2 text-sm outline-none focus:border-green-500" />
           </form>
+          )}
         </div>
         <button onClick={() => window.dispatchEvent(new Event('soundwave:palette'))} className="h-9 px-3 rounded-full bg-hoverable hidden sm:grid place-items-center text-sm font-bold shrink-0" aria-label="Command palette" title="Command palette (Ctrl+K)">⌘K</button>
         <button onClick={cycleTheme} className="w-9 h-9 rounded-full bg-hoverable grid place-items-center text-dim hover:text-white shrink-0" aria-label="Cycle theme" title={`Theme: ${theme} (click to change)`}>
