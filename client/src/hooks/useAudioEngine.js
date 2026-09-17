@@ -397,7 +397,7 @@ function onEnded() {
     // (Echo Brain-style); any failure or user interference stops cleanly
     const st = useStore.getState();
     const last = st.queue[st.index];
-    if (st.autoplay && last?.title) {
+    if (st.autoplay && st.party?.role !== 'guest' && last?.title) {
       api.similar(last.title, last.artist?.name || '', 8).then(j => {
         const songs = (j?.songs || []).filter(t => t?.id && t.id !== last.id);
         const cur = useStore.getState();
@@ -504,6 +504,7 @@ export function useAudioEngine() {
   const quality = useStore(s => s.quality);
   const sleepTimerMin = useStore(s => s.sleepTimerMin);
   const studioOn = useStore(s => s.studioOn);
+  const party = useStore(s => s.party);
   const repeat = useStore(s => s.repeat);
   const shuffle = useStore(s => s.shuffle);
 
@@ -681,6 +682,67 @@ export function useAudioEngine() {
     syncPlayback();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying, track?.id]);
+
+  // ---------- Listen Together: host beats, guest follows ----------
+  useEffect(() => {
+    if (!party || party.role !== 'host' || !track) return;
+    const el = getAudio();
+    if (el.src) api.party.beat(party.code, { track, position: el.currentTime || 0, isPlaying }).then(r => {
+      if (r?.ended && useStore.getState().party?.code === party.code) {
+        useStore.getState().leaveParty();
+        useStore.getState().toast('Party ended');
+      }
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [party, track?.id, isPlaying]);
+  useEffect(() => {
+    if (!party) return;
+    if (party.role === 'host') {
+      const iv = setInterval(() => {
+        const st = useStore.getState();
+        const t = st.queue[st.index];
+        if (!t) return;
+        api.party.beat(party.code, { track: t, position: getAudio().currentTime || 0, isPlaying: st.isPlaying }).then(r => {
+          if (r?.ended && useStore.getState().party?.code === party.code) {
+            useStore.getState().leaveParty();
+            useStore.getState().toast('Party ended');
+          }
+        }).catch(() => {});
+      }, 5000);
+      return () => clearInterval(iv);
+    }
+    let stop = false;
+    const follow = async () => {
+      try {
+        const room = await api.party.get(party.code);
+        if (stop || useStore.getState().party?.code !== party.code) return;
+        if (room?.ended) {
+          useStore.getState().leaveParty();
+          useStore.getState().toast('Party ended');
+          return;
+        }
+        if (!room?.track?.id) return;
+        const st = useStore.getState();
+        const cur = st.queue[st.index];
+        if (!cur || cur.id !== room.track.id) {
+          st.playTrack(room.track, [room.track]);
+          return; // drift self-heals on the next poll once loaded
+        }
+        const el = getAudio();
+        const target = room.isPlaying ? room.position + (Date.now() - room.updatedAt) / 1000 : room.position;
+        if (el.duration && Math.abs((el.currentTime || 0) - target) > 4) {
+          try { el.currentTime = Math.max(0, Math.min(target, el.duration)); } catch { /* noop */ }
+          st.setTime(el.currentTime, el.duration || 0);
+        }
+        if (room.isPlaying && el.paused) st.setPlaying(true);
+        else if (!room.isPlaying && !el.paused) st.setPlaying(false);
+      } catch { /* transient network error: next poll retries */ }
+    };
+    follow();
+    const iv = setInterval(follow, 3000);
+    return () => { stop = true; clearInterval(iv); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [party]);
 
   // volume (cancels crossfade ramps — the user's hand wins)
   useEffect(() => {

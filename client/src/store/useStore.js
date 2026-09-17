@@ -47,6 +47,8 @@ export const useStore = create(
       duration: 0,
       showFullPlayer: false,
       showQueue: false,
+      showParty: false,
+      party: null, // { role: 'host'|'guest', code } — session-only, never persisted
       similar: [], // similar songs for current track (transient, not persisted)
       setSimilar: (s) => set({ similar: s || [] }),
       disliked: {}, // trackId -> true (excluded from recommendations)
@@ -162,6 +164,10 @@ export const useStore = create(
       cycleRepeat: () => set(s => ({ repeat: s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off' })),
       setShowFullPlayer: (v) => set({ showFullPlayer: v }),
       setShowQueue: (v) => set({ showQueue: v }),
+      setShowParty: (v) => set({ showParty: v }),
+      startParty: (code) => set({ party: { role: 'host', code } }),
+      joinParty: (code) => set({ party: { role: 'guest', code } }),
+      leaveParty: () => set(s => (s.party ? { party: null } : s)),
       setSleepTimer: (min) => set({ sleepTimerMin: min }),
       setInstantPreview: (v) => set({ instantPreview: v }),
 

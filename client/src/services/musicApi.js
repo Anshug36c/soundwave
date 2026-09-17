@@ -140,6 +140,12 @@ export const api = {
   artist: (source, id) => get(`/artist/${source}/${encodeURIComponent(id)}`),
   artistSongs: (name, opts = {}) => get(`/artist-songs?name=${encodeURIComponent(name || '')}`, opts),
   lyrics: ({ artist, title, duration, album }) => get(`/lyrics?artist=${encodeURIComponent(artist || '')}&title=${encodeURIComponent(title || '')}&duration=${Math.round(duration || 0)}&album=${encodeURIComponent(album || '')}`),
+  party: {
+    create: () => post('/party', {}),
+    beat: (code, body) => post(`/party/${encodeURIComponent(code)}/beat`, body),
+    get: (code) => get(`/party/${encodeURIComponent(code)}`),
+    end: (code) => post(`/party/${encodeURIComponent(code)}/end`, {}),
+  },
   tidalPreview: (title, artist) => `${BASE}/tidal-preview?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}`,
   similar: (title, artist, limit = 12) => get(`/similar?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}&limit=${limit}`),
   auth: {

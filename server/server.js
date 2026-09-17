@@ -2406,6 +2406,45 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
+// ---------------- Listen Together parties (Echo-style rooms, HTTP polling) ----------------
+// In-memory rooms: host beats state every ~5s, guests poll every ~3s.
+// No persistence, no accounts — rooms evaporate 60s after the last beat.
+const parties = new Map(); // code -> { track, position, isPlaying, updatedAt }
+const PARTY_TTL = 60000, PARTY_MAX = 200;
+const PARTY_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+function partySweep() {
+  const now = Date.now();
+  for (const [c, r] of parties) if (now - r.updatedAt > PARTY_TTL) parties.delete(c);
+  while (parties.size > PARTY_MAX) parties.delete(parties.keys().next().value);
+}
+app.post('/api/party', (req, res) => {
+  partySweep();
+  let code = '';
+  do { code = Array.from({ length: 6 }, () => PARTY_CHARS[Math.floor(Math.random() * PARTY_CHARS.length)]).join(''); } while (parties.has(code));
+  parties.set(code, { track: null, position: 0, isPlaying: false, updatedAt: Date.now() });
+  res.json({ code });
+});
+app.post('/api/party/:code/beat', (req, res) => {
+  partySweep();
+  const room = parties.get(String(req.params.code || '').toUpperCase());
+  if (!room) return res.json({ ended: true }); // 200, not 404: dead polls must not spam console errors
+  const t = req.body?.track;
+  room.track = t && typeof t === 'object' && t.id ? t : room.track;
+  room.position = Math.max(0, +req.body?.position || 0);
+  room.isPlaying = !!req.body?.isPlaying;
+  room.updatedAt = Date.now();
+  res.json({ ok: true });
+});
+app.get('/api/party/:code', (req, res) => {
+  partySweep();
+  const room = parties.get(String(req.params.code || '').toUpperCase());
+  if (!room) return res.json({ ended: true }); // 200, not 404: dead polls must not spam console errors
+  res.json(room);
+});
+app.post('/api/party/:code/end', (req, res) => {
+  parties.delete(String(req.params.code || '').toUpperCase());
+  res.json({ ok: true });
+});
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🎵 SoundWave server on http://localhost:${PORT} (djp + djjohal + mr-jatt)`);
   djpLoadIndex().then(m => console.log(`   DJPunjab index: ${m.size}`)).catch(() => {});

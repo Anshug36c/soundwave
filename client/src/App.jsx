@@ -5,6 +5,7 @@ import { useAudioEngine } from './hooks/useAudioEngine';
 import { api } from './services/musicApi';
 import { Sidebar, TopBar, BottomNav, Toasts, OfflineBanner } from './components/Layout';
 import { MiniPlayer, FullPlayer, QueueDrawer } from './components/Player';
+import PartyPanel from './components/Party';
 import CommandPalette from './components/CommandPalette';
 const Home = lazy(() => import('./pages/Home'));
 const Search = lazy(() => import('./pages/Search'));
@@ -83,6 +84,7 @@ export default function App() {
       <MiniPlayer />
       <FullPlayer />
       <QueueDrawer />
+      <PartyPanel />
       <CommandPalette />
       <Toasts />
     </div>

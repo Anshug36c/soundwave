@@ -56,6 +56,7 @@ Everything below exists in the codebase today.
 - Seeking (slider, arrow keys ±10s, elapsed/remaining toggle), volume + mute
 - Shuffle, repeat (off → all → one), playback speed (0.5×–2×, persisted)
 - Sleep timer with fade-out, crossfade between tracks
+- Listen Together (Echo-style): host a synced party with a 6-character code, guests follow via polling
 - Instant-preview starter: ~30s preview plays immediately, full track swaps in silently
 - Hot-standby prefetch: next track staged before the current one ends
 - Boot resume: refresh mid-song → player reopens paused at the same position
