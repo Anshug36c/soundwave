@@ -37,7 +37,9 @@ export const useStore = create(
       setBuffering: (v) => set({ buffering: v }),
       shuffle: false,
       repeat: 'off', // off | one | all
+      abLoop: { a: null, b: null }, // A-B section repeat, seconds (transient)
       volume: 0.9,
+      gain: 1, // volume boost multiplier 1..2 via Studio graph master gain
       muted: false,
       playbackRate: 1,
       setPlaybackRate: (v) => set({ playbackRate: v }),
@@ -140,6 +142,16 @@ export const useStore = create(
       setTime: (t, d) => set({ currentTime: t, duration: d || get().duration }),
       setVolume: (v) => set({ volume: v, muted: v === 0 ? true : get().muted }),
       setMuted: (m) => set({ muted: m }),
+      setGain: (v) => set({ gain: Math.min(2, Math.max(1, +v || 1)) }),
+      // A-B cycle: tap1 sets A, tap2 sets B (loops), tap3 clears
+      cycleLoopPoint: (t) => set(s => {
+        const tt = Math.max(0, +t || 0);
+        const { a, b } = s.abLoop;
+        if (b != null) return { abLoop: { a: null, b: null } };
+        if (a == null || tt <= a + 0.5) return { abLoop: { a: tt, b: null } };
+        return { abLoop: { a, b: tt } };
+      }),
+      clearLoop: () => set(s => (s.abLoop.a == null && s.abLoop.b == null) ? s : { abLoop: { a: null, b: null } }),
       toggleShuffle: () => set(s => ({ shuffle: !s.shuffle })),
       cycleRepeat: () => set(s => ({ repeat: s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off' })),
       setShowFullPlayer: (v) => set({ showFullPlayer: v }),
@@ -298,7 +310,7 @@ export const useStore = create(
         theme: s.theme, quality: s.quality, playbackRate: s.playbackRate, crossfade: s.crossfade,
         studioOn: s.studioOn, eqEnabled: s.eqEnabled, eqGains: s.eqGains,
         eqPreset: s.eqPreset, eqPreamp: s.eqPreamp, normalizeOn: s.normalizeOn,
-        profile: s.profile, liveAccount: s.liveAccount, searchHistory: s.searchHistory, volume: s.volume,
+        profile: s.profile, liveAccount: s.liveAccount, searchHistory: s.searchHistory, volume: s.volume, gain: s.gain,
         instantPreview: s.instantPreview, disliked: s.disliked, hiddenArtists: s.hiddenArtists, discoverMix: s.discoverMix,
       }),
     }

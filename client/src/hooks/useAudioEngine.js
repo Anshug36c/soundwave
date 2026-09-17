@@ -277,6 +277,15 @@ function onTime() {
   const st = useStore.getState();
   lastProgressAt = Date.now();
   st.setTime(el.currentTime, el.duration || st.duration);
+  // A-B section repeat: loop back to A when B is reached (never fights an active seek drag)
+  try {
+    const ab = st.abLoop;
+    if (ab && ab.a != null && ab.b != null && st.isPlaying && el.duration) {
+      const t = el.currentTime || 0;
+      const dragging = document.activeElement?.dataset?.seeking === '1';
+      if (!dragging && (t >= ab.b || t < ab.a - 0.25)) el.currentTime = ab.a;
+    }
+  } catch { /* noop */ }
   try {
     const now = Date.now();
     if (now - lastPosSave > 5000 && el.currentTime > 5 && st.index >= 0) {
@@ -401,6 +410,7 @@ function onKey(e) {
   else if (e.key.toLowerCase() === 's') s.toggleShuffle();
   else if (e.key.toLowerCase() === 'r') s.cycleRepeat();
   else if (e.key.toLowerCase() === 'q') s.setShowQueue(!s.showQueue);
+  else if (e.key.toLowerCase() === 'l') s.cycleLoopPoint(el.currentTime || 0);
 }
 
 function attachAudio(el) {
@@ -464,6 +474,7 @@ export function useAudioEngine() {
   const isPlaying = useStore(s => s.isPlaying);
   const volume = useStore(s => s.volume);
   const muted = useStore(s => s.muted);
+  const gain = useStore(s => s.gain);
   const playbackRate = useStore(s => s.playbackRate);
   const quality = useStore(s => s.quality);
   const sleepTimerMin = useStore(s => s.sleepTimerMin);
@@ -492,14 +503,15 @@ export function useAudioEngine() {
       }
       const st = useStore.getState();
       try { document.title = `${track.title} — ${track.artist?.name || ''} · SoundWave`; } catch { /* noop */ }
-      if (st.studioOn) {
+      if (st.studioOn || st.gain > 1) {
         try {
           studio.ensureGraph(el);
-          studio.syncFromState({ gains: st.eqGains, preamp: st.eqPreamp, enabled: st.eqEnabled, normalize: st.normalizeOn });
+          studio.syncFromState({ gains: st.eqGains, preamp: st.eqPreamp, enabled: st.eqEnabled, normalize: st.normalizeOn, gain: st.gain });
           studio.resume();
         } catch { /* plain fallback */ }
       }
       if (el.dataset.trackId !== track.id) {
+        useStore.getState().clearLoop();
         const hot = standbyReady && standbyFor === track.id;
         switchAt = Date.now(); pendingSwitch = true;
         teardownStandby(); // staged n1 is now current: free its socket before el.src starts
@@ -599,11 +611,13 @@ export function useAudioEngine() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, n1id, n2id, quality, repeat, shuffle, queue.length]);
 
-  // Studio toggle: recreate element (routing is permanent), keep position + mode.
+  // Studio/boost toggle: recreate element when graph routing NEED flips
+  // (routing is permanent), keep position + mode. Pure level changes while
+  // already routed just push the master gain — no recreate, no glitch.
   // MOUNT MUST SKIP: with sync persist rehydration a track is already restored
   // (and the load effect above has already set el.src in this same commit), so
   // running here would recreateAudio() away the just-configured element and
-  // orphan its resume listener. Mount-with-studioOn is already handled by the
+  // orphan its resume listener. Mount-with-routing is already handled by the
   // load effect's ensureGraph call — this path is for toggles only.
   const firstStudio = useRef(true);
   useEffect(() => {
@@ -611,6 +625,9 @@ export function useAudioEngine() {
     const el = getAudio();
     if (!track || !el.src) return;
     const st = useStore.getState();
+    const needGraph = studioOn || st.gain > 1;
+    if (needGraph && studio.isRouted(el)) { studio.setMasterGain(st.gain); return; }
+    if (!needGraph && !studio.isRouted(el)) return;
     const direct = playMode === 'preview' ? el.src : (streamFor(track, st.quality) || '');
     if (!direct) return;
     const t = el.currentTime || 0;
@@ -619,10 +636,10 @@ export function useAudioEngine() {
     nel.dataset.trackId = track.id;
     markSrcAssign();
     nel.src = direct;
-    if (studioOn) {
+    if (needGraph) {
       try {
         studio.ensureGraph(nel);
-        studio.syncFromState({ gains: st.eqGains, preamp: st.eqPreamp, enabled: st.eqEnabled, normalize: st.normalizeOn });
+        studio.syncFromState({ gains: st.eqGains, preamp: st.eqPreamp, enabled: st.eqEnabled, normalize: st.normalizeOn, gain: st.gain });
         studio.resume();
       } catch { /* plain fallback */ }
     }
@@ -630,7 +647,7 @@ export function useAudioEngine() {
     nel.addEventListener('loadedmetadata', () => { if (getAudio().dataset.trackId === tid) { try { nel.currentTime = t; } catch { /* noop */ } } }, { once: true });
     if (wasPlaying) syncPlayback();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [studioOn]);
+  }, [studioOn, gain]);
 
   // play/pause — the single owner of playback decisions
   useEffect(() => {

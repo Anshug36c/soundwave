@@ -2150,6 +2150,19 @@ app.get('/api/search', async (req, res) => {
     const payload = { songs, albums, artists, ...(artistMode ? { artist: { name: artistHit.name } } : {}), ...((nl.note || nl.mode || nl.year || nl.unsupported || nl.cleaned) ? { nl } : {}), ...(didYouMean ? { didYouMean } : {}) };
     setCache(req.originalUrl, payload);
     res.json(payload);
+    // warm: resolve (API + decrypt) the top Saavn stream URLs in the background
+    // so the first tap plays instantly instead of paying ~1.5s of latency
+    try {
+      const seen = new Set();
+      let n = 0;
+      for (const t of (payload.songs || [])) {
+        if (n >= 2) break;
+        const sid = t?.source === 'saavn' ? String(t.sourceId || '') : '';
+        if (!sid || seen.has(sid) || saavnUrlCache.has(sid)) continue;
+        seen.add(sid); n++;
+        saavnStreamUrls(sid).catch(() => {});
+      }
+    } catch { /* noop */ }
   } catch (e) { res.status(502).json({ error: 'Search failed', detail: e.message }); }
 });
 

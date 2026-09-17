@@ -246,6 +246,10 @@ export function FullPlayer() {
   const buffering = useStore(s => s.buffering);
   const playbackRate = useStore(s => s.playbackRate);
   const setPlaybackRate = useStore(s => s.setPlaybackRate);
+  const gain = useStore(s => s.gain);
+  const setGain = useStore(s => s.setGain);
+  const abLoop = useStore(s => s.abLoop);
+  const cycleLoopPoint = useStore(s => s.cycleLoopPoint);
   const cycleSpeed = () => { const steps = [1, 1.25, 1.5, 2, 0.5]; setPlaybackRate(steps[(steps.indexOf(playbackRate) + 1) % steps.length]); };
   const setShowQueue = useStore(s => s.setShowQueue);
   const studioOn = useStore(s => s.studioOn);
@@ -338,12 +342,21 @@ export function FullPlayer() {
               <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={(e) => setVolume(Number(e.target.value))} className="slider flex-1" aria-label="Volume" />
               <button onClick={cycleSpeed} className="text-xs font-extrabold px-2 py-1 rounded-md bg-white/10 min-w-[46px]" aria-label="Playback speed" title="Playback speed">{playbackRate}×</button>
             </div>
+            <div className="flex items-center gap-2 mt-2 w-full max-w-xs slider-wrap" title="Volume boost up to 200%">
+              <span className="text-[11px] font-extrabold text-dim w-12 shrink-0">BOOST</span>
+              <input type="range" min={1} max={2} step={0.05} value={gain} onChange={(e) => setGain(Number(e.target.value))} className="slider flex-1" aria-label="Volume boost" />
+              <span className="text-[11px] font-extrabold text-dim w-10 text-right tabular-nums shrink-0">{Math.round(gain * 100)}%</span>
+            </div>
             <div className="flex items-center gap-2 mt-5 flex-wrap justify-center">
               <button onClick={() => toggleLike(track)} className={`px-4 py-2 rounded-full text-sm font-bold inline-flex items-center gap-1.5 ${isLiked ? 'bg-accent text-black' : 'bg-white/10'}`}><HeartIcon size={15} filled={isLiked} />{isLiked ? 'Liked' : 'Like'}</button>
               <div className="relative">
                 <button onClick={() => setShowPlMenu(v => !v)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5"><PlusIcon size={15} />Playlist</button>
                 {showPlMenu && <div className="absolute bottom-12 left-1/2 -translate-x-1/2 sm:left-0 sm:translate-x-0 z-10"><AddToPlaylistMenu track={track} onDone={() => setShowPlMenu(false)} /></div>}
               </div>
+              <button onClick={() => cycleLoopPoint(currentTime)} aria-label="Loop section (A-B)" title="Loop a section: tap to set A, again for B, again to clear"
+                className={`px-4 py-2 rounded-full text-sm font-bold inline-flex items-center gap-1.5 ${abLoop.b != null ? 'bg-accent text-black' : abLoop.a != null ? 'bg-accent/30 text-white' : 'bg-white/10'}`}>
+                <RepeatIcon size={15} />{abLoop.b != null ? `${formatTime(abLoop.a)}–${formatTime(abLoop.b)}` : abLoop.a != null ? `A ${formatTime(abLoop.a)}…` : 'A–B'}
+              </button>
               <button onClick={share} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5"><ShareIcon size={15} />Share</button>
               <button onClick={() => { toggleDownload(track); toast(downloads[track.id] ? 'Removed from offline' : 'Saved for offline'); }} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5">
                 {downloads[track.id] ? <CheckIcon size={15} /> : <DownloadIcon size={15} />}Offline

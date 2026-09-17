@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { api, debounce, formatTime, tasteFiltered } from '../services/musicApi';
 import { useStore } from '../store/useStore';
 import { SongCard, SectionRow, SkeletonList, Img } from '../components/Cards';
+import { RefreshIcon } from '../components/Icons';
 
 // Memoized: the list re-renders only when its own track/playing-state changes,
 // not on every unrelated store update (e.g. clock ticks elsewhere).
@@ -69,8 +70,6 @@ export default function Home() {
     }
     return out;
   }, [history]);
-  const seedsKey = seeds.map(s => s.t).join('|');
-  const artistsKey = topArtists.join('|');
 
   const fetchRecs = useMemo(() => debounce((mix, sd, arts, id) => {
     setRecsLoading(true);
@@ -84,7 +83,8 @@ export default function Home() {
     const id = ++reqId.current;
     fetchRecs(discoverMix, seeds, topArtists, id);
     return () => { reqId.current++; }; // stale responses can't overwrite newer ones
-  }, [fetchRecs, discoverMix, seedsKey, artistsKey, retryTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  // stable by design: new songs must NOT reshuffle the list — the user refreshes manually
+  }, [fetchRecs, discoverMix, retryTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const visibleRecs = tasteFiltered(recs, disliked, hiddenArtists);
 
@@ -113,6 +113,10 @@ export default function Home() {
               Based on your recent plays{seeds[0] ? ` · latest: ${seeds[0].t}` : ''}
             </p>
           </div>
+          <button onClick={() => setRetryTick(t => t + 1)} disabled={recsLoading} aria-label="Refresh recommendations" title="Refresh recommendations"
+            className="p-2 rounded-full bg-white/10 text-dim hover:text-white disabled:opacity-40">
+            <RefreshIcon size={14} className={recsLoading ? 'animate-spin' : ''} />
+          </button>
           <label className="flex items-center gap-2 text-[11px] font-bold text-dim">Familiar
             <input type="range" min="0" max="100" value={discoverMix} onChange={e => setDiscoverMix(+e.target.value)}
               className="w-28 sm:w-32 accent-green-500" aria-label="Discovery mix" />Adventurous</label>

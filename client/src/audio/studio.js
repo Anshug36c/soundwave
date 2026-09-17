@@ -44,6 +44,7 @@ export function getPresets() { return PRESETS; }
 let ctx = null, source = null, currentEl = null;
 let preamp = null, bands = [], comp = null, analyser = null, master = null;
 let eqInPath = false;
+let masterGainVal = 1; // volume boost multiplier (persists across graph rebuilds)
 
 function silence(node) { try { node?.disconnect(); } catch { /* noop */ } }
 
@@ -83,7 +84,7 @@ export function ensureGraph(el) {
   comp.attack.value = 0.01; comp.release.value = 0.25; comp.knee.value = 12;
   analyser = ctx.createAnalyser();
   analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.75;
-  master = ctx.createGain(); master.gain.value = 1;
+  master = ctx.createGain(); master.gain.value = masterGainVal;
   wire(true);
   return analyser;
 }
@@ -103,6 +104,11 @@ export function setPreamp(db) {
   if (!preamp || !ctx) return;
   preamp.gain.setTargetAtTime(Math.pow(10, (db || 0) / 20), ctx.currentTime, 0.01);
 }
+export function setMasterGain(mult) {
+  masterGainVal = Math.min(2, Math.max(1, +mult || 1));
+  if (master && ctx) master.gain.setTargetAtTime(masterGainVal, ctx.currentTime, 0.02);
+}
+export function getMasterGain() { return masterGainVal; }
 export function setNormalize(on) {
   if (!comp || !ctx) return;
   const t = ctx.currentTime;
@@ -111,11 +117,12 @@ export function setNormalize(on) {
 }
 export function setEqEnabled(on) { if (source && on !== eqInPath) wire(!!on); }
 /** Push persisted settings into a fresh graph (call after ensureGraph). */
-export function syncFromState({ gains, preamp: pa, enabled, normalize }) {
+export function syncFromState({ gains, preamp: pa, enabled, normalize, gain }) {
   if (!source) return;
   setAllGains(gains);
   setPreamp(pa);
   setNormalize(normalize);
+  setMasterGain(gain == null ? 1 : gain);
   if (!!enabled !== eqInPath) wire(!!enabled);
 }
 export function getAnalyser() { return analyser; }
