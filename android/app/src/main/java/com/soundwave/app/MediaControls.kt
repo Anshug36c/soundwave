@@ -8,9 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
-import android.media.AudioManager
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
@@ -36,6 +33,22 @@ import org.json.JSONObject
  * Built on android.media.session rather than androidx.media: every API used here
  * exists since API 21 and minSdk is 24, verified against the platform jar, so
  * there is no dependency to resolve and no version to drift.
+ *
+ * ## There is deliberately no audio-focus handling here.
+ *
+ * The audio plays in a WebView, and the WebView is already an audio focus
+ * holder: Chromium's AudioFocusDelegate is itself an
+ * OnAudioFocusChangeListener, requests AUDIOFOCUS_GAIN for the media element,
+ * and on AUDIOFOCUS_LOSS calls onSuspend(), which pauses that element. Two
+ * focus holders in one process compete, so a second request from this class
+ * made the WebView pause its own element. The page saw the pause event,
+ * reported isPlaying=false, the notification flipped to "Play", the next play
+ * handed focus back and lost it again — an endless play/pause flicker.
+ *
+ * Removing this class's focus client removes the only thing that could inject a
+ * spontaneous play or pause into the page. Focus, ducking and resume-after-a-
+ * call are all handled by the WebView, and they surface here for free: the
+ * element pauses, onPause fires, the store updates, the notification follows.
  */
 class MediaControls(private val activity: MainActivity) {
 
@@ -48,6 +61,11 @@ class MediaControls(private val activity: MainActivity) {
         const val ACTION_NEXT = "com.soundwave.app.action.NEXT"
         const val ACTION_PREV = "com.soundwave.app.action.PREV"
         private const val ARTWORK_PX = 512
+
+        private val TRANSPORT_ACTIONS = setOf(ACTION_PLAY, ACTION_PAUSE, ACTION_NEXT, ACTION_PREV)
+
+        /** True for the four actions a notification button can put on an intent. */
+        fun isTransportAction(action: String?) = action in TRANSPORT_ACTIONS
     }
 
     private val main = Handler(Looper.getMainLooper())
@@ -65,53 +83,19 @@ class MediaControls(private val activity: MainActivity) {
     @Volatile private var playing = false
     @Volatile private var hasTrack = false
     @Volatile private var showing = false
-    /** Set when a transient focus loss paused us, so it can auto-resume. */
-    @Volatile private var resumeOnFocusGain = false
-
-    private val audio = activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private var focusRequest: AudioFocusRequest? = null
-
-    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
-        when (change) {
-            AudioManager.AUDIOFOCUS_LOSS -> {
-                // Another app took over permanently: stop, and don't come back.
-                resumeOnFocusGain = false
-                abandonFocus()
-                callJs("pause")
-            }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                // A call or a navigation prompt. Pause, then resume on return —
-                // the single most expected behaviour from a music app.
-                if (playing) resumeOnFocusGain = true
-                callJs("pause")
-            }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                // Notification blip: let the system duck us rather than pausing.
-            }
-            AudioManager.AUDIOFOCUS_GAIN -> {
-                if (resumeOnFocusGain) {
-                    resumeOnFocusGain = false
-                    callJs("play")
-                }
-            }
-        }
-    }
+    /** Sequence of the artwork currently applied, so a re-notify can be skipped. */
+    @Volatile private var appliedArtworkSeq = -1
+    /** What the notification looked like the last time it was posted. */
+    private var lastFingerprint = ""
 
     init {
         createChannel()
         session.setCallback(object : MediaSession.Callback() {
-            override fun onPlay() {
-                requestFocus()
-                callJs("play")
-            }
+            override fun onPlay() = callJs("play")
             override fun onPause() = callJs("pause")
             override fun onSkipToNext() = callJs("next")
             override fun onSkipToPrevious() = callJs("prev")
-            override fun onStop() {
-                resumeOnFocusGain = false
-                abandonFocus()
-                callJs("stop")
-            }
+            override fun onStop() = callJs("stop")
             override fun onSeekTo(pos: Long) = callJs("seek", pos)
         })
         session.isActive = true
@@ -148,8 +132,9 @@ class MediaControls(private val activity: MainActivity) {
                     // A newer track may already have superseded this download.
                     if (seq != artworkSeq) return@post
                     artwork = bmp
+                    appliedArtworkSeq = seq
                     publishMetadata()
-                    if (showing) notifyNow()
+                    if (showing) notifyIfChanged()
                 }
             }
         }
@@ -158,15 +143,12 @@ class MediaControls(private val activity: MainActivity) {
     // ----------------------------------------------------------------- state
 
     private fun apply(o: JSONObject) {
-        val wasPlaying = playing
         metaTitle = o.optString("title", "")
         metaArtist = o.optString("artist", "")
         metaAlbum = o.optString("album", "")
         metaDurationMs = o.optLong("durationMs", 0L)
         playing = o.optBoolean("playing", false)
         hasTrack = o.optBoolean("hasTrack", false)
-
-        if (playing && !wasPlaying) requestFocus()
 
         publishMetadata()
 
@@ -197,7 +179,7 @@ class MediaControls(private val activity: MainActivity) {
             return
         }
         showing = true
-        notifyNow()
+        notifyIfChanged()
     }
 
     private fun publishMetadata() {
@@ -229,6 +211,30 @@ class MediaControls(private val activity: MainActivity) {
 
     private fun manager() =
         activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+    /**
+     * Posts the notification only when something visible in it changed.
+     *
+     * The page re-reports on a heartbeat and on every artwork load, and an
+     * identical re-post is what makes a media notification visibly flicker on
+     * some skins. PlaybackState and metadata are still refreshed every time —
+     * they are cheap and the lock screen interpolates position from them.
+     */
+    private fun notifyIfChanged() {
+        val fp = fingerprint()
+        if (fp == lastFingerprint) return
+        lastFingerprint = fp
+        notifyNow()
+    }
+
+    private fun fingerprint() = buildString {
+        append(hasTrack).append('|').append(playing).append('|')
+        append(metaTitle).append('|').append(metaArtist).append('|')
+        append(metaAlbum).append('|').append(metaDurationMs).append('|')
+        // The sequence, not the bitmap: same-track artwork that arrives later
+        // must still re-post.
+        append(appliedArtworkSeq)
+    }
 
     private fun notifyNow() {
         runCatching { manager().notify(NOTIFICATION_ID, buildNotification()) }
@@ -291,6 +297,9 @@ class MediaControls(private val activity: MainActivity) {
 
     fun dismiss() {
         showing = false
+        // Otherwise the same track, dismissed and replayed, would look
+        // unchanged and never be posted again.
+        lastFingerprint = ""
         runCatching { manager().cancel(NOTIFICATION_ID) }
     }
 
@@ -307,51 +316,10 @@ class MediaControls(private val activity: MainActivity) {
 
     fun release() {
         runCatching {
-            abandonFocus()
             dismiss()
             session.isActive = false
             session.release()
             artworkPool.shutdownNow()
-        }
-    }
-
-    // --------------------------------------------------------- audio focus
-
-    private fun requestFocus() {
-        runCatching {
-            val attrs = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build()
-            val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                    .setAudioAttributes(attrs)
-                    .setWillPauseWhenDucked(true)
-                    .setOnAudioFocusChangeListener(focusListener, main)
-                    .build()
-                focusRequest = req
-                audio.requestAudioFocus(req)
-            } else {
-                @Suppress("DEPRECATION")
-                audio.requestAudioFocus(
-                    focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN,
-                )
-            }
-            if (granted != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-                Log.i(TAG, "audio focus not granted: $granted")
-            }
-        }.onFailure { Log.w(TAG, "requestFocus failed", it) }
-    }
-
-    private fun abandonFocus() {
-        runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                focusRequest?.let { audio.abandonAudioFocusRequest(it) }
-                focusRequest = null
-            } else {
-                @Suppress("DEPRECATION")
-                audio.abandonAudioFocus(focusListener)
-            }
         }
     }
 

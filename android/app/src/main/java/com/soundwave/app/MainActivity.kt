@@ -58,7 +58,7 @@ class MainActivity : Activity() {
         requestNotificationPermission()
         // Transport buttons on the notification launch the activity, so the
         // action may already be waiting on this intent.
-        media?.handle(intent?.action)
+        consumeTransportAction(intent)
 
         Thread {
             try {
@@ -83,7 +83,22 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         setIntent(intent)
-        media?.handle(intent?.action)
+        consumeTransportAction(intent)
+    }
+
+    /**
+     * Dispatches a transport action, and clears it from the intent.
+     *
+     * setIntent() keeps the intent for the lifetime of the activity, so without
+     * clearing it every recreate — a rotation, a dark-mode switch, a restore
+     * after process death — would replay whatever button the user last pressed
+     * and start or stop playback on its own.
+     */
+    private fun consumeTransportAction(intent: Intent?) {
+        val action = intent?.action ?: return
+        if (!MediaControls.isTransportAction(action)) return
+        intent.action = null
+        media?.handle(action)
     }
 
     /** Runs a WebView call on the UI thread, which is where it is required. */

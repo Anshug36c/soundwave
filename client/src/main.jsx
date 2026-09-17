@@ -19,7 +19,7 @@ if (isNativeMedia()) {
     next: () => useStore.getState().next(),
     prev: () => useStore.getState().prev(),
     seekTo: (t) => useStore.getState()._seekTo?.(t),
-    stop: () => useStore.setState({ isPlaying: false }),
+    stop: () => useStore.getState().setPlaying(false),
   });
 
   // The store fires on every timeupdate (~4/s), and each report crosses the
