@@ -1,3 +1,14 @@
+---
+title: SoundWave
+emoji: 🎵
+colorFrom: purple
+colorTo: pink
+sdk: docker
+app_port: 5000
+pinned: false
+short_description: Spotify-style Punjabi music streaming
+---
+
 # SoundWave 🎵
 
 An open-source, Spotify-style music discovery and playback website. Search across
