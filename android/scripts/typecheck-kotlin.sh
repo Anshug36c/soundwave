@@ -66,6 +66,9 @@ layouts = {os.path.splitext(os.path.basename(p))[0]
 mipmaps = {os.path.splitext(os.path.basename(p))[0]
            for p in glob.glob(os.path.join(res, 'mipmap*', '*'))
            if os.path.isfile(p)}
+drawables = {os.path.splitext(os.path.basename(p))[0]
+             for p in glob.glob(os.path.join(res, 'drawable*', '*'))
+             if os.path.isfile(p)}
 def block(name, values, base):
     if not values: return ''
     body = '\n'.join(f'        public static final int {v} = 0x{base+i:08x};'
@@ -76,6 +79,7 @@ print(block('string', strings, 0x7f030000), end='')
 print(block('id', ids, 0x7f020000), end='')
 print(block('layout', layouts, 0x7f010000), end='')
 print(block('mipmap', mipmaps, 0x7f040000), end='')
+print(block('drawable', drawables, 0x7f050000), end='')
 print('}')
 PY
 

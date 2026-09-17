@@ -5,9 +5,9 @@
 // same build works on the web, in Termux, and in the APK.
 //
 // Direction of travel:
-//   store  -> SoundwaveMedia.setState/setArtwork  -> notification, lock screen
-//   notification buttons -> window.__swMedia.*    -> the same store actions the
-//                                                   on-screen buttons use
+//   store  -> SoundwaveMedia.setState/setArtworkUrl  -> notification, lock screen
+//   notification buttons -> window.__swMedia.*       -> the same store actions the
+//                                                       on-screen buttons use
 //
 // There is deliberately one source of truth: the store. Android never holds
 // playback state of its own, so the two can't drift apart.
@@ -18,55 +18,36 @@ export function isNativeMedia() {
   return !!bridge;
 }
 
-/** Scale artwork down before base64-ing it; the notification never needs more. */
-function artworkToDataUrl(img, max = 300) {
-  try {
-    if (!img || !img.complete || !img.naturalWidth) return null;
-    const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
-    const w = Math.max(1, Math.round(img.naturalWidth * scale));
-    const h = Math.max(1, Math.round(img.naturalHeight * scale));
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-    // Throws SecurityError if the image is cross-origin without CORS headers.
-    // Caught by the caller, which then shows the notification without artwork.
-    return canvas.toDataURL('image/jpeg', 0.82);
-  } catch {
-    return null;
-  }
+/**
+ * Album art is passed to Android as a URL, not as pixels.
+ *
+ * The obvious approach — draw the <img> to a canvas and export a data URL —
+ * silently fails for some providers: album art comes from several CDNs and at
+ * least one sends no CORS header, which taints the canvas and makes toDataURL
+ * throw. Android has no CORS, so handing it the URL works for every provider.
+ */
+function findArtworkUrl(track) {
+  if (track?.image) return track.image;
+  const img = document.querySelector('.sp-playerbar img, [data-current-art] img');
+  return img?.currentSrc || img?.src || null;
 }
 
-function findArtwork() {
-  // The player bar renders the current track's artwork; fall back to any album
-  // image on the page rather than showing nothing.
-  const candidates = document.querySelectorAll(
-    '.sp-playerbar img, [data-current-art] img, img[alt]',
-  );
-  for (const img of candidates) {
-    if (img.naturalWidth >= 64) return img;
-  }
-  return null;
-}
-
-let lastArtKey = null;
+let lastArtUrl = null;
 
 function pushArtwork(track) {
-  const img = findArtwork();
-  const url = img?.currentSrc || img?.src || null;
-  const key = `${track?.id || ''}|${url || ''}`;
-  if (!url || key === lastArtKey) return;
-  const data = artworkToDataUrl(img);
-  if (!data) return;
-  lastArtKey = key;
-  try { bridge.setArtwork(data); } catch { /* non-fatal */ }
+  const url = findArtworkUrl(track);
+  if (!url || url === lastArtUrl) return;
+  lastArtUrl = url;
+  try { bridge.setArtworkUrl(url); } catch { /* non-fatal */ }
 }
 
 /**
- * Reports the store to Android. Called on every meaningful state change plus a
- * slow heartbeat; PlaybackState carries speed 1.0, so Android interpolates the
- * position between reports and the notification stays smooth without a tick per
- * second.
+ * Reports the store to Android.
+ *
+ * Called only when something the notification actually displays has changed.
+ * Position is deliberately excluded: PlaybackState carries speed 1.0, so Android
+ * interpolates it between reports and the progress stays smooth without this
+ * crossing the bridge several times a second.
  */
 export function reportToAndroid(state) {
   if (!bridge) return;
@@ -86,8 +67,8 @@ export function reportToAndroid(state) {
 }
 
 /**
- * Receives transport commands from the notification and lock screen.
- * Returns an unsubscribe function.
+ * Receives transport commands from the notification, lock screen and headset
+ * buttons. Returns an unsubscribe function.
  */
 export function bindAndroidControls({ togglePlay, next, prev, seekTo, stop }) {
   if (typeof window === 'undefined') return () => {};

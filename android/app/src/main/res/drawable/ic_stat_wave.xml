@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon. Must be a solid silhouette: the system tints it and
+     ignores colour, so a stroked or multi-colour glyph renders as mush. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M4,9.5h2v5H4z M8,6.5h2v11H8z M12,3.5h2v17h-2z M16,7.5h2v9h-2z M20,10.5h2v3h-2z" />
+</vector>
