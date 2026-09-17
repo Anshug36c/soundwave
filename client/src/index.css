@@ -315,3 +315,35 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 1.75re
   padding: .75rem 1rem;
   font-size: .875rem;
 }
+
+/* ---------------------------------------------------------------- top bar
+   Quiet at the top of the page, then gains a hairline and shadow once content
+   scrolls underneath it. Driven by data-scrolled on <main>. */
+.topbar {
+  background: var(--chrome);
+  backdrop-filter: blur(28px) saturate(1.7);
+  -webkit-backdrop-filter: blur(28px) saturate(1.7);
+  border-bottom: 1px solid transparent;
+  box-shadow: none;
+  transition: border-color .25s var(--ease), box-shadow .25s var(--ease);
+}
+/* The attribute is set on the parent of both TopBar and <main>, because the
+   header precedes <main> in the DOM — a following-sibling selector from #main
+   could never reach it. */
+[data-scrolled="true"] .topbar {
+  border-bottom-color: var(--hairline);
+  box-shadow: var(--shadow-1);
+}
+
+/* Smooth momentum scrolling where the platform supports it, and no rubber-band
+   bounce at the ends — the app should feel bounded, not elastic. */
+#main { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  #main { scroll-behavior: auto; }
+}
+
+/* Rows and tiles settle rather than snap, so hover feels physical. */
+.row, .nav-pill, .chip, .field, .field-hero { will-change: background-color; }
+
+/* Artwork placeholder: stops the layout jumping while a cover loads. */
+img { background: var(--surface-1); }

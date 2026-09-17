@@ -4,6 +4,35 @@ import { useStore } from '../store/useStore';
 import { AuthAvatar } from './GoogleLogin';
 import { HomeIcon, SearchIcon, LibraryIcon, PlusIcon, HeartIcon, NoteIcon, ChevronLeftIcon, ChevronRightIcon, MoonIcon, SunIcon } from './Icons';
 
+/**
+ * Flags the scroll container's parent with data-scrolled so the top bar can gain
+ * a hairline and shadow once content moves under it.
+ *
+ * The attribute goes on the parent rather than on <main> because the header
+ * precedes <main> in the DOM, and CSS has no parent selector — a descendant
+ * selector from a common ancestor is the only way to reach it.
+ *
+ * Passive listener with a boolean latch: it touches the DOM only on the
+ * transition, not on every scroll frame.
+ */
+function useScrollSpy() {
+  useEffect(() => {
+    const el = document.getElementById('main');
+    const host = el?.parentElement;
+    if (!el || !host) return;
+    let last = null;
+    const apply = (on) => {
+      if (on === last) return;
+      last = on;
+      host.setAttribute('data-scrolled', on ? 'true' : 'false');
+    };
+    const onScroll = () => apply(el.scrollTop > 8);
+    apply(el.scrollTop > 8);
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+}
+
 export function WaveLogo({ size = 34 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
@@ -96,9 +125,10 @@ export function TopBar() {
   const setTheme = useStore(s => s.setTheme);
   const [q, setQ] = useState('');
   const cycleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
+  useScrollSpy();
 
   return (
-    <header className="sticky top-0 z-20 glass border-b border-soft" style={{ background: 'var(--chrome)' }}>
+    <header className="topbar sticky top-0 z-20">
       <div className="flex items-center gap-2 px-4 py-2.5">
         <button onClick={() => navigate(-1)} className="btn-quiet w-9 h-9 grid place-items-center shrink-0" aria-label="Go back">
           <ChevronLeftIcon size={18} />
