@@ -62,6 +62,9 @@ export default function Search() {
   const sugCtrl = useRef(null);
   const submitSeq = useRef(0);
   const inputRef = useRef(null);
+  // a finger scrolling the suggestion list blurs the input; without this flag
+  // the blur-timeout would unmount the list mid-gesture
+  const listTouch = useRef(false);
   const [error, setError] = useState(false);
   // The layout viewport does not shrink when a phone keyboard opens, so the
   // only honest measure of the visible area is the visual viewport. Cap the
@@ -181,7 +184,12 @@ export default function Search() {
 
   return (
     <div className="pb-8">
-      <div className="relative">
+      {/* sticky so the field, voice and filter controls stay reachable (and the
+          suggestions stay in view) no matter how far results are scrolled.
+          -top-4/pt-4: the sticky offset resolves against main's padded
+          scrollport, so without the negative top a 16px seam of scrolling
+          content would show above the bar; the padding keeps rest layout. */}
+      <div className="relative sticky -top-4 pt-4 z-10 bg-app pb-2">
         <div className="flex gap-2">
           <div className="relative flex-1 min-w-0">
             <SearchIcon size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-dim pointer-events-none" />
@@ -193,7 +201,7 @@ export default function Search() {
                 else if (e.key === 'Enter') { if (showSuggest && sugActive >= 0 && sugItems[sugActive]) submit(sugItems[sugActive].q); else submit(); }
                 else if (e.key === 'Escape') { if (showSuggest) setShowSuggest(false); else inputRef.current?.blur(); }
               }}
-              onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
+              onBlur={() => setTimeout(() => { if (!listTouch.current) setShowSuggest(false); }, 150)}
               placeholder="Songs, artists, albums — try “songs like Desires”" enterKeyHint="search"
               autoCapitalize="off" autoComplete="off" autoCorrect="off" spellCheck={false}
               role="combobox" aria-expanded={showSuggest && hasSuggest} aria-controls="search-suggest" aria-autocomplete="list"
@@ -218,6 +226,9 @@ export default function Search() {
 
         {showSuggest && hasSuggest && (
           <div id="search-suggest" role="listbox" aria-label="Search suggestions" style={{ maxHeight: sugMax }}
+            onTouchStart={() => { listTouch.current = true; }}
+            onTouchEnd={() => setTimeout(() => { listTouch.current = false; }, 400)}
+            onTouchCancel={() => { listTouch.current = false; }}
             className="absolute z-30 left-0 right-0 mt-2 panel p-2 overflow-y-auto sheet-scroll">
             {suggest.songs.length > 0 && <p className="px-3 pt-1 t-eyebrow">SONGS</p>}
             {suggest.songs.map((s, i) => <SugBtn key={`s${i}`} s={s} idx={i} active={sugActive} onPick={submit} Icon={NoteIcon} />)}
@@ -303,7 +314,7 @@ export default function Search() {
       )}
 
       {q && (
-        <div className="flex gap-2 mt-5 overflow-x-auto no-scrollbar">
+        <div className="flex gap-2 mt-3 overflow-x-auto no-scrollbar fade-r">
           {TABS.map(t => (
             <button key={t} onClick={() => setTab(t)} className={`px-5 py-2 rounded-full text-sm font-bold shrink-0 ${tab === t ? 'bg-accent text-black' : 'bg-white/10'}`}>{t}</button>
           ))}

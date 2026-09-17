@@ -404,6 +404,8 @@ button:disabled:hover,
    alpha, not colours: in a mask, black means opaque. They are correct in both
    themes and must not be swapped for a colour token. */
 .text-fade-x { -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent); }
+/* right-edge fade for horizontal rails: hints there is more to swipe */
+.fade-r { -webkit-mask-image: linear-gradient(90deg, #000 90%, transparent); mask-image: linear-gradient(90deg, #000 90%, transparent); }
 /* ---------- synced lyrics ---------- */
 .lyrics-mask { -webkit-mask-image: linear-gradient(180deg, transparent, #000 14%, #000 86%, transparent); mask-image: linear-gradient(180deg, transparent, #000 14%, #000 86%, transparent); }
 .lyric-line { transition: opacity var(--dur-5) var(--ease-color), transform var(--dur-5) var(--ease), color var(--dur-4) var(--ease-color); transform-origin: left center; }
