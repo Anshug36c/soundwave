@@ -53,6 +53,12 @@ jobs:
           echo "--- SDK contents ---"
           ls "$SDK"
 
+      # Fail fast on a dangling resource reference. The APK cannot be compiled
+      # anywhere except this job, and a missing string costs a full ten-minute
+      # round trip to discover — which is exactly what happened once.
+      - name: Check resource references
+        run: python3 android/scripts/check-resources.py
+
       # ---- 1. Build the web client ----
       - name: Build client
         run: |

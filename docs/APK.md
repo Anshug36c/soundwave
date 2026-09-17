@@ -60,6 +60,7 @@ ones it falls back to.
 | Closure check catches a break | deleting `libcares.so` makes `verify_closure()` return `False` |
 | Asset format matches the Kotlin reader | GNU tar, xz, 62 relative paths, `bin/node` mode `0o755` |
 | The staged server boots and serves | CI runs it: `GET / → 200` with `assets/index-` |
+| Every resource reference resolves | `check-resources.py`, 10 refs; fails on both a dangling XML `@string/` and a dangling Kotlin `R.string.` — proven by reintroducing each |
 | Backend is portable | 0 native modules, 0 `binding.gyp`, no `child_process`, 4.3 MB |
 
 ## What is not verified

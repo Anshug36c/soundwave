@@ -19,7 +19,7 @@
         android:background="#121212"
         android:gravity="center"
         android:padding="32dp"
-        android:text="@string/booting"
+        android:text="@string/status_booting"
         android:textColor="#1db954"
         android:textSize="16sp" />
 
