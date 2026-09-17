@@ -1,7 +1,7 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../store/useStore';
-import { PlayIcon, HeartIcon, PlusIcon, CloseIcon, NoteIcon, HideIcon } from './Icons';
+import { PlayIcon, HeartIcon, PlusIcon, CloseIcon, NoteIcon, HideIcon, DotsIcon } from './Icons';
 import { formatTime } from '../services/musicApi';
 
 function Img_({ src, alt, className = '' }) {
@@ -13,7 +13,9 @@ function Img_({ src, alt, className = '' }) {
 const SRC_TAG = { djp: 'DJP', dj: 'DJJ', mrj: 'MRJ', saavn: 'SVN', yt: 'YT' };
 export function SourceBadge({ track }) {
   const tag = SRC_TAG[track?.source] ? `${SRC_TAG[track.source]} · ` : '';
-  return <span className="sticker ml-1.5 text-[9px] font-bold px-1.5 py-[1px] rounded-[4px] whitespace-nowrap bg-[var(--surface-2)] text-dim align-middle">{tag}FULL</span>;
+  /* hidden on phones: on a 320-390px row the badge steals most of the artist
+     line; the artist name wins there, the badge returns at >=400px */
+  return <span className="sticker hidden min-[400px]:inline-block text-[9px] font-bold px-1.5 py-[1px] rounded-[4px] whitespace-nowrap bg-[var(--surface-2)] text-dim align-middle">{tag}FULL</span>;
 }
 
 function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp, onMoveDown, badge }) {
@@ -27,37 +29,63 @@ function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp,
   const toggleDislike = useStore(s => s.toggleDislike);
   const disliked = useStore(s => s.disliked);
   const addToQueue = useStore(s => s.addToQueue);
+  const [more, setMore] = useState(false);
   const isCurrent = queue[idx]?.id === track.id;
   const isLiked = !!liked[track.id];
   const isDisliked = !!disliked[track.id];
 
+  /* Phone layout: artwork leads, one like button inline, and a dots button
+     that unfolds the secondary actions (queue / next / hide) below the row.
+     ≥400px gets the fuller inline set instead. The current-track indicator
+     lives by the title so it survives at every width. */
   return (
-    <div className={`group flex items-center gap-2.5 px-3 sm:gap-3 py-2 rounded-[var(--r-ui)] transition-colors duration-200 ${isCurrent ? 'bg-[var(--surface-3)]' : 'bg-hoverable hover:bg-[var(--surface-2)]'}`} role="row">
-      <span className="w-6 text-center text-[13px] text-dim shrink-0 tabular-nums">
-        {isCurrent && isPlaying ? <EqIcon /> : (
-          <button onClick={() => playTrack(track, context)} aria-label={`Play ${track.title}`}>
-            <span className="group-hover:hidden inline-block">{showIndex ? index + 1 : <NoteIcon size={14} />}</span>
-            <span className="hidden group-hover:inline-block" style={{ color: 'var(--text)' }}><PlayIcon size={12} /></span>
-          </button>
+    <div className={`song-row group flex flex-col rounded-[var(--r-ui)] transition-colors duration-200 ${isCurrent ? 'bg-[var(--surface-3)]' : 'bg-hoverable'}`}>
+      <div className="flex items-center gap-2.5 px-2.5 sm:gap-3 sm:px-3 py-2">
+        {showIndex && (
+          <span className="hidden min-[400px]:grid w-6 shrink-0 place-items-center text-[13px] text-dim tabular-nums">
+            <button onClick={() => playTrack(track, context)} aria-label={`Play ${track.title}`} className="grid h-6 w-6 place-items-center">
+              <span className="group-hover:hidden inline-block">{index + 1}</span>
+              <span className="hidden group-hover:inline-block" style={{ color: 'var(--text)' }}><PlayIcon size={12} /></span>
+            </button>
+          </span>
         )}
-      </span>
-      <button onClick={() => playTrack(track, context)} className="relative shrink-0" aria-label={`Play ${track.title}`}>
-        <Img src={track.image} alt={track.title} className="w-10 h-10 sm:w-11 sm:h-11 rounded-[7px] object-cover shadow-[var(--shadow-1)]" />
-        <span className="absolute inset-0 grid place-items-center bg-black/45 rounded-[7px] opacity-0 group-hover:opacity-100 text-white transition-opacity duration-200">▶</span>
-      </button>
-      <button onClick={() => playTrack(track, context)} className="flex-1 min-w-0 text-left">
-        <p className={`truncate text-[14px] font-semibold ${isCurrent ? 'accent' : ''}`}>{track.title}</p>
-        <p className="truncate t-caption flex items-center">{track.artist?.name} <SourceBadge track={track} /></p>
-      </button>
-      <button onClick={() => toggleLike(track)} className={`btn-quiet px-2.5 py-2 active:scale-90 ${isLiked ? 'accent' : 'md:opacity-0 md:group-hover:opacity-100'}`} aria-label="Like"><HeartIcon size={17} filled={isLiked} /></button>
-      <button onClick={() => toggleDislike(track)} className={`px-2.5 py-2 transition-all active:scale-90 rounded-full ${isDisliked ? 'text-red-400' : 'text-dim md:opacity-0 md:group-hover:opacity-100 hover:text-[var(--text)]'}`} aria-label="Dislike" title="Don't recommend this"><HideIcon size={17} /></button>
-      {badge && <span className="hidden min-[400px]:block text-[12px] text-dim shrink-0">{badge}</span>}
-      <span className="hidden min-[400px]:block text-[12px] text-dim w-10 text-right shrink-0 tabular-nums">{formatTime(track.duration)}</span>
-      <button onClick={() => playNext(track)} className="hidden min-[400px]:block text-dim px-2 py-2 md:opacity-0 md:group-hover:opacity-100 transition-opacity text-[10px] font-bold hover:text-[var(--text)]" aria-label="Play next" title="Play next">NEXT</button>
-      <button onClick={() => addToQueue(track)} className="btn-quiet hidden min-[400px]:block px-1.5 py-1 md:opacity-0 md:group-hover:opacity-100" aria-label="Add to queue" title="Add to queue"><PlusIcon size={17} /></button>
-      {onMoveUp && <button onClick={onMoveUp} className="btn-quiet px-2 py-2 text-[10px]" aria-label="Move up">▲</button>}
-      {onMoveDown && <button onClick={onMoveDown} className="btn-quiet px-2 py-2 text-[10px]" aria-label="Move down">▼</button>}
-      {onRemove && <button onClick={onRemove} className="btn-quiet px-1 py-2" aria-label="Remove"><CloseIcon size={14} /></button>}
+        <button onClick={() => playTrack(track, context)} className="relative shrink-0" aria-label={`Play ${track.title}`}>
+          <Img src={track.image} alt="" className={`w-12 h-12 rounded-[8px] object-cover shadow-[var(--shadow-1)] ${isCurrent ? 'ring-2 ring-[var(--accent)]' : ''}`} />
+          <span className="absolute inset-0 grid place-items-center bg-black/45 rounded-[8px] opacity-0 group-hover:opacity-100 text-white transition-opacity duration-200">▶</span>
+        </button>
+        <button onClick={() => playTrack(track, context)} className="min-w-0 flex-1 text-left">
+          <span className={`flex min-w-0 items-center gap-1.5 ${isCurrent ? 'accent' : ''}`}>
+            {isCurrent && isPlaying && <EqIcon />}
+            <span className="truncate text-[14px] font-semibold leading-snug">{track.title}</span>
+          </span>
+          <span className="t-caption mt-0.5 flex min-w-0 items-center gap-1.5">
+            <span className="truncate">{track.artist?.name}</span>
+            <SourceBadge track={track} />
+          </span>
+        </button>
+        <button onClick={() => toggleLike(track)} className={`btn-quiet shrink-0 px-2 active:scale-90 ${isLiked ? 'accent' : ''}`} aria-label={isLiked ? 'Unlike' : 'Like'}>
+          <HeartIcon size={18} filled={isLiked} />
+        </button>
+        <button onClick={() => toggleDislike(track)} className={`btn-quiet hidden min-[400px]:grid shrink-0 place-items-center px-2 ${isDisliked ? 'text-red-400' : ''}`} aria-label="Dislike" title="Don't recommend this"><HideIcon size={18} /></button>
+        {badge && <span className="hidden min-[400px]:block shrink-0 text-[12px] text-dim">{badge}</span>}
+        <span className="hidden min-[360px]:block w-10 shrink-0 text-right text-[12px] text-dim tabular-nums">{formatTime(track.duration)}</span>
+        <button onClick={() => playNext(track)} className="hidden min-[400px]:block px-2 py-2 text-[10px] font-bold text-dim transition-opacity hover:text-[var(--text)] md:opacity-0 md:group-hover:opacity-100" aria-label="Play next" title="Play next">NEXT</button>
+        <button onClick={() => addToQueue(track)} className="btn-quiet hidden min-[400px]:grid shrink-0 place-items-center px-1.5" aria-label="Add to queue" title="Add to queue"><PlusIcon size={17} /></button>
+        <button onClick={() => setMore(v => !v)} aria-label="More options" aria-expanded={more}
+          className={`btn-quiet grid shrink-0 place-items-center min-[400px]:hidden ${more ? 'accent' : ''}`}>
+          <DotsIcon size={18} />
+        </button>
+        {onMoveUp && <button onClick={onMoveUp} className="btn-quiet px-2 py-2 text-[10px]" aria-label="Move up">▲</button>}
+        {onMoveDown && <button onClick={onMoveDown} className="btn-quiet px-2 py-2 text-[10px]" aria-label="Move down">▼</button>}
+        {onRemove && <button onClick={onRemove} className="btn-quiet px-1 py-2" aria-label="Remove"><CloseIcon size={14} /></button>}
+      </div>
+      {more && (
+        <div className="flex gap-2 px-3 pb-2.5 min-[400px]:hidden">
+          <button onClick={() => addToQueue(track)} className="chip flex-1">Queue</button>
+          <button onClick={() => playNext(track)} className="chip flex-1">Play next</button>
+          <button onClick={() => toggleDislike(track)} className={`chip flex-1 ${isDisliked ? 'text-red-400' : ''}`}>{isDisliked ? 'Hidden' : 'Hide'}</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -82,7 +110,9 @@ function SongCard_({ track, context }) {
   return (
     <div onClick={() => playTrack(track, context || [track])} className="media-card group relative cursor-pointer min-w-[152px] max-w-[190px] pb-1" role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && playTrack(track, context || [track])}>
       <div className="relative">
-        <Img src={track.image} alt={track.title} className="w-full aspect-square object-cover" />
+        <Img src={track.image} alt="" className="w-full aspect-square object-cover" />
+        {/* touch has no hover: a persistent badge shows the card plays */}
+        <span className="absolute bottom-2 right-2 w-9 h-9 rounded-full btn-accent grid place-items-center shadow-[var(--shadow-2)] md:hidden" aria-hidden="true"><PlayIcon size={15} /></span>
         <PlayButton onPlay={() => playTrack(track, context || [track])} />
       </div>
       {/* Title sits outside the artwork with no card behind it. */}
@@ -164,7 +194,7 @@ export function SkeletonRow({ count = 6 }) {
 }
 
 export function SkeletonList({ count = 6 }) {
-  return <div className="flex flex-col gap-2">{Array.from({ length: count }).map((_, i) => <div key={i} className="skeleton h-14 rounded-lg" />)}</div>;
+  return <div className="flex flex-col gap-2">{Array.from({ length: count }).map((_, i) => <div key={i} className="skeleton h-16 rounded-lg" />)}</div>;
 }
 
 // Memoized: lists re-render only the rows whose props actually changed.
