@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+/* Phones have no hover pointer, so a `:hover` style that fires on tap "sticks"
+   to the last-touched row or button. Gate every `hover:` utility behind a real
+   hover capability so touch devices never inherit pointer-only states. */
+@custom-variant hover {
+  @media (hover: hover) {
+    &:hover {
+      @slot;
+    }
+  }
+}
+
 /* ------------------------------------------------------------------ tokens
    The palette is unchanged — same background, same green. What changed is how
    surfaces are layered: Apple Music gets its look from translucent depth and a
@@ -90,6 +101,11 @@
   --space-6: 24px;
   --space-8: 32px;
 
+  /* ---- touch. The smallest comfortable hit areas on a phone. 44px is the
+         floor for a primary control; dense secondary pills may drop to 40. ---- */
+  --tap: 44px;
+  --tap-sm: 40px;
+
   /* ---- type ---- */
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
                'Inter', 'Figtree', 'Segoe UI Variable Text', 'Segoe UI', Roboto,
@@ -167,7 +183,7 @@ body {
 .bg-app { background: var(--bg); }
 .bg-soft { background: var(--bg-soft); }
 .bg-card { background: var(--bg-card); }
-.bg-hoverable:hover { background: var(--bg-hover); }
+@media (hover: hover) { .bg-hoverable:hover { background: var(--bg-hover); } }
 .bg-hoverable { transition: background-color var(--dur-1) var(--ease-color); }
 .text-dim { color: var(--text-dim); }
 .text-faint { color: var(--text-faint); }
@@ -187,7 +203,7 @@ body {
 .t-caption { font-size: .8125rem; color: var(--text-dim); letter-spacing: var(--tracking-caption); line-height: var(--leading-snug); }
 
 .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--cshadow, none); transition: transform var(--dur-2) var(--ease), background var(--dur-2) var(--ease), box-shadow var(--dur-2) var(--ease); }
-.card:hover { background: var(--bg-hover); transform: translateY(-2px); box-shadow: var(--cshadow, var(--shadow-3)); }
+@media (hover: hover) { .card:hover { background: var(--bg-hover); transform: translateY(-2px); box-shadow: var(--cshadow, var(--shadow-3)); } }
 /* Pressing a lifted card should feel like pushing it back down. */
 .card:active { transform: translateY(0); box-shadow: var(--cshadow, var(--shadow-1)); }
 .bg-deep { background: var(--bg-deep); }
@@ -206,10 +222,12 @@ body {
   border-radius: var(--r-art);
   transition: transform var(--dur-2) var(--ease);
 }
-.media-card:hover { background: transparent; }
-.media-card:hover img { transform: scale(1.02); }
+@media (hover: hover) {
+  .media-card:hover { background: transparent; }
+  .media-card:hover img { transform: scale(1.02); }
+}
 .media-card img { transition: transform var(--dur-4) var(--ease), box-shadow var(--dur-4) var(--ease); border-radius: var(--r-art); box-shadow: var(--shadow-2); }
-.media-card:hover img { box-shadow: var(--shadow-3); }
+@media (hover: hover) { .media-card:hover img { box-shadow: var(--shadow-3); } }
 
 /* Floating frosted player bar. Height is unchanged on purpose: the mobile
    nav offset and the main scroll padding are both keyed to it. */
@@ -224,21 +242,21 @@ body {
 .sp-progress { cursor: pointer; }
 .sp-track { background: var(--surface-3); }
 .sp-fill { background: var(--text); transition: background var(--dur-1) var(--ease-color), width var(--dur-4) var(--ease-linear); will-change: width; }
-.sp-progress:hover .sp-fill { background: var(--accent); }
+@media (hover: hover) { .sp-progress:hover .sp-fill { background: var(--accent); } }
 .sp-knob { opacity: 0; background: var(--text-on-dark); box-shadow: var(--shadow-1); transition: opacity var(--dur-1) var(--ease-color); }
-.sp-progress:hover .sp-knob { opacity: 1; }
+@media (hover: hover) { .sp-progress:hover .sp-knob { opacity: 1; } }
 
 .btn-accent { background: var(--accent); color: var(--accent-ink); font-weight: var(--weight-bold); border-radius: var(--r-pill); box-shadow: var(--shadow-1); transition: transform var(--dur-1) var(--ease), background var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease); }
-.btn-accent:hover { background: var(--accent-hover); transform: scale(1.035); box-shadow: var(--shadow-2); }
+@media (hover: hover) { .btn-accent:hover { background: var(--accent-hover); transform: scale(1.035); box-shadow: var(--shadow-2); } }
 
 /* quiet icon affordance, used across nav and the player */
 .btn-quiet { color: var(--text-dim); border-radius: var(--r-pill); transition: color var(--dur-1) var(--ease-color), background-color var(--dur-1) var(--ease-color), transform var(--dur-1) var(--ease); }
-.btn-quiet:hover { color: var(--text); background: var(--surface-2); }
+@media (hover: hover) { .btn-quiet:hover { color: var(--text); background: var(--surface-2); } }
 .btn-quiet:active { transform: scale(.93); }
 
 /* pill used for the active navigation item */
 .nav-pill { border-radius: var(--r-pill); transition: background-color var(--dur-1) var(--ease-color), color var(--dur-1) var(--ease-color); }
-.nav-pill:hover { background: var(--surface-2); }
+@media (hover: hover) { .nav-pill:hover { background: var(--surface-2); } }
 .nav-active { background: var(--surface-3); color: var(--text); }
 
 .glass { backdrop-filter: blur(24px) saturate(1.4); -webkit-backdrop-filter: blur(24px) saturate(1.4); }
@@ -301,13 +319,13 @@ button, a, [role="button"], input[type="range"] { touch-action: manipulation; -w
    than the one it removes. Each value is used exactly once. */
 [data-theme="light"] .bg-white\/10 { background-color: rgba(0,0,0,.07); }
 [data-theme="light"] .bg-white\/5 { background-color: rgba(0,0,0,.04); }
-[data-theme="light"] .hover\:bg-white\/5:hover { background-color: rgba(0,0,0,.05); }
+@media (hover: hover) { [data-theme="light"] .hover\:bg-white\/5:hover { background-color: rgba(0,0,0,.05); } }
 [data-theme="light"] .bg-white\/30 { background-color: rgba(0,0,0,.25); }
-[data-theme="light"] .hover\:text-white:hover { color: var(--text); }
+@media (hover: hover) { [data-theme="light"] .hover\:text-white:hover { color: var(--text); } }
 [data-theme="light"] .ui-dark .bg-white\/10 { background-color: rgba(255,255,255,.1); }
 [data-theme="light"] .ui-dark .bg-white\/5 { background-color: rgba(255,255,255,.05); }
-[data-theme="light"] .ui-dark .hover\:bg-white\/5:hover { background-color: rgba(255,255,255,.05); }
-[data-theme="light"] .ui-dark .hover\:text-white:hover { color: var(--text-on-dark); }
+@media (hover: hover) { [data-theme="light"] .ui-dark .hover\:bg-white\/5:hover { background-color: rgba(255,255,255,.05); } }
+@media (hover: hover) { [data-theme="light"] .ui-dark .hover\:text-white:hover { color: var(--text-on-dark); } }
 
 /* ---------- polish ---------- */
 ::selection { background: var(--accent); color: var(--accent-ink); }
@@ -370,7 +388,7 @@ button:disabled:hover,
 .lyric-prelude { animation: lyricPulse 1.6s ease-in-out infinite; }
 /* tactile press for icon buttons */
 .btn-press { transition: transform var(--dur-1) var(--ease), color var(--dur-1) var(--ease-color), background-color var(--dur-1) var(--ease-color); }
-.btn-press:hover { transform: scale(1.1); }
+@media (hover: hover) { .btn-press:hover { transform: scale(1.1); } }
 .btn-press:active { transform: scale(.92); }
 /* Fade long titles instead of hard-clipping. The #000 stops below are mask
    alpha, not colours: in a mask, black means opaque. They are correct in both
@@ -405,7 +423,7 @@ button:disabled:hover,
   transition: background-color var(--dur-1) var(--ease-color), border-color var(--dur-1) var(--ease-color), box-shadow var(--dur-1) var(--ease-color);
 }
 .field::placeholder { color: var(--text-dim); }
-.field:hover { background: var(--surface-2); }
+@media (hover: hover) { .field:hover { background: var(--surface-2); } }
 /* The halo is the focus state: the accent border alone is too quiet to find
    when tabbing, and an outline would clip against the rounded corner. */
 .field:focus { background: var(--bg-card); border-color: var(--accent); box-shadow: var(--focus-halo); }
@@ -425,7 +443,7 @@ button:disabled:hover,
   transition: background-color var(--dur-2) var(--ease-color), border-color var(--dur-2) var(--ease-color), box-shadow var(--dur-2) var(--ease-color);
 }
 .field-hero::placeholder { color: var(--text-dim); }
-.field-hero:hover { background: var(--surface-3); }
+@media (hover: hover) { .field-hero:hover { background: var(--surface-3); } }
 .field-hero:focus { background: var(--bg-card); border-color: var(--accent); box-shadow: var(--focus-halo); }
 .field-hero:focus-visible { outline: none; }
 
@@ -445,10 +463,10 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 1.75re
   padding: 6px var(--space-3);
   transition: background-color var(--dur-1) var(--ease-color), color var(--dur-1) var(--ease-color), transform var(--dur-1) var(--ease);
 }
-.chip:hover { background: var(--surface-3); color: var(--text); }
+@media (hover: hover) { .chip:hover { background: var(--surface-3); color: var(--text); } }
 .chip:active { transform: scale(.96); }
 .chip-active { background: var(--accent); color: var(--accent-ink); }
-.chip-active:hover { background: var(--accent-hover); color: var(--accent-ink); }
+@media (hover: hover) { .chip-active:hover { background: var(--accent-hover); color: var(--accent-ink); } }
 
 /* informational callout, quieter than the old tinted boxes */
 .callout {
@@ -491,3 +509,22 @@ select.field { appearance: none; -webkit-appearance: none; padding-right: 1.75re
 
 /* Artwork placeholder: stops the layout jumping while a cover loads. */
 img { background: var(--surface-1); }
+
+/* ---------------------------------------------------------------- touch floor
+   Phone-first hit areas and slider knobs, applied by capability (coarse
+   pointer) rather than by width, so every handset from 320px up gets the same
+   comfortable targets with no extra breakpoints. A fine pointer changes
+   nothing. */
+@media (pointer: coarse) {
+  .btn-accent { min-height: var(--tap); }
+  .btn-quiet { min-width: var(--tap); min-height: var(--tap); }
+  .chip { min-height: var(--tap-sm); }
+  .field, select.field { min-height: var(--tap); }
+  .field-hero { min-height: calc(var(--tap) + 8px); }
+  /* Range sliders: keep the knob visible at all times and make it big enough
+     to drag with a finger — a hover-only thumb is unreachable on a phone. */
+  input[type="range"].slider { height: 6px; }
+  input[type="range"].slider::-webkit-slider-thumb { width: 20px; height: 20px; opacity: 1; }
+  input[type="range"].slider::-moz-range-thumb { width: 20px; height: 20px; opacity: 1; }
+  .eq-slider { width: 34px; }
+}
