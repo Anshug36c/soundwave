@@ -382,6 +382,10 @@ button:disabled:hover,
 .btn-accent:active { transform: scale(.97); }
 @keyframes sheetUp { from { opacity: 0; transform: translateY(32px); } to { opacity: 1; transform: translateY(0); } }
 .sheet-in { animation: sheetUp var(--dur-4) var(--ease) both; }
+@keyframes sheetDown { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(9%); } }
+.sheet-out { animation: sheetDown .22s var(--ease) both; }
+@keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+.fade-out { animation: fadeOut .22s var(--ease-color) both; }
 /* ---------- motion utilities ---------- */
 @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 .anim-in { animation: fadeSlideIn var(--dur-4) var(--ease) both; }
@@ -416,7 +420,7 @@ button:disabled:hover,
 
 @media (prefers-reduced-motion: reduce) {
   .animate-spin-slow, .animate-spin-slower, .eq-bar, .skeleton, .lyric-prelude { animation: none; }
-  .fade-up, .fade-up-1, .fade-up-2, .fade-up-3, .sheet-in, .anim-in, .fade-in, .fade-in-slow, .player-in, .drawer-in, .toast-in { animation-duration: .01s; }
+  .fade-up, .fade-up-1, .fade-up-2, .fade-up-3, .sheet-in, .sheet-out, .anim-in, .fade-in, .fade-out, .fade-in-slow, .player-in, .drawer-in, .toast-in { animation-duration: .01s; }
   .lyric-line, .sp-fill, .btn-press { transition: none; }
 }
 

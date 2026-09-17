@@ -61,6 +61,18 @@ function ProgressBar({ currentTime, duration }) {
 export function MiniPlayer() {
   const swipeX = useRef(null);
   const miniBarRef = useRef(null); // scrubbable progress strip on the bar
+  const [kbOpen, setKbOpen] = useState(false);
+  // soft keyboard open (search typing): the bar slides away so it never
+  // floats over the keyboard or squeezes the results; desktop never trips
+  // the coarse-pointer guard
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv || !window.matchMedia?.('(pointer: coarse)')?.matches) return;
+    const onR = () => setKbOpen(vv.height < window.innerHeight - 120);
+    onR();
+    vv.addEventListener('resize', onR);
+    return () => vv.removeEventListener('resize', onR);
+  }, []);
   const queue = useStore(s => s.queue);
   const index = useStore(s => s.index);
   const isPlaying = useStore(s => s.isPlaying);
@@ -102,7 +114,7 @@ export function MiniPlayer() {
   return (
     <div className="fixed left-0 right-0 z-30 player-in mini-offset">
       {/* mobile strip — sits above the tab bar; the bar owns the safe area */}
-      <div className="md:hidden ui-dark"
+      <div className={`md:hidden ui-dark transition-transform duration-300 ${kbOpen ? 'translate-y-[180%]' : ''}`}
         onTouchStart={e => { swipeX.current = e.touches[0].clientX; }}
         onTouchEnd={e => {
           if (swipeX.current == null) return;
@@ -369,19 +381,50 @@ export function FullPlayer() {
   const [tab, setTab] = useState('lyrics');
   const [showPlMenu, setShowPlMenu] = useState(false);
   const [showSleep, setShowSleep] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
+  const poppedRef = useRef(false);
   const touchY = useRef(null);
   const sheetRef = useRef(null);
+  const requestClose = () => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setClosing(true);
+    setTimeout(() => { closingRef.current = false; setClosing(false); setShow(false); }, 210);
+  };
   useEffect(() => {
     if (!show) return;
     const h = (e) => {
       if (e.key !== 'Escape') return;
       if (showPlMenu) setShowPlMenu(false);
       else if (showSleep) setShowSleep(false);
-      else setShow(false);
+      else requestClose();
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [show, showPlMenu, showSleep]);
+  // Android / system Back closes the sheet instead of leaving the app: while
+  // open we own exactly one history entry. With the queue stacked on top,
+  // Back closes the queue first and re-owns the entry.
+  useEffect(() => {
+    if (!show) return;
+    history.pushState({ swPlayer: 1 }, '');
+    const onPop = () => {
+      const st = useStore.getState();
+      if (st.showQueue) { st.setShowQueue(false); history.pushState({ swPlayer: 1 }, ''); return; }
+      poppedRef.current = true;
+      requestClose();
+    };
+    window.addEventListener('popstate', onPop);
+    // opening the sheet drops any soft keyboard instead of letting it float
+    // over the player
+    try { document.activeElement?.blur?.(); } catch { /* noop */ }
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (poppedRef.current) poppedRef.current = false;
+      else history.back(); // UI-driven close: consume our own entry
+    };
+  }, [show]);
 
   const track = index >= 0 ? queue[index] : null;
   if (!show || !track) return null;
@@ -413,13 +456,14 @@ export function FullPlayer() {
         const dy = e.changedTouches[0].clientY - touchY.current;
         touchY.current = null;
         if (sheetRef.current) sheetRef.current.style.transform = '';
-        if (dy > 100 && e.currentTarget.scrollTop <= 0) setShow(false);
+        if (dy > 100 && e.currentTarget.scrollTop <= 0) requestClose();
       }}>
-      <div key={track.image} className="fade-in-slow absolute inset-0 bg-cover bg-center blur-3xl scale-125 opacity-50" style={{ backgroundImage: `url(${track.image})` }} />
-      <div className="fade-in absolute inset-0 bg-black/80 backdrop-blur-2xl" />
-      <div ref={sheetRef} className="sheet-in relative max-w-5xl mx-auto px-4 py-6 min-h-full flex flex-col">
+      <div key={track.image} className={`${closing ? 'fade-out' : 'fade-in-slow'} absolute inset-0 bg-cover bg-center blur-3xl scale-125 opacity-50`} style={{ backgroundImage: `url(${track.image})` }} />
+      <div className={`${closing ? 'fade-out' : 'fade-in'} absolute inset-0 bg-black/80 backdrop-blur-2xl`} />
+      <div ref={sheetRef} className={`${closing ? 'sheet-out' : 'sheet-in'} relative max-w-5xl mx-auto px-4 min-h-full flex flex-col`}
+        style={{ paddingTop: 'calc(1.5rem + env(safe-area-inset-top, 0px))', paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}>
         <div className="flex items-center justify-between">
-          <button onClick={() => setShow(false)} className="w-11 h-11 grid place-items-center btn-press" aria-label="Close player"><ChevronDownIcon size={22} /></button>
+          <button onClick={requestClose} className="w-11 h-11 grid place-items-center btn-press" aria-label="Close player"><ChevronDownIcon size={22} /></button>
           {/* the state word is the first thing on the sheet: playing / paused /
               loading / failed / ended are always visible at a glance */}
           <p className={`text-xs font-bold tracking-widest ${playError ? 'text-red-400' : buffering ? 'text-dim animate-pulse' : isPlaying ? 'accent' : 'text-dim'}`} aria-live="polite">{status} · {playLabel}{studioOn ? ' · STUDIO' : ''}</p>
