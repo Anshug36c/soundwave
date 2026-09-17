@@ -6,7 +6,9 @@ import { formatTime } from '../services/musicApi';
 
 function Img_({ src, alt, className = '' }) {
   return (
-    <img src={src || '/icons/icon.svg'} alt={alt || ''} loading="lazy" decoding="async" onError={(e) => { e.currentTarget.src = '/icons/icon.svg'; }} className={className} />
+    /* dataset.fb guards the fallback: if the icon itself ever fails (offline
+       install), we don't loop on error events */
+    <img src={src || '/icons/icon.svg'} alt={alt || ''} loading="lazy" decoding="async" onError={(e) => { const el = e.currentTarget; if (el.dataset.fb) return; el.dataset.fb = '1'; el.src = '/icons/icon.svg'; }} className={className} />
   );
 }
 
@@ -15,7 +17,7 @@ export function SourceBadge({ track }) {
   const tag = SRC_TAG[track?.source] ? `${SRC_TAG[track.source]} · ` : '';
   /* hidden on phones: on a 320-390px row the badge steals most of the artist
      line; the artist name wins there, the badge returns at >=400px */
-  return <span className="sticker hidden min-[400px]:inline-block text-[9px] font-bold px-1.5 py-[1px] rounded-[4px] whitespace-nowrap bg-[var(--surface-2)] text-dim align-middle">{tag}FULL</span>;
+  return <span className="hidden min-[400px]:inline-block text-[9px] font-bold px-1.5 py-[1px] rounded-[4px] whitespace-nowrap bg-[var(--surface-2)] text-dim align-middle">{tag}FULL</span>;
 }
 
 function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp, onMoveDown, badge }) {
@@ -39,7 +41,7 @@ function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp,
      ≥400px gets the fuller inline set instead. The current-track indicator
      lives by the title so it survives at every width. */
   return (
-    <div className={`song-row group flex flex-col rounded-[var(--r-ui)] transition-colors duration-200 ${isCurrent ? 'bg-[var(--surface-3)]' : 'bg-hoverable'}`}>
+    <div className={`song-row group flex flex-col rounded-[var(--r-ui)] transition-colors duration-200 ${isCurrent ? 'bg-[var(--surface-3)]' : 'bg-hoverable active:bg-[var(--surface-2)]'}`}>
       <div className="flex items-center gap-2.5 px-2.5 sm:gap-3 sm:px-3 py-2">
         {showIndex && (
           <span className="hidden min-[400px]:grid w-6 shrink-0 place-items-center text-[13px] text-dim tabular-nums">
@@ -108,7 +110,7 @@ function PlayButton({ onPlay }) {
 function SongCard_({ track, context }) {
   const playTrack = useStore(s => s.playTrack);
   return (
-    <div onClick={() => playTrack(track, context || [track])} className="media-card group relative cursor-pointer min-w-[152px] max-w-[190px] pb-1" role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && playTrack(track, context || [track])}>
+    <div onClick={() => playTrack(track, context || [track])} className="media-card group relative cursor-pointer min-w-[152px] max-w-[190px] pb-1" role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); playTrack(track, context || [track]); } }}>
       <div className="relative">
         <Img src={track.image} alt="" className="w-full aspect-square object-cover" />
         {/* touch has no hover: a persistent badge shows the card plays */}
@@ -116,7 +118,7 @@ function SongCard_({ track, context }) {
         <PlayButton onPlay={() => playTrack(track, context || [track])} />
       </div>
       {/* Title sits outside the artwork with no card behind it. */}
-      <p className="mt-2.5 truncate text-[14px] font-semibold">{track.title}</p>
+      <p className="mt-2.5 truncate text-[14px] font-semibold leading-snug">{track.title}</p>
       <p className="t-caption truncate">{track.artist?.name}</p>
     </div>
   );
@@ -176,9 +178,9 @@ export function SectionRow({ title, subtitle, children, href }) {
           <h2 className="h-section truncate">{title}</h2>
           {subtitle && <p className="t-caption mt-0.5 truncate">{subtitle}</p>}
         </div>
-        {href && <Link to={href} className="text-[13px] font-semibold accent hover:opacity-75 transition-opacity shrink-0">See All</Link>}
+        {href && <Link to={href} className="text-[13px] font-semibold accent py-2 -my-2 shrink-0">See All</Link>}
       </div>
-      <div className="flex gap-4 overflow-x-auto no-scrollbar snap-x pb-2 px-1 [&>*]:snap-start">{children}</div>
+      <div className="flex gap-4 overflow-x-auto no-scrollbar snap-x fade-r pb-2 px-1 [&>*]:snap-start">{children}</div>
     </section>
   );
 }
@@ -187,7 +189,7 @@ export function SkeletonRow({ count = 6 }) {
   return (
     <div className="flex gap-3 overflow-hidden pb-2">
       {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className="min-w-[160px]"><div className="skeleton aspect-square rounded-lg" /><div className="skeleton h-3 rounded mt-2 w-3/4" /><div className="skeleton h-3 rounded mt-1 w-1/2" /></div>
+        <div key={i} className="min-w-[152px]"><div className="skeleton aspect-square rounded-lg" /><div className="skeleton h-3 rounded mt-2 w-3/4" /><div className="skeleton h-3 rounded mt-1 w-1/2" /></div>
       ))}
     </div>
   );
