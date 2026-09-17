@@ -550,5 +550,8 @@ img { background: var(--surface-1); }
      track thick enough to read at arm's length */
   .sp-track { height: 6px; }
   .sp-knob { width: 16px; height: 16px; opacity: 1; }
+  /* long-press on player artwork must not pop the browser's save-image
+     callout mid-gesture */
+  .sp-playerbar img, [aria-label="Now playing"] img, [aria-label="Queue"] img { -webkit-touch-callout: none; }
   .eq-slider { width: 34px; }
 }

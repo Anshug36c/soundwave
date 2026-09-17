@@ -116,7 +116,7 @@ export function MiniPlayer() {
     <div className="fixed left-0 right-0 z-30 player-in mini-offset"
       aria-hidden={showFull || undefined}>
       {/* mobile strip — sits above the tab bar; the bar owns the safe area */}
-      <div className={`md:hidden ui-dark transition-transform duration-300 ${kbOpen ? 'translate-y-[180%]' : ''}`}
+      <div className={`md:hidden ui-dark select-none transition-transform duration-300 ${kbOpen ? 'translate-y-[180%]' : ''}`}
         onTouchStart={e => { swipeX.current = e.touches[0].clientX; }}
         onTouchEnd={e => {
           if (swipeX.current == null) return;
@@ -139,7 +139,7 @@ export function MiniPlayer() {
           </div>
           <div className="glass px-2 h-16 flex items-center gap-1 sp-playerbar">
             <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left active:opacity-80 transition-opacity" aria-label="Open full player">
-              <Img src={track.image} alt={track.title} className="w-12 h-12 rounded-[7px] object-cover shadow-[var(--shadow-1)]" />
+              <Img src={track.image} alt={track.title} className="w-12 h-12 rounded-[7px] object-cover bg-[var(--surface-2)] shadow-[var(--shadow-1)]" />
               <span className="min-w-0">
                 <p className="truncate text-[14px] font-semibold flex items-center gap-2">{isPlaying && <EqIcon />}{track.title}</p>
                 {/* the mini bar names the state too: loading / failed / paused /
@@ -494,7 +494,7 @@ export function FullPlayer() {
       <div ref={bgDimRef} className={`${closing ? 'fade-out' : 'fade-in'} absolute inset-0 bg-black/80 backdrop-blur-2xl`} />
       <div ref={sheetRef} className={`${closing ? 'sheet-out' : 'sheet-in'} relative max-w-5xl mx-auto px-4 min-h-full flex flex-col`}
         style={{ paddingTop: 'calc(1.5rem + env(safe-area-inset-top, 0px))', paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between select-none">
           <button ref={closeBtnRef} onClick={requestClose} className="w-11 h-11 grid place-items-center btn-press" aria-label="Close player"><ChevronDownIcon size={22} /></button>
           {/* the state word is the first thing on the sheet: playing / paused /
               loading / failed / ended are always visible at a glance */}
@@ -509,7 +509,7 @@ export function FullPlayer() {
             <div className={`relative ${isPlaying ? 'animate-spin-slower' : 'paused-spin animate-spin-slower'}`}>
               {/* paused/ended: the disc visibly cools down (desaturate + dim) so
                   state reads from across the room, not just the header word */}
-              <Img src={track.image} alt={track.title} className={`w-56 md:w-80 max-w-[62vw] aspect-square h-auto rounded-full object-cover shadow-2xl border-8 border-black/60 transition-[box-shadow,filter,opacity] duration-700 ${isPlaying ? 'shadow-[0_0_90px_-18px_var(--accent)]' : 'saturate-[.7] opacity-85'}`} />
+              <Img src={track.image} alt={track.title} className={`w-56 md:w-80 max-w-[62vw] aspect-square h-auto rounded-full object-cover bg-[var(--surface-2)] shadow-2xl border-8 border-black/60 transition-[box-shadow,filter,opacity] duration-700 ${isPlaying ? 'shadow-[0_0_90px_-18px_var(--accent)]' : 'saturate-[.7] opacity-85'}`} />
               <div className="absolute inset-0 grid place-items-center"><div className="w-16 h-16 rounded-full bg-black/80 border-4 border-white/20" /></div>
               {buffering && (
                 <div className="absolute inset-0 grid place-items-center">
@@ -537,7 +537,7 @@ export function FullPlayer() {
                 style={{ background: `linear-gradient(90deg, var(--accent) ${duration ? (currentTime / duration) * 100 : 0}%, rgba(128,128,128,.4) ${duration ? (currentTime / duration) * 100 : 0}%)` }} />
               <div className="flex justify-between text-xs text-dim mt-1"><span>{formatTime(currentTime)}</span><span>{formatTime(duration)}</span></div>
             </div>
-            <div className="flex items-center gap-2 mt-3">
+            <div className="flex items-center gap-2 mt-3 select-none">
               <button onClick={toggleShuffle} className={`w-11 h-11 grid place-items-center btn-press ${shuffle ? 'accent' : 'text-dim'}`} aria-label="Shuffle" title="Shuffle" aria-pressed={shuffle}><ShuffleIcon size={20} /></button>
               <button onClick={prev} className="w-11 h-11 grid place-items-center text-white/80 hover:text-white btn-press" aria-label="Previous"><PrevIcon size={28} /></button>
               <button onClick={onPlayBtn} className="w-[72px] h-[72px] rounded-full btn-accent grid place-items-center shadow-[0_0_44px_-8px_var(--accent)]" aria-label={buffering ? 'Loading audio' : ended ? 'Replay' : isPlaying ? 'Pause' : 'Play'}>{buffering ? <SpinIcon size={28} /> : ended ? <RefreshIcon size={28} /> : isPlaying ? <PauseIcon size={28} /> : <PlayIcon size={28} />}</button>
@@ -654,7 +654,7 @@ export function QueueDrawer() {
           {queue.map((t, i) => (
             <div key={`${t.id}-${i}`} className={`flex items-center gap-2 p-1.5 rounded-lg transition-colors ${i === index ? 'bg-accent/10' : 'bg-hoverable'}`}>
               <button onClick={() => { playTracks(queue, i); }} className="flex items-center gap-2 flex-1 min-w-0 text-left">
-                <Img src={t.image} alt="" className="w-10 h-10 rounded object-cover" />
+                <Img src={t.image} alt="" className="w-10 h-10 rounded object-cover bg-[var(--surface-2)]" />
                 <span className="min-w-0"><p className={`truncate text-sm font-semibold ${i === index ? 'accent' : ''}`}>{t.title}</p><p className="truncate text-xs text-dim">{t.artist?.name}</p></span>
               </button>
               {i === index && <EqIcon />}
