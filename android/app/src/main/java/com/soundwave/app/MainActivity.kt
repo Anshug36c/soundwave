@@ -1,8 +1,12 @@
 package com.soundwave.app
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.View
@@ -37,15 +41,24 @@ class MainActivity : Activity() {
 
         /** Bumped when the bundled runtime or app code changes incompatibly. */
         private const val RUNTIME_VERSION = 1
+        private const val REQ_NOTIFICATIONS = 1001
     }
 
     private lateinit var status: TextView
     @Volatile private var serverProcess: Process? = null
+    @Volatile private var webView: WebView? = null
+    private var media: MediaControls? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         status = findViewById(R.id.status)
+
+        media = MediaControls(this)
+        requestNotificationPermission()
+        // Transport buttons on the notification launch the activity, so the
+        // action may already be waiting on this intent.
+        media?.handle(intent?.action)
 
         Thread {
             try {
@@ -55,6 +68,28 @@ class MainActivity : Activity() {
                 showStatus(getString(R.string.startup_failed, e.message ?: e.javaClass.simpleName))
             }
         }.start()
+    }
+
+    /** Android 13+ requires an explicit grant before any notification shows. */
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) return
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFICATIONS)
+    }
+
+    /** singleTask: notification transport buttons re-enter here. */
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        media?.handle(intent?.action)
+    }
+
+    /** Runs a WebView call on the UI thread, which is where it is required. */
+    fun runOnWebView(block: (WebView) -> Unit) {
+        val w = webView ?: return
+        runOnUiThread { runCatching { block(w) }.onFailure { Log.w(TAG, "webview call", it) } }
     }
 
     private fun start() {
@@ -294,6 +329,9 @@ class MainActivity : Activity() {
             // otherwise be blocked if the page ever loads over another scheme.
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         }
+        // The page reports what is playing through this bridge, which is what
+        // drives the notification and lock-screen controls.
+        media?.let { web.addJavascriptInterface(it.Bridge(), "SoundwaveMedia") }
         web.webViewClient = object : WebViewClient() {
             override fun onReceivedError(
                 view: WebView?, code: Int, description: String?, failingUrl: String?,
@@ -301,6 +339,7 @@ class MainActivity : Activity() {
                 Log.w(TAG, "webview error $code $description on $failingUrl")
             }
         }
+        webView = web
         web.loadUrl("http://127.0.0.1:$PORT/")
     }
 
@@ -315,6 +354,9 @@ class MainActivity : Activity() {
         // Take the Node process down with the activity. Without this the process
         // outlives the UI and Android reaps it at an arbitrary later point.
         try { serverProcess?.destroy() } catch (_: Exception) {}
+        media?.release()
+        media = null
+        webView = null
         super.onDestroy()
     }
 }

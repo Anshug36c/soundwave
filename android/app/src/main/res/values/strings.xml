@@ -12,4 +12,9 @@
          the phone says what actually went wrong instead of just "failed". -->
     <string name="startup_timeout">The server did not start.\n\n%1$s</string>
     <string name="startup_failed">Startup failed: %1$s</string>
+
+    <!-- Notification channel for playback controls. Low importance is set in
+         code so the channel is silent; these are just the user-facing labels. -->
+    <string name="channel_playback">Playback</string>
+    <string name="channel_playback_desc">Shows playback controls for the current track</string>
 </resources>

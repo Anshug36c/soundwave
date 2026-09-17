@@ -103,9 +103,11 @@ def main() -> int:
     checked = 0
 
     # --- Kotlin: R.<kind>.<name> ---
+    # `android.R.*` references the framework's own resources (ic_media_play and
+    # friends), which are not in this project and must not be reported missing.
     for path in glob.glob(os.path.join(JAVA, "**", "*.kt"), recursive=True):
         text = open(path, encoding="utf-8").read()
-        for kind, name in re.findall(r"\bR\.(\w+)\.(\w+)", text):
+        for kind, name in re.findall(r"(?<![\w.])R\.(\w+)\.(\w+)", text):
             checked += 1
             if not lookup(kind, name):
                 missing.append((os.path.relpath(path, ROOT), f"R.{kind}.{name}"))
@@ -120,7 +122,6 @@ def main() -> int:
             if not lookup(kind, name):
                 missing.append((os.path.relpath(path, ROOT), f"@{kind}/{name}"))
 
-    rel = os.path.relpath
     print(f"resource check: {checked} references")
     if missing:
         print(f"  {len(missing)} UNRESOLVED:")

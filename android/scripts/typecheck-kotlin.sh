@@ -63,6 +63,9 @@ for p in glob.glob(os.path.join(res, '**', '*.xml'), recursive=True):
     ids |= set(re.findall(r'@\+id/(\w+)', open(p, encoding='utf-8').read()))
 layouts = {os.path.splitext(os.path.basename(p))[0]
            for p in glob.glob(os.path.join(res, 'layout*', '*.xml'))}
+mipmaps = {os.path.splitext(os.path.basename(p))[0]
+           for p in glob.glob(os.path.join(res, 'mipmap*', '*'))
+           if os.path.isfile(p)}
 def block(name, values, base):
     if not values: return ''
     body = '\n'.join(f'        public static final int {v} = 0x{base+i:08x};'
@@ -72,6 +75,7 @@ print('package com.soundwave.app;\npublic final class R {')
 print(block('string', strings, 0x7f030000), end='')
 print(block('id', ids, 0x7f020000), end='')
 print(block('layout', layouts, 0x7f010000), end='')
+print(block('mipmap', mipmaps, 0x7f040000), end='')
 print('}')
 PY
 
