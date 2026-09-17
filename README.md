@@ -570,46 +570,73 @@ Three supported targets (all build the client, then run the single Node process)
 
 No external database, Redis, or object storage is ever needed.
 
-### Vercel (static front-end only)
+### Cloudflare Pages (static front-end)
 
-`vercel.json` makes Vercel install and build the client correctly. **Important:**
-Vercel serves static files, not this Node server — the `/api/*` endpoints (search,
-`/api/audio` streaming, playlists, sign-in) will not exist there. So you must set
-`VITE_API_URL` to a running backend, e.g. your Render URL:
+Cloudflare Pages serves static files only — it cannot run `server/server.js`
+(an Express process with in-memory caches and 120 s upstream fetches). Pages
+Functions are no substitute: the Workers free plan allows **10 ms of CPU per
+request** and 50 subrequests, while `/api/search` fans out to several providers
+and walks in-memory indexes of 85 k tracks.
 
-| Vercel env var | Value |
+Set these in **Pages → your project → Settings → Build**:
+
+| Setting | Value |
 | --- | --- |
-| `VITE_API_URL` | `https://your-soundwave.onrender.com/api` |
+| Framework preset | **Vite** |
+| Build command | `npm run build` |
+| Build output directory | `client/dist` |
 
-The client reads it at build time (`client/src/services/musicApi.js`:
-`import.meta.env.VITE_API_URL || '/api'`), so **redeploy after changing it**.
+The output directory is the one thing you must change — it defaults to `dist`
+at the repo root, which does not exist here.
 
-Then set `FRONTEND_URL` on the **server** (e.g. in Render → Environment) to your
-Vercel origin, comma-separated if you have several:
+`npm run build` is deliberately self-sufficient: it installs `client/` deps if
+`client/node_modules/.bin/vite` is missing, then builds. That is required
+because Pages picks its own package manager (it detected `bun` here) and runs
+install **only at the repo root**, where the sole dependency is `concurrently`
+— so `client/node_modules` is never created and `vite build` dies with
+`sh: 1: vite: not found`.
 
-```
-FRONTEND_URL=https://soundwave.vercel.app,https://soundwave-git-main.vercel.app
-```
+Two files ship from `client/public/` into the output dir and are read by Pages:
 
-That drives the server's CORS allowlist (`server/server.js`). Unset, the server
-allows any origin for its public read-only endpoints; set, only listed origins get
-`Access-Control-Allow-Origin`. Both sides are required — without the server side
-every `/api` fetch is blocked by the browser, **and** playback is silently muted:
-`createMediaElementSource` on a tainted cross-origin `<audio>` element routes
-silence, so the player would appear to play while the EQ and visualizer output
-nothing. The client sets `crossOrigin="anonymous"` on its audio elements
-(`useAudioEngine.js`) and the server answers `ACAO`, which together keep the
-WebAudio graph clean.
+- `_redirects` — SPA fallback (`/* /index.html 200`). Without it, a refresh or
+  shared link to any of the 9 client routes 404s, because only `index.html`
+  exists on disk.
+- `_headers` — year-long immutable caching for hashed `/assets/*`, and
+  `no-cache` for `sw.js` / `manifest.json` / `index.html` so a deploy actually
+  reaches returning users instead of being masked by a stale service worker.
 
-**Google sign-in will not work on the split deployment.** The session is an
-HttpOnly `SameSite=Lax` cookie, which browsers do not send on cross-site requests,
-and the client fetches without `credentials: 'include'`. Cross-site auth would
-need `SameSite=None; Secure` plus credentialed CORS — and `SameSite=None` is
-rejected on plain-`http` `localhost`, breaking local dev. If you want sign-in,
-deploy on Render as a single process, where everything is same-origin.
+Then point the client at a backend and allow that origin on the server:
 
-If you want search, playback and sign-in to all work with no extra setup, deploy on
-**Render** instead: one process serves both the API and the built client.
+| Where | Var | Value |
+| --- | --- | --- |
+| Pages → Settings → Environment | `VITE_API_URL` | `https://your-api-host/api` |
+| API host | `FRONTEND_URL` | `https://your-project.pages.dev` |
+
+`VITE_API_URL` is read at **build time** (`client/src/services/musicApi.js`:
+`import.meta.env.VITE_API_URL || '/api'`), so redeploy after setting it.
+
+`FRONTEND_URL` drives the server's CORS allowlist (`server/server.js`); comma-
+separate several origins. Unset, the server allows any origin for its public
+read-only endpoints; set, only listed origins get `Access-Control-Allow-Origin`.
+Both sides are required — without the server side every `/api` fetch is blocked
+by the browser, **and** playback is silently muted: `createMediaElementSource`
+on a tainted cross-origin `<audio>` element routes silence, so the player would
+appear to play while the EQ and visualizer output nothing. The client sets
+`crossOrigin="anonymous"` on its audio elements (`useAudioEngine.js`) and the
+server answers `ACAO`, which together keep the WebAudio graph clean.
+
+**Google sign-in will not work on a split deployment.** The session is an
+HttpOnly `SameSite=Lax` cookie, which browsers do not send on cross-site
+requests, and the client fetches without `credentials: 'include'`. Cross-site
+auth would need `SameSite=None; Secure` plus credentialed CORS — and
+`SameSite=None` is rejected on plain-`http` `localhost`, breaking local dev.
+For sign-in, run the single-process deploy on one host instead.
+
+### Vercel (static front-end)
+
+Same constraints as Pages. `vercel.json` pins the install/build/output
+commands, so no dashboard setup is needed — but `VITE_API_URL` and
+`FRONTEND_URL` still apply exactly as above.
 
 ### Why `vercel.json` exists
 

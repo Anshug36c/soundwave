@@ -14,4 +14,6 @@ RUN npm --prefix client run build && rm -rf client/node_modules client/src
 
 ENV NODE_ENV=production PORT=5000 ITUNES_COUNTRY=IN
 EXPOSE 5000
-CMD ["node", "server/server.js"]
+# --openssl-legacy-provider is REQUIRED: without it the Saavn decryption path
+# throws at runtime. This must match the server's own "start" script.
+CMD ["node", "--openssl-legacy-provider", "server/server.js"]

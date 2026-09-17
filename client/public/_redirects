@@ -1,0 +1,10 @@
+# Cloudflare Pages SPA fallback.
+#
+# The client is a React Router app (client/src/App.jsx has 9 routes: /search,
+# /library, /liked, /playlist/:id, /album/:source/:id, /artist/:source/:id, ...).
+# Without this, a hard refresh or a shared link to anything but "/" returns
+# Pages' 404, because only index.html exists on disk.
+#
+# Real files (assets/*, sw.js, manifest.json, icons/*) are served before any
+# rewrite is considered, so the catch-all only ever catches unknown paths.
+/* /index.html 200

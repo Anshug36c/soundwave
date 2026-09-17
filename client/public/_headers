@@ -1,0 +1,26 @@
+# Cloudflare Pages response headers.
+#
+# Vite emits content-hashed filenames (assets/index-BpHgiQP6.js), so those are
+# immutable and can be cached forever — a new deploy produces new URLs, so a
+# stale copy can never be served.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# The service worker and manifest must NOT be cached, or a deploy won't reach
+# returning users until the old SW expires. The SW is what makes offline
+# playback work, so a stale one is a silent, hard-to-diagnose failure.
+/sw.js
+  Cache-Control: no-cache, no-store, must-revalidate
+/manifest.json
+  Cache-Control: no-cache
+
+# index.html must revalidate so a deploy is picked up on the next visit; the
+# hashed assets it references are then cached for a year by the rule above.
+/index.html
+  Cache-Control: no-cache
+
+# Security headers, matching what server/server.js sets for the single-process
+# deploy so behaviour is identical on both hosts.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
