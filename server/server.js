@@ -10,8 +10,22 @@ import { mountAuth } from './auth.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+// process safety nets: a stray rejection must never silently corrupt state,
+// and an uncaught exception must crash LOUD (supervisor restarts clean)
+process.on('unhandledRejection', (e) => console.error('[fatal] unhandledRejection:', e?.message || e));
+process.on('uncaughtException', (e) => { console.error('[fatal] uncaughtException:', e?.message || e); process.exit(1); });
 app.set('trust proxy', 1);
-app.use(compression());
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
+app.use(compression({
+  filter: (req, res) => {
+    if (req.path === '/api/audio' || req.path === '/api/tidal-preview') return false; // byte streams: identity only
+    return compression.filter(req, res);
+  },
+}));
 app.use(express.json({ limit: '256kb' }));
 
 // ---------------- scale guards: rate limits + API timeouts ----------------
@@ -22,7 +36,7 @@ setInterval(() => {
   for (const [k, v] of rateBuckets) if (now - v.t > 120000) rateBuckets.delete(k);
 }, 60000).unref();
 app.use('/api', (req, res, next) => {
-  const audio = req.path === '/audio' || req.path === '/djp-audio';
+  const audio = req.path === '/audio';
   const key = `${req.ip || 'x'}:${audio ? 'a' : 'm'}`;
   const max = audio ? 600 : 240;
   const now = Date.now();
@@ -37,7 +51,7 @@ app.use('/api', (req, res, next) => {
   next();
 });
 // hard timeout for metadata APIs (audio/preview streams legitimately run long)
-const SLOW_API = new Set(['/audio', '/djp-audio', '/tidal-preview']);
+const SLOW_API = new Set(['/audio', '/tidal-preview']);
 app.use('/api', (req, res, next) => {
   if (SLOW_API.has(req.path)) return next();
   const to = setTimeout(() => { if (!res.headersSent) res.status(503).json({ error: 'Upstream slow, try again' }); }, 55000);
@@ -119,23 +133,13 @@ async function fetchText(url, { timeout = 20000, referer = null } = {}) {
   throw lastErr;
 }
 
-/** GET binary (MP3) — single attempt, caller handles fallback chain. */
-async function fetchBuf(url, timeout = 90000, referer = null) {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), timeout);
-  await outAcquire(url);
-  try {
-    const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': DJP_UA, ...(referer ? { Referer: referer } : {}) } });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const ab = await r.arrayBuffer();
-    return Buffer.from(ab);
-  } finally { outRelease(url); clearTimeout(to); }
-}
-
 const INDEX_TTL = 6 * 3600 * 1000;
 const PAGE_TTL = 6 * 3600 * 1000;
 const AUDIO_TTL = 60 * 60 * 1000;
 const AUDIO_MAX = 12;
+// byte cap beats count cap: 12 x 20MB would OOM a 512MB free tier under load
+const AUDIO_CACHE_MB = Math.max(8, parseInt(process.env.AUDIO_CACHE_MB || '160', 10) || 160);
+let audioCacheBytes = 0;
 
 function djpScore(slug, words) {
   const s = ` ${fold(slug).replace(/-/g, ' ')} `;
@@ -276,7 +280,7 @@ function normalizeDjpSong(id, pg) {
     artist: { id: '', name: pg.artist || 'Unknown', image: pg.cover || '' },
     artists: [], album: { id: '', name: '', image: pg.cover || '' },
     duration: pg.duration || 0, image: pg.cover || '',
-    streamUrl: `/api/djp-audio?id=${id}`, previewUrl: '', isPreview: false,
+    streamUrl: `/api/audio?src=djp&id=${encodeURIComponent(id)}`, previewUrl: '', isPreview: false,
     codec: 'mp3', quality: pg.quality, explicit: false, year: '', language: '', plays: 0,
   };
 }
@@ -1244,6 +1248,21 @@ function touchAudio(key) {
   const h = audioCache.get(key);
   if (h) { audioCache.delete(key); audioCache.set(key, h); }
 }
+function audioCacheSet(key, entry) {
+  const old = audioCache.get(key);
+  if (old) audioCacheBytes -= old.buf.length;
+  audioCache.delete(key);
+  audioCache.set(key, entry);
+  audioCacheBytes += entry.buf.length;
+  const cap = AUDIO_CACHE_MB * 1048576;
+  while (audioCache.size > 1 && (audioCache.size > AUDIO_MAX || audioCacheBytes > cap)) {
+    const oldest = audioCache.keys().next().value;
+    const v = audioCache.get(oldest);
+    audioCache.delete(oldest);
+    if (v) audioCacheBytes -= v.buf.length;
+  }
+  if (audioCacheBytes < 0) audioCacheBytes = 0;
+}
 function waitForAudio(pending, ms) {
   return Promise.race([Promise.resolve(pending).then(() => true), new Promise(r => setTimeout(() => r(false), ms))]);
 }
@@ -1256,14 +1275,15 @@ function serveBuf(res, req, buf, cached, br, type = 'audio/mpeg') {
   const range = req.headers.range;
   if (range) {
     const m = range.match(/bytes=(\d*)-(\d*)/);
-    const start = m?.[1] ? parseInt(m[1], 10) : 0;
-    const end = m?.[2] ? parseInt(m[2], 10) : buf.length - 1;
+    let start = m?.[1] ? parseInt(m[1], 10) : 0;
+    let end = m?.[2] ? parseInt(m[2], 10) : buf.length - 1;
+    if (m && !m[1] && m[2]) { start = Math.max(0, buf.length - end); end = buf.length - 1; } // suffix: last N bytes
     if (start >= buf.length) {
       res.setHeader('Content-Range', `bytes */${buf.length}`);
       return res.status(416).end();
     }
     const s = Math.min(start, buf.length - 1), e = Math.min(end, buf.length - 1);
-    if (s > e) return res.status(416).end();
+    if (s > e) { res.setHeader('Content-Range', `bytes */${buf.length}`); return res.status(416).end(); }
     res.status(206);
     res.setHeader('Content-Range', `bytes ${s}-${e}/${buf.length}`);
     res.setHeader('Content-Length', String(e - s + 1));
@@ -1481,7 +1501,7 @@ app.get('/api/for-you', async (req, res) => {
 });
 
 app.get('/api/similar', async (req, res) => {
-  const title = (req.query.title || '').trim(), artist = (req.query.artist || '').trim();
+  const title = (req.query.title || '').trim().slice(0, 200), artist = (req.query.artist || '').trim().slice(0, 200);
   const limit = Math.min(parseInt(req.query.limit || '12', 10) || 12, 24);
   if (!title && !artist) return res.json({ songs: [] });
   const key = `sim:${title}|${artist}`.toLowerCase().replace(/[^a-z0-9|:]/g, '');
@@ -1690,8 +1710,7 @@ app.get('/api/audio', async (req, res) => {
           try { res.end(); } catch {}
           const expected = len ? parseInt(len, 10) : 0;
           if (chunks && received > 100000 && (!expected || received === expected)) {
-            if (audioCache.size >= AUDIO_MAX) audioCache.delete(audioCache.keys().next().value);
-            audioCache.set(key, { buf: Buffer.concat(chunks), br, time: Date.now(), type: m.r.type || 'audio/mpeg' });
+            audioCacheSet(key, { buf: Buffer.concat(chunks), br, time: Date.now(), type: m.r.type || 'audio/mpeg' });
           }
           return true;
         } catch {
@@ -1841,7 +1860,7 @@ app.get('/api/health', (req, res) => res.json({
   uptimeSec: Math.round(process.uptime()),
   memMB: Math.round(process.memoryUsage().heapUsed / 1048576),
   indexes: { djp: djpIndex.size, dj: djIndex.size, mrj: mrjIndex.size },
-  caches: { api: cache.size, pages: djpPageCache.size, audio: audioCache.size },
+  caches: { api: cache.size, pages: djpPageCache.size, audio: audioCache.size, audioMB: Math.round(audioCacheBytes / 1048576) },
   audio: { hits: audioHits, misses: audioMiss, inflight: audioInflight.size },
   outbound: { active: outActive, queued: outQueue.length },
   degraded: srcDegraded(),
@@ -1940,7 +1959,7 @@ function addSuggestArtist(name, image) {
   if (!suggestArtists.has(k)) suggestArtists.set(k, { name, image: image || '' });
 }
 app.get('/api/suggest', async (req, res) => {
-  const q = (req.query.q || '').trim();
+  const q = (req.query.q || '').trim().slice(0, 200);
   const limit = Math.min(parseInt(req.query.limit || '8', 10) || 8, 12);
   if (q.length < 2) return res.json({ songs: [], albums: [], artists: [] });
   const cached = getCache(req.originalUrl);
@@ -2142,7 +2161,7 @@ async function saavnArtistSongs(name, budget = 60) {
 }
 // every song by one artist, merged across ALL providers (mirrors kept for failover)
 app.get('/api/artist-songs', async (req, res) => {
-  const name = (req.query.name || '').trim();
+  const name = (req.query.name || '').trim().slice(0, 200);
   if (!name) return res.json({ songs: [], perProvider: {}, totalMatched: 0, truncated: false, name: '' });
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
@@ -2171,7 +2190,7 @@ app.get('/api/artist-songs', async (req, res) => {
 });
 
 app.get('/api/search', async (req, res) => {
-  const q = (req.query.q || '').trim();
+  const q = (req.query.q || '').trim().slice(0, 200);
   const type = (req.query.type || 'all').toLowerCase();
   if (!q) return res.json({ songs: [], albums: [], artists: [] });
   const cached = getCache(req.originalUrl);
@@ -2287,6 +2306,7 @@ app.get('/api/search', async (req, res) => {
 app.get('/api/song/:source/:id', async (req, res) => {
   const { source, id } = req.params;
   if (!['djp', 'dj', 'mrj', 'saavn'].includes(source)) return res.status(404).json({ error: 'Unknown source' });
+  if (String(id || '').length > 300) return res.status(404).json({ error: 'Bad id' });
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
   try {
@@ -2466,9 +2486,9 @@ async function kugouLyrics(title, artist, album, duration) {
   return null;
 }
 app.get('/api/lyrics', async (req, res) => {
-  const artist = (req.query.artist || '').trim();
-  const title = (req.query.title || '').trim();
-  const album = (req.query.album || '').trim();
+  const artist = (req.query.artist || '').trim().slice(0, 200);
+  const title = (req.query.title || '').trim().slice(0, 200);
+  const album = (req.query.album || '').trim().slice(0, 200);
   const duration = Math.round(+req.query.duration || 0);
   if (!artist || !title) return res.json({ lyrics: null });
   const cached = getCache(req.originalUrl);
@@ -2495,40 +2515,6 @@ app.get('/api/lyrics', async (req, res) => {
 });
 
 // Legacy DJPunjab audio route (kept for older saved tracks) — download once, serve seekable
-const djpAudioCache = new Map();
-app.get('/api/djp-audio', async (req, res) => {
-  const id = String(req.query.id || '');
-  const q = QUALITY_ORDER[req.query.quality] ? req.query.quality : 'high';
-  if (!id) return res.status(400).json({ error: 'Missing id' });
-  const key = `${id}:${q}`;
-  const hit = djpAudioCache.get(key);
-  if (hit && Date.now() - hit.time < AUDIO_TTL) return serveBuf(res, req, hit.buf, true, hit.br);
-  try {
-    const e = (await djpLoadIndex()).get(id);
-    if (!e || e.album) return res.status(404).json({ error: 'Song not indexed' });
-    const order = QUALITY_ORDER[q];
-    const attempt = async (pg) => {
-      for (const br of order) {
-        const url = pg.mp3s?.[br];
-        if (!url) continue;
-        const buf = await fetchBuf(url, 90000, `${DJP_BASE}/`).catch(() => null);
-        if (buf && buf.length > 100000) return { buf, br };
-      }
-      return null;
-    };
-    let got = await attempt(await djpSongPage(e.url));
-    if (!got) {
-      djpPageCache.delete(e.url);
-      const pg2 = await djpSongPage(e.url).catch(() => null);
-      if (pg2) got = await attempt(pg2);
-    }
-    if (!got) return res.status(502).json({ error: 'MP3 download failed' });
-    if (djpAudioCache.size >= AUDIO_MAX) djpAudioCache.delete(djpAudioCache.keys().next().value);
-    djpAudioCache.set(key, { buf: got.buf, br: got.br, time: Date.now() });
-    serveBuf(res, req, got.buf, false, got.br);
-  } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'DJPunjab audio failed', detail: e.message }); }
-});
-
 // Serve production client build from the same process
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, '../client/dist');

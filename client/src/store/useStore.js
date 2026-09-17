@@ -26,6 +26,24 @@ function loadAccount(key) {
   useStore.setState({ ...snap });
 }
 
+// persist writes fire on EVERY state change — including the ~4Hz playback clock
+// (setTime) — but currentTime/duration aren't in partialize, so clock ticks
+// re-emit a byte-identical payload. Skip identical writes: discrete actions
+// still persist instantly (synchronously), clock churn costs one memcmp.
+const persistStorage = (() => {
+  let lastWritten = null;
+  return {
+    getItem: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+    setItem: (k, v) => {
+      v = String(v);
+      if (v === lastWritten) return;
+      lastWritten = v;
+      try { localStorage.setItem(k, v); } catch { /* quota/private-mode */ }
+    },
+    removeItem: (k) => { lastWritten = null; try { localStorage.removeItem(k); } catch { /* noop */ } },
+  };
+})();
+
 export const useStore = create(
   persist(
     (set, get) => ({
@@ -311,7 +329,7 @@ export const useStore = create(
     }),
     {
       name: 'soundwave-store-v1',
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => persistStorage),
       merge: (ps, cs) => {
         if (!ps) return cs;
         const q = Array.isArray(ps.queue) ? ps.queue.filter(Boolean).slice(0, 200) : [];
