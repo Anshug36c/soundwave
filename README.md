@@ -578,6 +578,9 @@ Three supported targets (all build the client, then run the single Node process)
   `SESSION_SECRET` in the dashboard if you want sign-in.
 - **Railway:** `railway.toml` (Nixpacks) with equivalent build/start commands.
 - **Docker / Fly / VPS:** `Dockerfile` (node:20-alpine, exposes 5000).
+- **Your own device:** `docker compose up -d --build` — free, no card, no egress
+  bill, no free-tier sleep. Reach it from anywhere with a Cloudflare Tunnel
+  (no port forwarding, works behind CGNAT). See `docs/SELF_HOSTING.md`.
 
 No external database, Redis, or object storage is ever needed.
 

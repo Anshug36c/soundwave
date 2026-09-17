@@ -1,0 +1,40 @@
+# SoundWave — run the whole app on your own machine with one command:
+#
+#   docker compose up -d --build
+#
+# Then open http://localhost:5000. The API and the built client are the same
+# process, so there is no CORS to configure, no VITE_API_URL to set, and Google
+# sign-in works (everything is same-origin).
+#
+# No volumes are mounted on purpose: the server keeps nothing on disk. Likes,
+# playlists and history live in the browser, and the audio/index caches are
+# deliberately ephemeral — they rebuild from the providers on restart.
+services:
+  soundwave:
+    build: .
+    container_name: soundwave
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: production
+      PORT: "5000"
+      ITUNES_COUNTRY: IN
+      # 160 MB default. Raise it if the host has RAM to spare — a bigger cache
+      # means fewer repeat downloads from the providers.
+      AUDIO_CACHE_MB: "160"
+      # Only needed if the front end is served from a DIFFERENT origin than this
+      # container (e.g. a Cloudflare Pages front end). For the normal
+      # self-hosted single-origin setup, leave it unset.
+      # FRONTEND_URL: https://soundwave.example.com
+      # Google sign-in — see AUTH_SETUP.md. Add your public origin to the OAuth
+      # client's Authorized JavaScript origins.
+      # GOOGLE_CLIENT_ID: ...
+      # SESSION_SECRET: ...
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # The provider indexes (85k tracks) load after boot, so give it room.
+      start_period: 60s
