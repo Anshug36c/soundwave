@@ -146,27 +146,55 @@ jobs:
 
           # Independently re-check the packed asset: right format, relative
           # paths, executable node, and a complete library closure.
+          #
+          # The closure is checked against the TARBALL, not the directory, and it
+          # simulates the extractor. This matters: several libraries node links
+          # against ship only as a symlink to the versioned file, so a check that
+          # matched on name alone would pass while the phone ended up missing
+          # libicuuc.so.78 and libicui18n.so.78 — and node would not start.
           python3 - <<'PY'
-          import io, lzma, re, subprocess, tarfile
+          import io, lzma, os, re, subprocess, tarfile
           p = 'android/app/src/main/assets/runtime/usr.tar.xz'
           raw = open(p, 'rb').read()
           assert raw[:6] == b'\xfd7zXZ\x00', 'not an xz stream'
           with lzma.open(io.BytesIO(raw)) as f:
               t = tarfile.open(fileobj=f)
-              names = t.getnames()
+              members = list(t.getmembers())
+              names = {m.name for m in members}
               assert all(not n.startswith('/') for n in names), 'absolute path in tarball'
-              m = t.getmember('./bin/node')
-              assert m.mode & 0o111, 'bin/node is not executable in the tarball'
-              libs = {n.split('/')[-1] for n in names if '/lib/' in n}
-          need = subprocess.run(['readelf', '-dW', f'{__import__("os").environ["RUNNER_TEMP"]}/termux-usr/bin/node'],
+              node_m = t.getmember('./bin/node')
+              assert node_m.mode & 0o111, 'bin/node is not executable in the tarball'
+              assert node_m.isreg(), 'bin/node is not a regular file'
+
+              # What the Kotlin extractor will actually produce on the device:
+              # regular files, plus symlinks whose target is present.
+              regular = {m.name.split('/')[-1] for m in members
+                         if m.isreg() and '/lib/' in m.name}
+              links = {m.name.split('/')[-1]: m.linkname
+                       for m in members if m.issym() and '/lib/' in m.name}
+              have = set(regular)
+              for name, target in links.items():
+                  if any(('/lib/' + target) in n for n in names):
+                      have.add(name)
+
+          tmp = os.environ['RUNNER_TEMP']
+          need = subprocess.run(['readelf', '-dW', f'{tmp}/termux-usr/bin/node'],
                                 capture_output=True, text=True).stdout
           need = re.findall(r'NEEDED\)\s+Shared library: \[([^\]]+)\]', need)
           system = {'libc.so', 'libm.so', 'libdl.so', 'liblog.so'}
-          missing = [d for d in need if d not in system
-                     and not any(l.startswith(d) for l in libs)]
-          assert not missing, f'missing libraries in packed runtime: {missing}'
-          print(f'runtime asset OK: {len(names)} entries, {len(libs)} libs, '
-                f'closure complete, {len(raw)/1e6:.1f} MB')
+          missing = [d for d in need if d not in system and d not in have]
+          assert not missing, (
+              f'libraries node needs would be MISSING on the device after '
+              f'extraction: {missing}')
+
+          dangling = [n for n, tgt in links.items()
+                      if not any(('/lib/' + tgt) in x for x in names)]
+          n_reg = sum(1 for m in members if m.isreg())
+          print(f'runtime asset OK: {len(members)} entries ({n_reg} files, '
+                f'{len(links)} symlinks), closure complete, {len(raw)/1e6:.1f} MB')
+          if dangling:
+              print(f'  note: {len(dangling)} symlinks point at pruned targets '
+                    f'({", ".join(sorted(dangling))}); node needs none of them')
           PY
 
       # ---- 4. Build the APK ----

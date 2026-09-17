@@ -59,6 +59,7 @@ ones it falls back to.
 | Transitive closure complete | no bundled library needs anything outside the bundle |
 | Closure check catches a break | deleting `libcares.so` makes `verify_closure()` return `False` |
 | Asset format matches the Kotlin reader | GNU tar, xz, 62 relative paths, `bin/node` mode `0o755` |
+| Every library node needs survives extraction | checked against the **tarball**, simulating the extractor: `libicuuc.so.78` and `libicui18n.so.78` ship only as symlinks, so a name-only check passes while the device is missing them. Deleting `libicuuc.so.78.3` makes the check report `libicuuc.so.78` as missing |
 | The staged server boots and serves | CI runs it: `GET / → 200` with `assets/index-` |
 | Every resource reference resolves | `check-resources.py`, 10 refs; fails on both a dangling XML `@string/` and a dangling Kotlin `R.string.` — proven by reintroducing each |
 | Kotlin typechecks against android-34 | `typecheck-kotlin.sh`; reproduces the exact CI error (`'==' cannot be applied to 'String?' and 'Long'`) at the same line and column when the bug is reintroduced |

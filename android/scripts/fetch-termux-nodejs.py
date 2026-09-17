@@ -231,6 +231,11 @@ def verify_closure(root: str) -> bool:
     /system/bin/linker64), so this is the strongest check available offline. It
     is also the check that catches a bad prune: dropping a library that node
     links against would otherwise only surface as a dead process on the phone.
+
+    Symlinked dependencies are resolved to their target, because several
+    libraries node links against (libicuuc.so.78, libicui18n.so.78, libz.so.1,
+    libsqlite3.so) are shipped only as a symlink to the versioned file. A check
+    that merely matched the name would pass while the real file was missing.
     """
     import re
     import subprocess
@@ -249,6 +254,18 @@ def verify_closure(root: str) -> bool:
             return None
         return re.findall(r"\(NEEDED\)\s+Shared library: \[([^\]]+)\]", out)
 
+    def resolves(name):
+        """True if `name` exists in lib/ and leads to a real file."""
+        import glob as _glob
+
+        for candidate in _glob.glob(os.path.join(lib, name + "*")):
+            if os.path.islink(candidate):
+                if os.path.isfile(os.path.realpath(candidate)):
+                    return True
+            elif os.path.isfile(candidate):
+                return True
+        return False
+
     deps = needed(node)
     if deps is None:
         print("[termux-nodejs] WARNING: readelf unavailable, closure not verified")
@@ -258,9 +275,7 @@ def verify_closure(root: str) -> bool:
     for d in deps:
         if d in system:
             continue
-        import glob as _glob
-
-        if not _glob.glob(os.path.join(lib, d + "*")):
+        if not resolves(d):
             print(f"[termux-nodejs] MISSING: {d} (needed by bin/node)")
             ok = False
 
@@ -271,7 +286,7 @@ def verify_closure(root: str) -> bool:
         for d in needed(f) or []:
             if d in system:
                 continue
-            if not _glob.glob(os.path.join(lib, d + "*")):
+            if not resolves(d):
                 print(f"[termux-nodejs] MISSING: {d} (needed by {os.path.basename(f)})")
                 ok = False
 

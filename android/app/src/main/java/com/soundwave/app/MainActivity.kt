@@ -106,20 +106,41 @@ class MainActivity : Activity() {
                 TarArchiveInputStream(xz).use { tar ->
                     var entry = tar.nextEntry
                     while (entry != null) {
-                        if (!entry.isFile) {
-                            entry = tar.nextEntry
-                            continue
-                        }
                         val out = File(dest, entry.name)
                         // Refuse anything that escapes the destination.
-                        if (!out.canonicalPath.startsWith(dest.canonicalPath + File.separator)) {
-                            entry = tar.nextEntry
-                            continue
+                        if (out.canonicalPath.startsWith(dest.canonicalPath + File.separator) ||
+                            out.canonicalPath == dest.canonicalPath
+                        ) {
+                            when {
+                                entry.isSymbolicLink -> {
+                                    // NOT optional. Several libraries node links
+                                    // against — libicuuc.so.78, libicui18n.so.78,
+                                    // libz.so.1, libsqlite3.so — exist only as a
+                                    // symlink to the versioned file. Skipping
+                                    // these makes node fail to load at exec time.
+                                    out.parentFile?.mkdirs()
+                                    out.delete()
+                                    try {
+                                        java.nio.file.Files.createSymbolicLink(
+                                            out.toPath(),
+                                            java.nio.file.Paths.get(entry.linkName),
+                                        )
+                                    } catch (e: Exception) {
+                                        // Filesystems without symlink support:
+                                        // fall back to copying the target.
+                                        val target = File(out.parentFile, entry.linkName)
+                                        if (target.isFile) target.copyTo(out, overwrite = true)
+                                        else Log.w(TAG, "symlink skipped: ${entry.name} -> ${entry.linkName}")
+                                    }
+                                }
+                                entry.isFile -> {
+                                    out.parentFile?.mkdirs()
+                                    FileOutputStream(out).use { tar.copyTo(it) }
+                                    // Termux ships bin/node already mode 755; honour it.
+                                    if (entry.mode and 0b001_001_001 != 0) out.setExecutable(true, false)
+                                }
+                            }
                         }
-                        out.parentFile?.mkdirs()
-                        FileOutputStream(out).use { tar.copyTo(it) }
-                        // Termux ships bin/node already mode 755; honour it.
-                        if (entry.mode and 0b001_001_001 != 0) out.setExecutable(true, false)
                         entry = tar.nextEntry
                     }
                 }
