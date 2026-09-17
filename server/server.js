@@ -8,6 +8,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { mountAuth } from './auth.js';
 import { desDecryptBase64 } from './des.js';
+import { ytVideoSearch, ytVideoInfo } from './youtube.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -1581,6 +1582,33 @@ app.get('/api/similar', async (req, res) => {
 
 // ---------------- prefetch warmer: fill server audio cache ahead of playback ----------------
 const warmInflight = new Map(); // key -> time
+// ---------------- YouTube videos (played via the embedded player) ----------------
+// Search and metadata only. There is no stream endpoint: YouTube no longer
+// returns fetchable stream URLs to a server, so the client embeds the official
+// IFrame Player for these tracks. See the header comment in youtube.js.
+app.get('/api/yt/search', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.status(400).json({ error: 'q is required' });
+  const limit = Math.min(25, Math.max(1, parseInt(req.query.limit, 10) || 12));
+  try {
+    const videos = await ytVideoSearch(q, limit);
+    res.json({ videos });
+  } catch (e) {
+    tripSource('yt');
+    res.status(502).json({ error: e?.message || 'YouTube search failed' });
+  }
+});
+
+app.get('/api/yt/info/:id', async (req, res) => {
+  try {
+    const track = await ytVideoInfo(req.params.id);
+    if (!track) return res.status(404).json({ error: 'Video not found' });
+    res.json({ track });
+  } catch (e) {
+    res.status(502).json({ error: e?.message || 'YouTube lookup failed' });
+  }
+});
+
 app.get('/api/warm', async (req, res) => {
   const src = req.query.src, sid = req.query.id;
   const q = QUALITY_ORDER[req.query.quality] ? req.query.quality : 'high';
@@ -2262,7 +2290,7 @@ app.get('/api/search', async (req, res) => {
   const expF = (req.query.exp || '').trim().toLowerCase();
   const effY = nl.year || yF;
   try {
-    let songs = [], albums = [], artists = [], youtube = [];
+    let songs = [], albums = [], artists = [], youtube = [], ytVideos = [];
     if (type === 'all' || type === 'artists') {
       const [a, b, c, s] = await Promise.all([
         safeSearch(djpSearchArtists(effQ, 6), 20000),
@@ -2287,14 +2315,18 @@ app.get('/api/search', async (req, res) => {
     const artistMode = !!artistHit;
     if (type === 'all' || type === 'songs') {
       const L = artistMode ? [18, 14, 14, 12] : [10, 8, 8, 8];
-      const [a, b, c, s, y] = await Promise.all([
+      const [a, b, c, s, y, yv] = await Promise.all([
         safeSearch(djpSearchSongs(effQ, L[0]), 25000),
         safeSearch(djSearchSongs(effQ, L[1]), 25000),
         safeSearch(mrjSearchSongs(effQ, L[2]), 25000),
         safeSearch(saavnSearchSongs(effQ, L[3]), 25000),
         safeSearch(ytSearchSongs(effQ, 10).catch(e => { tripSource('yt'); return []; }), 15000),
+        // Real YouTube videos. Unlike the YouTube Music results above these
+        // actually play: the client embeds the official player for them.
+        safeSearch(ytVideoSearch(effQ, 12).catch(() => []), 15000),
       ]);
       youtube = (y || []).slice(0, 10);
+      ytVideos = (yv || []).slice(0, 12);
       songs = mergeTracks([interleave([a, b, c, s])]);
       if (artistMode) {
         const rank = t => { const n = normName(t.artist?.name); return qw.every(w => n.includes(w)) ? 0 : 1; };
@@ -2326,7 +2358,7 @@ app.get('/api/search', async (req, res) => {
       const weak = !songs.length || songs.slice(0, 3).every(t => overlapScore(titleTokens(effQ), titleTokens(t.title)) < 0.3);
       if (weak) didYouMean = await suggestCorrection(effQ).catch(() => '');
     }
-    const payload = { songs, albums, artists, youtube, ...(artistMode ? { artist: { name: artistHit.name } } : {}), ...((nl.note || nl.mode || nl.year || nl.unsupported || nl.cleaned) ? { nl } : {}), ...(didYouMean ? { didYouMean } : {}) };
+    const payload = { songs, albums, artists, youtube, ytVideos, ...(artistMode ? { artist: { name: artistHit.name } } : {}), ...((nl.note || nl.mode || nl.year || nl.unsupported || nl.cleaned) ? { nl } : {}), ...(didYouMean ? { didYouMean } : {}) };
     setCache(req.originalUrl, payload);
     res.json(payload);
     // warm: resolve (API + decrypt) the top Saavn stream URLs in the background

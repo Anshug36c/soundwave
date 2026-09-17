@@ -29,7 +29,7 @@ export default function Search() {
   const initialTab = TABS.includes(tabParam) ? tabParam : 'Songs';
   const [q, setQ] = useState(initial);
   const [tab, setTab] = useState(initialTab);
-  const [results, setResults] = useState({ songs: [], albums: [], artists: [], youtube: [] });
+  const [results, setResults] = useState({ songs: [], albums: [], artists: [], youtube: [], ytVideos: [] });
   const [loading, setLoading] = useState(false);
   const [suggest, setSuggest] = useState({ songs: [], albums: [], artists: [] });
   const [showSuggest, setShowSuggest] = useState(false);
@@ -48,6 +48,9 @@ export default function Search() {
   // hoisted: stable identity across keystrokes so memoized rows skip re-render
   const visibleSongs = useMemo(() => tasteFiltered(results.songs, disliked, hiddenArtists), [results.songs, disliked, hiddenArtists]);
   const visibleYT = useMemo(() => tasteFiltered(results.youtube || [], disliked, hiddenArtists), [results.youtube, disliked, hiddenArtists]);
+  // Real YouTube videos: these play through the embedded player, so unlike the
+  // YouTube Music rows they are the actual video, not a substituted match.
+  const visibleYtVideos = useMemo(() => tasteFiltered(results.ytVideos || [], disliked, hiddenArtists), [results.ytVideos, disliked, hiddenArtists]);
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
   const recogRef = useRef(null);
@@ -68,7 +71,7 @@ export default function Search() {
     try { runCtrl.current?.abort(); } catch { /* noop */ }
     const ctrl = new AbortController();
     runCtrl.current = ctrl;
-    if (!query.trim()) { setResults({ songs: [], albums: [], artists: [], youtube: [] }); setLoading(false); return; }
+    if (!query.trim()) { setResults({ songs: [], albums: [], artists: [], youtube: [], ytVideos: [] }); setLoading(false); return; }
     setLoading(true);
     try {
       const f = filtersRef.current;
@@ -138,7 +141,7 @@ export default function Search() {
   const voiceSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   const filtersActive = !!(filters.y || filters.minD || filters.maxD || filters.lang || filters.exp);
   const hasSuggest = suggest.songs.length + suggest.albums.length + suggest.artists.length > 0;
-  const emptyResults = !results.songs.length && !results.albums.length && !results.artists.length && !(results.youtube || []).length;
+  const emptyResults = !results.songs.length && !results.albums.length && !results.artists.length && !(results.youtube || []).length && !(results.ytVideos || []).length;
   const sugItems = useMemo(() => [...suggest.songs, ...suggest.artists, ...suggest.albums], [suggest]);
   const playlists = useStore(s => s.playlists);
   const matchPlaylists = q.trim() ? playlists.filter(p => p.name.toLowerCase().includes(q.trim().toLowerCase())) : [];
@@ -296,9 +299,24 @@ export default function Search() {
           {results.artists.length === 0 && <p className="p-4 text-sm text-dim col-span-full">No artists found.</p>}</div>
       )}
       {q && tab === 'YouTube' && (
-        <div className="card p-2 mt-4 flex flex-col">{visibleYT.map((t, i) => <SongRow key={t.id} track={t} index={i} context={visibleYT} />)}
-          {visibleYT.length === 0 && <p className="p-4 text-sm text-dim">No YouTube Music results.</p>}
-          {visibleYT.length > 0 && <p className="px-4 py-1 text-[11px] text-dim font-semibold">Plays the closest playable match.</p>}</div>
+        <>
+          <div className="card p-2 mt-4 flex flex-col">
+            <p className="px-4 pt-2 pb-1 text-[11px] font-extrabold tracking-widest text-dim">YOUTUBE</p>
+            {visibleYtVideos.map((t, i) => <SongRow key={t.id} track={t} index={i} context={visibleYtVideos} />)}
+            {visibleYtVideos.length === 0 && <p className="p-4 text-sm text-dim">No YouTube videos found.</p>}
+            {visibleYtVideos.length > 0 && (
+              <p className="px-4 py-1 text-[11px] text-dim font-semibold">
+                Plays the real video. Open the player to switch between MP3 and video.
+              </p>
+            )}
+          </div>
+          {visibleYT.length > 0 && (
+            <div className="card p-2 mt-3 flex flex-col">
+              <p className="px-4 pt-2 pb-1 text-[11px] font-extrabold tracking-widest text-dim">YOUTUBE MUSIC · CLOSEST AUDIO MATCH</p>
+              {visibleYT.map((t, i) => <SongRow key={t.id} track={t} index={i} context={visibleYT} />)}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

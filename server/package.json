@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test test/auth.test.js test/des.test.js test/cors.test.js"
+    "test": "node --test test/auth.test.js test/des.test.js test/cors.test.js test/youtube.test.js"
   },
   "dependencies": {
     "compression": "^1.8.2",

@@ -1,6 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
-import { api, streamFor, diag, diagEvent } from '../services/musicApi';
+import { api, streamFor, diag, diagEvent, isYouTubeTrack, ytMirrorUrl } from '../services/musicApi';
+import {
+  youTubeLoad, youTubePlay, youTubePause, youTubeSeek, youTubeSetVolume,
+  youTubeSetMuted, youTubeStop, onYouTubeEvent,
+} from '../services/ytPlayer';
 
 // structured dev tracing: set localStorage soundwave-debug=1 — silent otherwise
 function dbg(...a) {
@@ -46,8 +50,16 @@ let playToken = 0;
 let lastSrcAssign = 0;
 function markSrcAssign() { lastSrcAssign = Date.now(); }
 function syncPlayback() {
-  const el = getAudio();
   const st = useStore.getState();
+  // YouTube tracks are played by the embedded player, not the <audio> element —
+  // unless the embed was refused and we fell back to a mirror, in which case
+  // the element owns playback again. Everything else about these tracks (the
+  // store, the progress bar, the notification) is unchanged either way.
+  if (isYouTubeTrack(st.queue?.[st.index]) && !ytMirrored) {
+    if (st.isPlaying) youTubePlay(); else youTubePause();
+    return;
+  }
+  const el = getAudio();
   const t = ++playToken;
   if (!st.isPlaying) {
     try { el.pause(); } catch { /* noop */ }
@@ -68,6 +80,66 @@ function syncPlayback() {
       if (t === playToken) useStore.getState().setPlaying(false);
     });
   }
+}
+
+// ---------- embedded YouTube playback ----------
+// A YouTube track has no stream URL, so the <audio> element is taken out of the
+// picture entirely and the official player becomes the transport. The store
+// stays the single source of truth; see the onYouTubeEvent effect below.
+//
+// Set once a track's embed was refused and playback moved to a mirrored copy
+// from another source, so syncPlayback knows the element is back in charge.
+let ytMirrored = false;
+
+/** Loads a YouTube track. Called instead of the normal src assignment. */
+async function loadYouTube(track) {
+  ytMirrored = false;
+  const el = getAudio();
+  // Silence whatever the element was playing; leaving a src behind would let
+  // the stall watchdog and onPause act on a track that is no longer current.
+  try { detachAudio(el); el.pause(); el.removeAttribute('src'); el.load(); } catch { /* noop */ }
+  try { attachAudio(el); } catch { /* noop */ }
+  el.dataset.trackId = track.id;
+  playMode = 'full';
+  fullUrl = '';
+  cleanupBg();
+  try { document.title = `${track.title} — ${track.artist?.name || ''} · SoundWave`; } catch { /* noop */ }
+  try { useStore.getState().clearLoop(); } catch { /* noop */ }
+  if (useStore.getState().isPlaying) useStore.getState().setBuffering(true);
+  dbg('yt load', track.ytId);
+  const ok = await youTubeLoad(track.ytId, { start: 0, autoplay: useStore.getState().isPlaying });
+  if (!ok) ytFallback(track, 'load');
+}
+
+/**
+ * The embed was refused — the uploader disabled embedding, the video is
+ * private, or the player script never loaded. Fall back to the closest
+ * playable copy from the other sources rather than failing outright.
+ */
+function ytFallback(track, reason) {
+  const st = useStore.getState();
+  // The user may have moved on while the embed was failing.
+  if (st.queue?.[st.index]?.id !== track?.id) return;
+  const url = ytMirrorUrl(track);
+  if (!url) {
+    st.setPlaying(false);
+    st.setBuffering(false);
+    st.toast('This video cannot be played here', 'error');
+    return;
+  }
+  dbg('yt fallback to mirror', track.ytId, reason);
+  st.toast('Playing the closest audio match', 'info');
+  playMode = 'full';
+  // From here the element owns playback, so syncPlayback must stop routing this
+  // track to the embed. Set before the src assignment: syncPlayback is called
+  // straight after and would otherwise hand the play() back to the iframe.
+  ytMirrored = true;
+  markSrcAssign();
+  const el = getAudio();
+  fullUrl = url;
+  el.dataset.trackId = track.id;
+  el.src = url;
+  syncPlayback();
 }
 
 // Instant-preview race state (module scope — survives element recreation)
@@ -398,7 +470,11 @@ function onEnded() {
   }
   const el = getAudio();
   const { repeat, next, index, queue } = useStore.getState();
-  if (repeat === 'one') { el.currentTime = 0; syncPlayback(); return; }
+  if (repeat === 'one') {
+    // A YouTube track has no element position to rewind.
+    if (isYouTubeTrack(queue[index]) && !ytMirrored) { youTubeSeek(0); youTubePlay(); return; }
+    el.currentTime = 0; syncPlayback(); return;
+  }
   if (index >= queue.length - 1 && repeat === 'off') {
     // queue exhausted: Autoplay appends similar songs and keeps going
     // (Echo Brain-style); any failure or user interference stops cleanly
@@ -493,7 +569,14 @@ function recreateAudio() {
 export function useAudioEngine() {
   useEffect(() => {
     attachAudio(getAudio());
-    useStore.setState({ _seekTo: (t) => { getAudio().currentTime = t; } });
+    // Seeking has to reach whichever transport owns the current track.
+    useStore.setState({
+      _seekTo: (t) => {
+        const st = useStore.getState();
+        if (isYouTubeTrack(st.queue?.[st.index]) && !ytMirrored) { youTubeSeek(t); return; }
+        getAudio().currentTime = t;
+      },
+    });
     window.addEventListener('keydown', onKey);
     return () => {
       detachAudio(getAudio());
@@ -525,7 +608,14 @@ export function useAudioEngine() {
     playMode = 'full';
     fullUrl = '';
     swapping = false;
+    // The embedded player keeps playing on its own, so leaving a YouTube track
+    // has to stop it explicitly — otherwise the outgoing video plays over the
+    // incoming one.
+    youTubeStop();
+    ytMirrored = false;
     if (!track) { el.pause(); el.removeAttribute('src'); el.load(); useStore.getState().setPlaying(false); document.title = 'SoundWave — Music for Everyone'; return; }
+    // No stream URL: the official YouTube player is the transport for this one.
+    if (isYouTubeTrack(track)) { loadYouTube(track); return; }
     let cancelled = false;
     (async () => {
       const url = streamFor(track, quality);
@@ -683,6 +773,36 @@ export function useAudioEngine() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studioOn, gain]);
 
+  // The embedded YouTube player is the transport for yt tracks, so its events
+  // have to be mirrored into the store — that is what keeps the progress bar,
+  // the queue, the media session and the Android notification working exactly
+  // as they do for a normal track.
+  useEffect(() => {
+    const off = onYouTubeEvent((event, data) => {
+      const st = useStore.getState();
+      const cur = st.queue?.[st.index];
+      if (!isYouTubeTrack(cur) || ytMirrored) return;
+      if (event === 'playing') {
+        if (!st.isPlaying) st.setPlaying(true);
+        st.setBuffering(false);
+        lastProgressAt = Date.now();
+      } else if (event === 'paused') {
+        if (st.isPlaying) st.setPlaying(false);
+      } else if (event === 'buffering') {
+        st.setBuffering(true);
+      } else if (event === 'ended') {
+        st.setBuffering(false);
+        onEnded();
+      } else if (event === 'time') {
+        st.setTime(data.current, data.duration);
+        lastProgressAt = Date.now();
+      } else if (event === 'error') {
+        ytFallback(cur, data);
+      }
+    });
+    return off;
+  }, []);
+
   // play/pause — the single owner of playback decisions
   useEffect(() => {
     if (!track) return;
@@ -758,6 +878,9 @@ export function useAudioEngine() {
     const el = getAudio();
     el.volume = volume;
     el.muted = muted;
+    // The embedded player has its own volume, so it has to be told separately.
+    youTubeSetVolume(volume);
+    youTubeSetMuted(muted);
   }, [volume, muted]);
 
   // quality change: rebuild the current stream at the new tier, keep position
@@ -869,8 +992,14 @@ export function useAudioEngine() {
 }
 
 export function seekTo(t) {
+  const st = useStore.getState();
+  if (isYouTubeTrack(st.queue?.[st.index]) && !ytMirrored) {
+    youTubeSeek(t);
+    st.setTime(t, st.duration);
+    return;
+  }
   const el = getAudio();
   if (!el.src) return;
   safeCurrentTime(el, t);
-  useStore.getState().setTime(t, el.duration || useStore.getState().duration);
+  st.setTime(t, el.duration || st.duration);
 }

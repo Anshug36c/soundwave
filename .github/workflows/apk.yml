@@ -82,7 +82,7 @@ jobs:
           rm -rf "$DEST/server" "$DEST/client"
           mkdir -p "$DEST/server" "$DEST/client"
 
-          cp server/server.js server/auth.js server/des.js server/package.json "$DEST/server/"
+          cp server/server.js server/auth.js server/des.js server/youtube.js server/package.json "$DEST/server/"
           cp -r client/dist "$DEST/client/dist"
 
           # production deps only. Both are pure JS (verified: 0 .node binaries,

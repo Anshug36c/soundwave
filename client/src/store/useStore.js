@@ -83,6 +83,10 @@ export const useStore = create(
       resetTaste: () => { set({ liked: {}, disliked: {}, hiddenArtists: {}, similar: [] }); get().toast('Taste profile reset', 'info'); },
       sleepTimerMin: 0,
       instantPreview: true, // instant FLAC preview, then auto-switch to full MP3
+      // How YouTube tracks play: 'audio' parks the embedded player off-screen
+      // so a video is heard like a song, 'video' shows it in the player.
+      ytMode: 'audio',
+      setYtMode: (m) => set({ ytMode: m === 'video' ? 'video' : 'audio' }),
 
       playTracks: (tracks, startIndex = 0) => {
         const list = (tracks || []).filter(Boolean);
@@ -344,6 +348,7 @@ export const useStore = create(
         eqPreset: s.eqPreset, eqPreamp: s.eqPreamp, normalizeOn: s.normalizeOn,
         profile: s.profile, liveAccount: s.liveAccount, searchHistory: s.searchHistory, volume: s.volume, gain: s.gain,
         instantPreview: s.instantPreview, disliked: s.disliked, hiddenArtists: s.hiddenArtists, discoverMix: s.discoverMix,
+        ytMode: s.ytMode,
       }),
     }
   )

@@ -190,6 +190,35 @@ export function streamFor(track, quality = 'high') {
   return `${track.streamUrl}${track.streamUrl.includes('?') ? '&' : '?'}quality=${q}${meta}`;
 }
 
+/**
+ * True for a track played by the embedded YouTube player rather than the
+ * <audio> element. Such tracks carry a video id and no streamUrl.
+ */
+export function isYouTubeTrack(track) {
+  return !!track && (track.source === 'ytv' || !!track.ytId);
+}
+
+/**
+ * Last-resort audio for a YouTube track whose embed was refused (the uploader
+ * disabled embedding, or the player script never loaded).
+ *
+ * This reuses the route YouTube Music results already use: the server matches
+ * the title against the other sources and streams the closest playable copy.
+ * It only resolves for music that exists on those sources — a vlog has no
+ * mirror and will fail, which is the honest outcome.
+ */
+export function ytMirrorUrl(track) {
+  if (!track?.ytId) return '';
+  const p = new URLSearchParams({
+    src: 'yt',
+    id: String(track.ytId),
+    quality: 'high',
+    t: track.title || '',
+    ar: track.artist?.name || '',
+  });
+  return `${BASE}/audio?${p.toString()}`;
+}
+
 export function parseTrackId(id) {
   // "djp:xxx" | "djp:al:xxx" | "djp:ar:slug"
   const [source, kind, ...rest] = String(id || '').split(':');
