@@ -400,6 +400,7 @@ function onPlay() {
   const st = useStore.getState();
   st.setPlaying(true);
   st.setBuffering(false);
+  st.setPlayError(null);
   if (pendingSwitch) { pendingSwitch = false; try { diagEvent('switch', Date.now() - switchAt); } catch { /* noop */ } }
   try { navigator.mediaSession.playbackState = 'playing'; } catch { /* noop */ }
 }
@@ -441,6 +442,7 @@ function onError() {
     recentErrors = [];
     s.setPlaying(false);
     pendingSwitch = false; // don't record a stale switch time on the next manual play
+    s.setPlayError('Playback keeps failing — check your connection');
     s.toast('Playback keeps failing — check your connection', 'error');
     return;
   }
@@ -608,6 +610,7 @@ export function useAudioEngine() {
     playMode = 'full';
     fullUrl = '';
     swapping = false;
+    useStore.getState().setPlayError(null);
     // The embedded player keeps playing on its own, so leaving a YouTube track
     // has to stop it explicitly — otherwise the outgoing video plays over the
     // incoming one.
@@ -622,6 +625,7 @@ export function useAudioEngine() {
       if (cancelled) return;
       if (!url) {
         useStore.getState().setPlaying(false);
+        useStore.getState().setPlayError('No playable stream for this track');
         useStore.getState().toast('No playable stream for this track', 'error');
         return;
       }

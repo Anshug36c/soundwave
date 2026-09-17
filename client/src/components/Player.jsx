@@ -11,6 +11,7 @@ import {
   PlayIcon, PauseIcon, NextIcon, PrevIcon, ShuffleIcon, RepeatIcon, RepeatOneIcon,
   VolumeIcon, MuteIcon, QueueIcon, ChevronDownIcon, ExpandIcon, MoonIcon,
   DownloadIcon, ShareIcon, HeartIcon, PlusIcon, NoteIcon, CloseIcon, CheckIcon, MicIcon,
+  RefreshIcon,
 } from './Icons';
 
 function SpinIcon({ size = 18 }) {
@@ -36,11 +37,11 @@ function ProgressBar({ currentTime, duration }) {
   };
   return (
     <div className="flex items-center gap-2 w-full">
-      <span className="text-[11px] text-dim w-10 text-right tabular-nums">{formatTime(currentTime)}</span>
+      <span className="text-xs text-dim w-10 text-right tabular-nums">{formatTime(currentTime)}</span>
       <div ref={barRef}
         onPointerDown={e => { try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ } scrub(e.clientX); }}
         onPointerMove={e => { if (e.buttons & 1) scrub(e.clientX); }}
-        className="sp-progress relative flex-1 h-4 flex items-center touch-none" role="slider"
+        className="sp-progress relative flex-1 h-6 flex items-center touch-none" role="slider"
         aria-label="Seek" aria-valuenow={Math.round(currentTime)} aria-valuemax={Math.round(duration || 0)} tabIndex={0}
         onKeyDown={e => {
           if (e.key === 'ArrowRight') seekTo(currentTime + 5);
@@ -52,7 +53,7 @@ function ProgressBar({ currentTime, duration }) {
           </div>
         </div>
       </div>
-      <button onClick={() => setShowRem(v => !v)} className="text-[11px] text-dim w-10 tabular-nums text-left" aria-label="Toggle remaining time" title="Elapsed / remaining">{showRem && duration ? `-${formatTime(Math.max(0, duration - currentTime))}` : formatTime(duration)}</button>
+      <button onClick={() => setShowRem(v => !v)} className="text-xs text-dim w-10 h-11 flex items-center tabular-nums text-left" aria-label="Toggle remaining time" title="Elapsed / remaining">{showRem && duration ? `-${formatTime(Math.max(0, duration - currentTime))}` : formatTime(duration)}</button>
     </div>
   );
 }
@@ -85,6 +86,9 @@ export function MiniPlayer() {
   if (!track) return null;
   const pct = duration ? (currentTime / duration) * 100 : 0;
   const isLiked = !!liked[track.id];
+  // reached the end of the last track: offer a replay instead of a dead Play
+  const ended = !isPlaying && !buffering && duration > 0 && currentTime >= duration - 0.5;
+  const onPlayBtn = () => { if (ended) seekTo(0); togglePlay(); };
 
   return (
     <div className="fixed left-0 right-0 z-30 player-in mini-offset">
@@ -98,7 +102,9 @@ export function MiniPlayer() {
           if (dx < -60) next();
           else if (dx > 60) prev();
         }}>
-          <div className="h-1 bg-[var(--surface-3)]"><div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} /></div>
+          {/* no width transition: timeupdate ticks 4x/s, transitioning each one
+              is constant repaint for zero visual gain; buffering pulses instead */}
+          <div className="h-1 bg-[var(--surface-3)]"><div className={`h-full bg-accent ${buffering ? 'animate-pulse' : ''}`} style={{ width: `${pct}%` }} /></div>
           <div className="glass px-2 h-16 flex items-center gap-1 sp-playerbar">
             <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" aria-label="Open full player">
               <Img src={track.image} alt={track.title} className="w-12 h-12 rounded-[7px] object-cover shadow-[var(--shadow-1)]" />
@@ -107,9 +113,9 @@ export function MiniPlayer() {
                 <p className="truncate t-caption">{track.artist?.name}</p>
               </span>
             </button>
-          <button onClick={prev} className="p-2.5 text-dim hover:text-white btn-press" aria-label="Previous"><PrevIcon size={22} /></button>
-          <button onClick={togglePlay} className="w-11 h-11 rounded-full btn-accent grid place-items-center shadow-[0_0_24px_-6px_var(--accent)]" aria-label={buffering && isPlaying ? 'Loading audio' : isPlaying ? 'Pause' : 'Play'}>{buffering && isPlaying ? <SpinIcon size={19} /> : isPlaying ? <PauseIcon size={19} /> : <PlayIcon size={19} />}</button>
-          <button onClick={next} className="p-2.5 text-dim hover:text-white btn-press" aria-label="Next"><NextIcon size={22} /></button>
+          <button onClick={prev} className="w-11 h-11 grid place-items-center text-dim hover:text-white btn-press" aria-label="Previous"><PrevIcon size={22} /></button>
+          <button onClick={onPlayBtn} className="w-11 h-11 rounded-full btn-accent grid place-items-center shadow-[0_0_24px_-6px_var(--accent)]" aria-label={buffering ? 'Loading audio' : ended ? 'Replay' : isPlaying ? 'Pause' : 'Play'}>{buffering ? <SpinIcon size={19} /> : ended ? <RefreshIcon size={19} /> : isPlaying ? <PauseIcon size={19} /> : <PlayIcon size={19} />}</button>
+          <button onClick={next} className="w-11 h-11 grid place-items-center text-dim hover:text-white btn-press" aria-label="Next"><NextIcon size={22} /></button>
         </div>
       </div>
       {/* desktop 3-zone bar */}
@@ -323,6 +329,7 @@ export function FullPlayer() {
   const sleepTimerMin = useStore(s => s.sleepTimerMin);
   const setSleepTimer = useStore(s => s.setSleepTimer);
   const buffering = useStore(s => s.buffering);
+  const playError = useStore(s => s.playError);
   const playbackRate = useStore(s => s.playbackRate);
   const setPlaybackRate = useStore(s => s.setPlaybackRate);
   const gain = useStore(s => s.gain);
@@ -358,6 +365,9 @@ export function FullPlayer() {
   if (!show || !track) return null;
   const isLiked = !!liked[track.id];
   const playLabel = 'FULL TRACK';
+  const ended = !isPlaying && !buffering && duration > 0 && currentTime >= duration - 0.5;
+  const status = playError ? 'FAILED' : buffering ? 'LOADING' : ended ? 'ENDED' : isPlaying ? 'NOW PLAYING' : 'PAUSED';
+  const onPlayBtn = () => { if (ended) seekTo(0); togglePlay(); };
 
   const share = async () => {
     const url = `${location.origin}/search?q=${encodeURIComponent(track.title + ' ' + track.artist?.name)}`;
@@ -387,9 +397,11 @@ export function FullPlayer() {
       <div className="fade-in absolute inset-0 bg-black/80 backdrop-blur-2xl" />
       <div ref={sheetRef} className="sheet-in relative max-w-5xl mx-auto px-4 py-6 min-h-full flex flex-col">
         <div className="flex items-center justify-between">
-          <button onClick={() => setShow(false)} className="text-2xl px-2 btn-press" aria-label="Close player"><ChevronDownIcon size={22} /></button>
-          <p className="text-xs font-bold tracking-widest text-dim">NOW PLAYING · {playLabel}{studioOn ? ' · STUDIO' : ''}</p>
-          <button onClick={() => setShowQueue(true)} className="text-xl px-2 btn-press" aria-label="Open queue"><QueueIcon size={21} /></button>
+          <button onClick={() => setShow(false)} className="w-11 h-11 grid place-items-center btn-press" aria-label="Close player"><ChevronDownIcon size={22} /></button>
+          {/* the state word is the first thing on the sheet: playing / paused /
+              loading / failed / ended are always visible at a glance */}
+          <p className={`text-xs font-bold tracking-widest ${playError ? 'text-red-400' : buffering ? 'text-dim animate-pulse' : isPlaying ? 'accent' : 'text-dim'}`} aria-live="polite">{status} · {playLabel}{studioOn ? ' · STUDIO' : ''}</p>
+          <button onClick={() => setShowQueue(true)} className="w-11 h-11 grid place-items-center btn-press" aria-label="Open queue"><QueueIcon size={21} /></button>
         </div>
         <div className="grid md:grid-cols-2 gap-8 mt-6 items-start">
           <div className="flex flex-col items-center">
@@ -397,7 +409,7 @@ export function FullPlayer() {
               <YtVideoSurface className="w-full max-w-2xl aspect-video rounded-2xl overflow-hidden bg-black shadow-2xl border border-white/10" />
             ) : (
             <div className={`relative ${isPlaying ? 'animate-spin-slower' : 'paused-spin animate-spin-slower'}`}>
-              <Img src={track.image} alt={track.title} className={`w-64 md:w-80 max-w-[70vw] aspect-square h-auto rounded-full object-cover shadow-2xl border-8 border-black/60 transition-shadow duration-700 ${isPlaying ? 'shadow-[0_0_90px_-18px_var(--accent)]' : ''}`} />
+              <Img src={track.image} alt={track.title} className={`w-56 md:w-80 max-w-[62vw] aspect-square h-auto rounded-full object-cover shadow-2xl border-8 border-black/60 transition-shadow duration-700 ${isPlaying ? 'shadow-[0_0_90px_-18px_var(--accent)]' : ''}`} />
               <div className="absolute inset-0 grid place-items-center"><div className="w-16 h-16 rounded-full bg-black/80 border-4 border-white/20" /></div>
             </div>
             )}
@@ -420,18 +432,24 @@ export function FullPlayer() {
                 style={{ background: `linear-gradient(90deg, var(--accent) ${duration ? (currentTime / duration) * 100 : 0}%, rgba(128,128,128,.4) ${duration ? (currentTime / duration) * 100 : 0}%)` }} />
               <div className="flex justify-between text-xs text-dim mt-1"><span>{formatTime(currentTime)}</span><span>{formatTime(duration)}</span></div>
             </div>
-            <div className="flex items-center gap-5 mt-3">
-              <button onClick={toggleShuffle} className={`p-2 btn-press ${shuffle ? 'accent' : 'text-dim'}`} aria-label="Shuffle" title="Shuffle"><ShuffleIcon size={20} /></button>
-              <button onClick={prev} className="p-2 text-white/80 hover:text-white btn-press" aria-label="Previous"><PrevIcon size={28} /></button>
-              <button onClick={togglePlay} className="w-16 h-16 rounded-full btn-accent grid place-items-center shadow-[0_0_44px_-8px_var(--accent)]" aria-label={buffering && isPlaying ? 'Loading audio' : isPlaying ? 'Pause' : 'Play'}>{buffering && isPlaying ? <SpinIcon size={26} /> : isPlaying ? <PauseIcon size={26} /> : <PlayIcon size={26} />}</button>
-              <button onClick={next} className="p-2 text-white/80 hover:text-white btn-press" aria-label="Next"><NextIcon size={28} /></button>
-              <button onClick={cycleRepeat} className={`p-2 btn-press ${repeat !== 'off' ? 'accent' : 'text-dim'}`} aria-label="Repeat" title={`Repeat: ${repeat}`}>{repeat === 'one' ? <RepeatOneIcon size={20} /> : <RepeatIcon size={20} />}</button>
+            <div className="flex items-center gap-2 mt-3">
+              <button onClick={toggleShuffle} className={`w-11 h-11 grid place-items-center btn-press ${shuffle ? 'accent' : 'text-dim'}`} aria-label="Shuffle" title="Shuffle" aria-pressed={shuffle}><ShuffleIcon size={20} /></button>
+              <button onClick={prev} className="w-11 h-11 grid place-items-center text-white/80 hover:text-white btn-press" aria-label="Previous"><PrevIcon size={28} /></button>
+              <button onClick={onPlayBtn} className="w-[72px] h-[72px] rounded-full btn-accent grid place-items-center shadow-[0_0_44px_-8px_var(--accent)]" aria-label={buffering ? 'Loading audio' : ended ? 'Replay' : isPlaying ? 'Pause' : 'Play'}>{buffering ? <SpinIcon size={28} /> : ended ? <RefreshIcon size={28} /> : isPlaying ? <PauseIcon size={28} /> : <PlayIcon size={28} />}</button>
+              <button onClick={next} className="w-11 h-11 grid place-items-center text-white/80 hover:text-white btn-press" aria-label="Next"><NextIcon size={28} /></button>
+              <button onClick={cycleRepeat} className={`w-11 h-11 grid place-items-center btn-press ${repeat !== 'off' ? 'accent' : 'text-dim'}`} aria-label="Repeat" title={`Repeat: ${repeat}`}>{repeat === 'one' ? <RepeatOneIcon size={20} /> : <RepeatIcon size={20} />}</button>
             </div>
+            {playError && (
+              <div className="mt-4 w-full max-w-xs rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 text-center" role="alert">
+                <p className="text-sm font-bold text-red-400">{playError}</p>
+                <button onClick={next} className="chip chip-active mt-2">Skip to next</button>
+              </div>
+            )}
             <div className="flex items-center gap-2 mt-4 w-full max-w-xs slider-wrap">
-              <button onClick={() => setMuted(!muted)} aria-label="Mute" className="btn-press">{muted || volume === 0 ? <MuteIcon size={20} /> : <VolumeIcon size={20} />}</button>
+              <button onClick={() => setMuted(!muted)} aria-label={muted || volume === 0 ? 'Unmute' : 'Mute'} className="w-11 h-11 grid place-items-center btn-press shrink-0">{muted || volume === 0 ? <MuteIcon size={20} /> : <VolumeIcon size={20} />}</button>
               <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={(e) => setVolume(Number(e.target.value))} className="slider flex-1" aria-label="Volume"
                 style={{ background: `linear-gradient(90deg, var(--text) ${(muted ? 0 : volume) * 100}%, rgba(128,128,128,.4) ${(muted ? 0 : volume) * 100}%)` }} />
-              <button onClick={cycleSpeed} className="text-xs font-extrabold px-2 py-1 rounded-md bg-white/10 min-w-[46px]" aria-label="Playback speed" title="Playback speed">{playbackRate}×</button>
+              <button onClick={cycleSpeed} className="text-xs font-extrabold px-2 rounded-md bg-white/10 min-w-[46px] min-h-[40px]" aria-label="Playback speed" title="Playback speed">{playbackRate}×</button>
             </div>
             <div className="flex items-center gap-2 mt-2 w-full max-w-xs slider-wrap" title="Volume boost up to 200%">
               <span className="text-[11px] font-extrabold text-dim w-12 shrink-0">BOOST</span>
@@ -440,25 +458,25 @@ export function FullPlayer() {
               <span className="text-[11px] font-extrabold text-dim w-10 text-right tabular-nums shrink-0">{Math.round(gain * 100)}%</span>
             </div>
             <div className="flex items-center gap-2 mt-5 flex-wrap justify-center">
-              <button onClick={() => toggleLike(track)} className={`px-4 py-2 rounded-full text-sm font-bold inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${isLiked ? 'bg-accent text-black' : 'bg-white/10'}`}><HeartIcon size={15} filled={isLiked} />{isLiked ? 'Liked' : 'Like'}</button>
+              <button onClick={() => toggleLike(track)} className={`px-4 min-h-[44px] rounded-full text-sm font-bold inline-flex items-center gap-1.5 transition-all active:scale-95 ${isLiked ? 'bg-accent text-black' : 'bg-white/10'}`}><HeartIcon size={15} filled={isLiked} />{isLiked ? 'Liked' : 'Like'}</button>
               <div className="relative">
-                <button onClick={() => setShowPlMenu(v => !v)} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95"><PlusIcon size={15} />Playlist</button>
+                <button onClick={() => setShowPlMenu(v => !v)} aria-expanded={showPlMenu} className="px-4 min-h-[44px] rounded-full text-[13px] font-semibold bg-[var(--surface-2)] inline-flex items-center gap-1.5 transition-all active:scale-95"><PlusIcon size={15} />Playlist</button>
                 {showPlMenu && <div className="absolute bottom-12 left-1/2 -translate-x-1/2 sm:left-0 sm:translate-x-0 z-10"><AddToPlaylistMenu track={track} onDone={() => setShowPlMenu(false)} /></div>}
               </div>
               <button onClick={() => cycleLoopPoint(currentTime)} aria-label="Loop section (A-B)" title="Loop a section: tap to set A, again for B, again to clear"
-                className={`px-4 py-2 rounded-full text-sm font-bold inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${abLoop.b != null ? 'bg-accent text-black' : abLoop.a != null ? 'bg-accent/30 text-white' : 'bg-white/10'}`}>
+                className={`px-4 min-h-[44px] rounded-full text-sm font-bold inline-flex items-center gap-1.5 transition-all active:scale-95 ${abLoop.b != null ? 'bg-accent text-black' : abLoop.a != null ? 'bg-accent/30 text-white' : 'bg-white/10'}`}>
                 <RepeatIcon size={15} />{abLoop.b != null ? `${formatTime(abLoop.a)}–${formatTime(abLoop.b)}` : abLoop.a != null ? `A ${formatTime(abLoop.a)}…` : 'A–B'}
               </button>
               <button onClick={() => setShowParty(true)} aria-label="Listen Together" title="Listen Together: host or join a synced party"
-                className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95">
+                className="px-4 min-h-[44px] rounded-full text-[13px] font-semibold bg-[var(--surface-2)] inline-flex items-center gap-1.5 transition-all active:scale-95">
                 <span className={`w-2 h-2 rounded-full ${party ? 'bg-green-500 animate-pulse' : 'bg-white/30'}`} aria-hidden />Together{party ? ` ${party.code}` : ''}
               </button>
-              <button onClick={share} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95"><ShareIcon size={15} />Share</button>
-              <button onClick={() => { toggleDownload(track); toast(downloads[track.id] ? 'Removed from offline' : 'Saved for offline'); }} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95">
+              <button onClick={share} className="px-4 min-h-[44px] rounded-full text-[13px] font-semibold bg-[var(--surface-2)] inline-flex items-center gap-1.5 transition-all active:scale-95"><ShareIcon size={15} />Share</button>
+              <button onClick={() => { toggleDownload(track); toast(downloads[track.id] ? 'Removed from offline' : 'Saved for offline'); }} className="px-4 min-h-[44px] rounded-full text-[13px] font-semibold bg-[var(--surface-2)] inline-flex items-center gap-1.5 transition-all active:scale-95">
                 {downloads[track.id] ? <CheckIcon size={15} /> : <DownloadIcon size={15} />}Offline
               </button>
               <div className="relative">
-                <button onClick={() => setShowSleep(v => !v)} className={`px-4 py-2 rounded-full text-sm font-bold inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${sleepTimerMin ? 'bg-accent text-black' : 'bg-white/10'}`}>
+                <button onClick={() => setShowSleep(v => !v)} className={`px-4 min-h-[44px] rounded-full text-sm font-bold inline-flex items-center gap-1.5 transition-all active:scale-95 ${sleepTimerMin ? 'bg-accent text-black' : 'bg-white/10'}`}>
                   <MoonIcon size={15} />{sleepTimerMin ? `${sleepTimerMin}m` : 'Sleep'}
                 </button>
                 {showSleep && (
@@ -475,7 +493,7 @@ export function FullPlayer() {
           <div className="panel p-4 min-h-[300px]">
             <div className="flex gap-2 mb-3 overflow-x-auto no-scrollbar">
               {[['lyrics', 'Lyrics'], ['studio', 'Studio'], ['info', 'Details']].map(([t, label]) => (
-                <button key={t} onClick={() => setTab(t)} className={`px-4 py-1.5 rounded-full text-sm font-bold shrink-0 border transition-all active:scale-95 ${tab === t ? 'bg-accent text-black border-transparent' : 'bg-white/10 border-soft'}`}>{label}</button>
+                <button key={t} onClick={() => setTab(t)} aria-pressed={tab === t} className={`px-4 py-2.5 min-h-[44px] rounded-full text-sm font-bold shrink-0 border transition-all active:scale-95 ${tab === t ? 'bg-accent text-black border-transparent' : 'bg-white/10 border-soft'}`}>{label}</button>
               ))}
             </div>
             <div key={tab} className="fade-in">
@@ -522,8 +540,8 @@ export function QueueDrawer() {
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-extrabold">Queue ({queue.length})</h2>
           <div className="flex gap-2">
-            <button onClick={() => { clearQueue(); setShow(false); }} className="text-xs font-bold px-3 py-1.5 rounded-full bg-white/10">Clear</button>
-            <button onClick={() => setShow(false)} className="text-xl px-2" aria-label="Close queue"><CloseIcon size={18} /></button>
+            <button onClick={() => { clearQueue(); setShow(false); }} className="text-xs font-bold px-4 py-2.5 min-h-[40px] rounded-full bg-white/10">Clear</button>
+            <button onClick={() => setShow(false)} className="w-11 h-11 grid place-items-center" aria-label="Close queue"><CloseIcon size={18} /></button>
           </div>
         </div>
         <div className="flex flex-col gap-1">
@@ -535,10 +553,10 @@ export function QueueDrawer() {
               </button>
               {i === index && <EqIcon />}
               <span className="flex flex-col shrink-0">
-                <button onClick={() => moveInQueue(i, i - 1)} disabled={i === 0} className="text-dim px-2.5 py-2 text-[10px] disabled:opacity-20" aria-label="Move up">▲</button>
-                <button onClick={() => moveInQueue(i, i + 1)} disabled={i === queue.length - 1} className="text-dim px-2.5 py-2 text-[10px] disabled:opacity-20" aria-label="Move down">▼</button>
+                <button onClick={() => moveInQueue(i, i - 1)} disabled={i === 0} className="text-dim w-10 h-9 grid place-items-center text-[11px] disabled:opacity-20 active:scale-90" aria-label="Move up">▲</button>
+                <button onClick={() => moveInQueue(i, i + 1)} disabled={i === queue.length - 1} className="text-dim w-10 h-9 grid place-items-center text-[11px] disabled:opacity-20 active:scale-90" aria-label="Move down">▼</button>
               </span>
-              <button onClick={() => removeFromQueue(i)} className="text-dim px-2" aria-label="Remove from queue"><CloseIcon size={14} /></button>
+              <button onClick={() => removeFromQueue(i)} className="text-dim w-11 h-11 grid place-items-center active:scale-90" aria-label="Remove from queue"><CloseIcon size={14} /></button>
             </div>
           ))}
           {queue.length === 0 && <p className="text-sm text-dim">Queue is empty. Play something!</p>}

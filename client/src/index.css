@@ -542,5 +542,9 @@ img { background: var(--surface-1); }
   input[type="range"].slider { height: 6px; }
   input[type="range"].slider::-webkit-slider-thumb { width: 20px; height: 20px; opacity: 1; }
   input[type="range"].slider::-moz-range-thumb { width: 20px; height: 20px; opacity: 1; }
+  /* the player's custom seek bar gets the same treatment: visible knob and a
+     track thick enough to read at arm's length */
+  .sp-track { height: 6px; }
+  .sp-knob { width: 16px; height: 16px; opacity: 1; }
   .eq-slider { width: 34px; }
 }

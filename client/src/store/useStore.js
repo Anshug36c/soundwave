@@ -53,6 +53,8 @@ export const useStore = create(
       isPlaying: false,
       buffering: false, // audible stall or src assigned but not yet playing
       setBuffering: (v) => set({ buffering: v }),
+      playError: null, // persistent playback failure; the player UI shows Failed
+      setPlayError: (v) => set({ playError: v }),
       shuffle: false,
       repeat: 'off', // off | one | all
       abLoop: { a: null, b: null }, // A-B section repeat, seconds (transient)
