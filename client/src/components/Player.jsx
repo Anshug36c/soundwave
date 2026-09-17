@@ -60,6 +60,7 @@ function ProgressBar({ currentTime, duration }) {
 
 export function MiniPlayer() {
   const swipeX = useRef(null);
+  const miniBarRef = useRef(null); // scrubbable progress strip on the bar
   const queue = useStore(s => s.queue);
   const index = useStore(s => s.index);
   const isPlaying = useStore(s => s.isPlaying);
@@ -81,6 +82,7 @@ export function MiniPlayer() {
   const setMuted = useStore(s => s.setMuted);
   const liked = useStore(s => s.liked);
   const toggleLike = useStore(s => s.toggleLike);
+  const playError = useStore(s => s.playError);
   const track = index >= 0 ? queue[index] : null;
 
   if (!track) return null;
@@ -89,6 +91,13 @@ export function MiniPlayer() {
   // reached the end of the last track: offer a replay instead of a dead Play
   const ended = !isPlaying && !buffering && duration > 0 && currentTime >= duration - 0.5;
   const onPlayBtn = () => { if (ended) seekTo(0); togglePlay(); };
+  const miniScrub = (x) => {
+    const bar = miniBarRef.current;
+    if (!bar) return;
+    const r = bar.getBoundingClientRect();
+    const p = Math.min(Math.max((x - r.left) / r.width, 0), 1);
+    seekTo(p * (duration || 0));
+  };
 
   return (
     <div className="fixed left-0 right-0 z-30 player-in mini-offset">
@@ -102,19 +111,32 @@ export function MiniPlayer() {
           if (dx < -60) next();
           else if (dx > 60) prev();
         }}>
-          {/* no width transition: timeupdate ticks 4x/s, transitioning each one
-              is constant repaint for zero visual gain; buffering pulses instead */}
-          <div className="h-1 bg-[var(--surface-3)]"><div className={`h-full bg-accent ${buffering ? 'animate-pulse' : ''}`} style={{ width: `${pct}%` }} /></div>
+          {/* scrubbable: seek from the mini bar itself, one-handed, no need to
+              open the full player; touch stopPropagation keeps the bar's
+              left/right skip-swipe from fighting the scrub */}
+          <div ref={miniBarRef}
+            onPointerDown={e => { try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* noop */ } miniScrub(e.clientX); }}
+            onPointerMove={e => { if (e.buttons & 1) miniScrub(e.clientX); }}
+            onTouchStart={e => e.stopPropagation()}
+            onTouchEnd={e => e.stopPropagation()}
+            className="relative h-4 flex items-center touch-none" role="slider" aria-label="Seek"
+            aria-valuenow={Math.round(currentTime)} aria-valuemax={Math.round(duration || 0)}>
+            <div className="w-full h-1 bg-[var(--surface-3)]"><div className={`h-full bg-accent ${buffering ? 'animate-pulse' : ''}`} style={{ width: `${pct}%` }} /></div>
+          </div>
           <div className="glass px-2 h-16 flex items-center gap-1 sp-playerbar">
             <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" aria-label="Open full player">
               <Img src={track.image} alt={track.title} className="w-12 h-12 rounded-[7px] object-cover shadow-[var(--shadow-1)]" />
               <span className="min-w-0">
                 <p className="truncate text-[14px] font-semibold flex items-center gap-2">{isPlaying && <EqIcon />}{track.title}</p>
-                <p className="truncate t-caption">{track.artist?.name}</p>
+                {/* the mini bar names the state too: loading / failed / paused /
+                    ended read at a glance without opening the sheet */}
+                <p className={`truncate t-caption ${playError ? 'text-red-400' : buffering ? 'animate-pulse' : ''}`}>
+                  {playError ? 'Playback failed' : buffering ? 'Loading…' : ended ? 'Ended · tap replay' : isPlaying ? track.artist?.name : `Paused · ${track.artist?.name || ''}`}
+                </p>
               </span>
             </button>
           <button onClick={prev} className="w-11 h-11 grid place-items-center text-dim hover:text-white btn-press" aria-label="Previous"><PrevIcon size={22} /></button>
-          <button onClick={onPlayBtn} className="w-11 h-11 rounded-full btn-accent grid place-items-center shadow-[0_0_24px_-6px_var(--accent)]" aria-label={buffering ? 'Loading audio' : ended ? 'Replay' : isPlaying ? 'Pause' : 'Play'}>{buffering ? <SpinIcon size={19} /> : ended ? <RefreshIcon size={19} /> : isPlaying ? <PauseIcon size={19} /> : <PlayIcon size={19} />}</button>
+          <button onClick={onPlayBtn} className={`w-11 h-11 rounded-full btn-accent grid place-items-center shadow-[0_0_24px_-6px_var(--accent)] ${playError ? 'ring-2 ring-red-500' : ''}`} aria-label={buffering ? 'Loading audio' : playError ? 'Playback failed, retry' : ended ? 'Replay' : isPlaying ? 'Pause' : 'Play'}>{buffering ? <SpinIcon size={19} /> : ended ? <RefreshIcon size={19} /> : isPlaying ? <PauseIcon size={19} /> : <PlayIcon size={19} />}</button>
           <button onClick={next} className="w-11 h-11 grid place-items-center text-dim hover:text-white btn-press" aria-label="Next"><NextIcon size={22} /></button>
         </div>
       </div>
@@ -409,8 +431,15 @@ export function FullPlayer() {
               <YtVideoSurface className="w-full max-w-2xl aspect-video rounded-2xl overflow-hidden bg-black shadow-2xl border border-white/10" />
             ) : (
             <div className={`relative ${isPlaying ? 'animate-spin-slower' : 'paused-spin animate-spin-slower'}`}>
-              <Img src={track.image} alt={track.title} className={`w-56 md:w-80 max-w-[62vw] aspect-square h-auto rounded-full object-cover shadow-2xl border-8 border-black/60 transition-shadow duration-700 ${isPlaying ? 'shadow-[0_0_90px_-18px_var(--accent)]' : ''}`} />
+              {/* paused/ended: the disc visibly cools down (desaturate + dim) so
+                  state reads from across the room, not just the header word */}
+              <Img src={track.image} alt={track.title} className={`w-56 md:w-80 max-w-[62vw] aspect-square h-auto rounded-full object-cover shadow-2xl border-8 border-black/60 transition-[box-shadow,filter,opacity] duration-700 ${isPlaying ? 'shadow-[0_0_90px_-18px_var(--accent)]' : 'saturate-[.7] opacity-85'}`} />
               <div className="absolute inset-0 grid place-items-center"><div className="w-16 h-16 rounded-full bg-black/80 border-4 border-white/20" /></div>
+              {buffering && (
+                <div className="absolute inset-0 grid place-items-center">
+                  <span className="w-14 h-14 rounded-full bg-black/70 grid place-items-center text-white"><SpinIcon size={26} /></span>
+                </div>
+              )}
             </div>
             )}
             <div className="w-full mt-4">
@@ -549,7 +578,7 @@ export function QueueDrawer() {
             <div key={`${t.id}-${i}`} className={`flex items-center gap-2 p-1.5 rounded-lg transition-colors ${i === index ? 'bg-accent/10' : 'bg-hoverable'}`}>
               <button onClick={() => { playTracks(queue, i); }} className="flex items-center gap-2 flex-1 min-w-0 text-left">
                 <Img src={t.image} alt="" className="w-10 h-10 rounded object-cover" />
-                <span className="min-w-0"><p className="truncate text-sm font-semibold">{t.title}</p><p className="truncate text-xs text-dim">{t.artist?.name}</p></span>
+                <span className="min-w-0"><p className={`truncate text-sm font-semibold ${i === index ? 'accent' : ''}`}>{t.title}</p><p className="truncate text-xs text-dim">{t.artist?.name}</p></span>
               </button>
               {i === index && <EqIcon />}
               <span className="flex flex-col shrink-0">
