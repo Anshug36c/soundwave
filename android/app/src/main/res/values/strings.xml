@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SoundWave</string>
+    <string name="booting">Starting SoundWave…</string>
+    <string name="starting">Loading music library…</string>
+    <string name="startup_timeout">The server did not start in time. Close and reopen the app.</string>
+    <string name="startup_failed">Startup failed: %1$s</string>
+</resources>
