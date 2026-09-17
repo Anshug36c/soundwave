@@ -388,6 +388,18 @@ export function FullPlayer() {
   const poppedRef = useRef(false);
   const touchY = useRef(null);
   const sheetRef = useRef(null);
+  const bgArtRef = useRef(null);
+  const bgDimRef = useRef(null);
+  const closeBtnRef = useRef(null);
+  const dragFade = (dy) => {
+    // the backdrop dims in step with the pull-down so dismiss feels physical
+    const f = dy <= 0 ? 1 : Math.max(.4, 1 - Math.min(dy, 160) / 260);
+    for (const [el, base] of [[bgArtRef.current, .5], [bgDimRef.current, 1]]) {
+      if (!el) continue;
+      if (el.style.animation !== 'none') el.style.animation = 'none';
+      el.style.opacity = String(base * f);
+    }
+  };
   const requestClose = () => {
     if (closingRef.current) return;
     closingRef.current = true;
@@ -427,6 +439,22 @@ export function FullPlayer() {
       else history.back(); // UI-driven close: consume our own entry
     };
   }, [show]);
+  // focus follows the sheet (and returns to the mini's expand control on
+  // close); the status bar colour tracks the always-dark sheet so light
+  // theme doesn't leave dark-on-dark system chrome
+  useEffect(() => {
+    if (!show) return;
+    closeBtnRef.current?.focus?.({ preventScroll: true });
+    const meta = document.querySelector('meta[name="theme-color"]');
+    const prev = meta?.getAttribute('content') || null;
+    meta?.setAttribute('content', '#121212');
+    return () => {
+      if (meta && prev) meta.setAttribute('content', prev);
+      try {
+        document.querySelector('.player-in [aria-label="Open full player"], .player-in [aria-label="Expand player"]')?.focus?.({ preventScroll: true });
+      } catch { /* noop */ }
+    };
+  }, [show]);
 
   const track = index >= 0 ? queue[index] : null;
   if (!show || !track) return null;
@@ -452,20 +480,22 @@ export function FullPlayer() {
         if (touchY.current == null || e.currentTarget.scrollTop > 0) return;
         const dy = e.touches[0].clientY - touchY.current;
         if (sheetRef.current) sheetRef.current.style.transform = dy > 0 ? `translateY(${Math.min(dy, 160)}px)` : '';
+        dragFade(dy);
       }}
       onTouchEnd={e => {
         if (touchY.current == null) return;
         const dy = e.changedTouches[0].clientY - touchY.current;
         touchY.current = null;
         if (sheetRef.current) sheetRef.current.style.transform = '';
+        dragFade(0);
         if (dy > 100 && e.currentTarget.scrollTop <= 0) requestClose();
       }}>
-      <div key={track.image} className={`${closing ? 'fade-out' : 'fade-in-slow'} absolute inset-0 bg-cover bg-center blur-3xl scale-125 opacity-50`} style={{ backgroundImage: `url(${track.image})` }} />
-      <div className={`${closing ? 'fade-out' : 'fade-in'} absolute inset-0 bg-black/80 backdrop-blur-2xl`} />
+      <div key={track.image} ref={bgArtRef} className={`${closing ? 'fade-out' : 'fade-in-slow'} absolute inset-0 bg-cover bg-center blur-3xl scale-125 opacity-50`} style={{ backgroundImage: `url(${track.image})` }} />
+      <div ref={bgDimRef} className={`${closing ? 'fade-out' : 'fade-in'} absolute inset-0 bg-black/80 backdrop-blur-2xl`} />
       <div ref={sheetRef} className={`${closing ? 'sheet-out' : 'sheet-in'} relative max-w-5xl mx-auto px-4 min-h-full flex flex-col`}
         style={{ paddingTop: 'calc(1.5rem + env(safe-area-inset-top, 0px))', paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}>
         <div className="flex items-center justify-between">
-          <button onClick={requestClose} className="w-11 h-11 grid place-items-center btn-press" aria-label="Close player"><ChevronDownIcon size={22} /></button>
+          <button ref={closeBtnRef} onClick={requestClose} className="w-11 h-11 grid place-items-center btn-press" aria-label="Close player"><ChevronDownIcon size={22} /></button>
           {/* the state word is the first thing on the sheet: playing / paused /
               loading / failed / ended are always visible at a glance */}
           <p className={`text-xs font-bold tracking-widest ${playError ? 'text-red-400' : buffering ? 'text-dim animate-pulse' : isPlaying ? 'accent' : 'text-dim'}`} aria-live="polite">{status} · {playLabel}{studioOn ? ' · STUDIO' : ''}</p>

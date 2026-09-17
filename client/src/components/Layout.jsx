@@ -128,10 +128,11 @@ export function TopBar() {
   const setTheme = useStore(s => s.setTheme);
   const [q, setQ] = useState('');
   const cycleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
+  const showFull = useStore(s => s.showFullPlayer);
   useScrollSpy();
 
   return (
-    <header className="topbar sticky top-0 z-20 pt-safe">
+    <header className="topbar sticky top-0 z-20 pt-safe" aria-hidden={showFull || undefined}>
       <div className="flex items-center gap-1.5 px-3 py-2 sm:px-4 sm:py-2.5">
         {onTab ? (
           /* Brand lives in the header on phones: the sidebar that holds it on
