@@ -1308,6 +1308,7 @@ function audioKey(src, sid, q, t = '', ar = '') {
 }
 const recoverCache = new Map(); // key -> { mirrors, time }
 async function recoverMirrors(title, artist, tried = []) {
+  if (artist === 'Unknown') artist = ''; // don't poison the query with a placeholder
   const key = `${title}|${artist}`.toLowerCase().replace(/[^a-z0-9|]/g, '');
   const hit = recoverCache.get(key);
   if (hit && Date.now() - hit.time < 30 * 60 * 1000) return hit.mirrors;
