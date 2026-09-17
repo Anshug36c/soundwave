@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api, debounce, tasteFiltered } from '../services/musicApi';
 import { useStore } from '../store/useStore';
 import { SongRow, AlbumCard, ArtistCard, PlaylistCard, SkeletonList } from '../components/Cards';
-import { MicIcon, SlidersIcon, NoteIcon, DiscIcon, ClockIcon, BoltIcon } from '../components/Icons';
+import { MicIcon, SlidersIcon, NoteIcon, DiscIcon, ClockIcon, BoltIcon, SearchIcon, CloseIcon } from '../components/Icons';
 
 const TABS = ['Songs', 'Albums', 'Artists', 'YouTube'];
 const TRENDING = ['AP Dhillon', 'Diljit Dosanjh', 'Guru Randhawa', 'Jasmine Sandlas', 'Tulsi Kumar', 'Karan Aujla', 'Shubh', 'Prem Dhillon'];
@@ -16,7 +16,7 @@ function SugBtn({ s, idx, active, onPick, Icon }) {
   return (
     <button id={`sug-opt-${idx}`} role="option" aria-selected={on}
       onMouseDown={e => e.preventDefault()} onClick={() => onPick(s.q)}
-      className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-semibold truncate ${on ? 'bg-accent text-black' : 'bg-hoverable'}`}>
+      className={`w-full text-left px-3 py-3 min-h-[44px] rounded-lg text-sm font-semibold truncate ${on ? 'bg-accent text-black' : 'bg-hoverable'}`}>
       <Icon size={14} className="inline mr-1.5 -mt-0.5" />{s.text}
     </button>
   );
@@ -61,6 +61,25 @@ export default function Search() {
   const sugSeq = useRef(0);
   const sugCtrl = useRef(null);
   const submitSeq = useRef(0);
+  const inputRef = useRef(null);
+  const [error, setError] = useState(false);
+  // The layout viewport does not shrink when a phone keyboard opens, so the
+  // only honest measure of the visible area is the visual viewport. Cap the
+  // suggestion list to it so options are never hidden behind the keyboard.
+  const [sugMax, setSugMax] = useState(320);
+  useEffect(() => {
+    const v = window.visualViewport;
+    if (!v) return;
+    const f = () => {
+      const el = inputRef.current;
+      const bottom = el ? el.getBoundingClientRect().bottom : 120;
+      setSugMax(Math.min(420, Math.max(160, v.height - bottom - 12)));
+    };
+    f();
+    v.addEventListener('resize', f);
+    v.addEventListener('scroll', f);
+    return () => { v.removeEventListener('resize', f); v.removeEventListener('scroll', f); };
+  }, []);
   useEffect(() => () => {
     try { runCtrl.current?.abort(); } catch { /* noop */ }
     try { sugCtrl.current?.abort(); } catch { /* noop */ }
@@ -73,6 +92,7 @@ export default function Search() {
     runCtrl.current = ctrl;
     if (!query.trim()) { setResults({ songs: [], albums: [], artists: [], youtube: [], ytVideos: [] }); setLoading(false); return; }
     setLoading(true);
+    setError(false);
     try {
       const f = filtersRef.current;
       const r = await api.search(query.trim(), 'all', {
@@ -82,7 +102,11 @@ export default function Search() {
       if (runSeq.current !== my) return; // stale — superseded by a newer query
       setResults(r);
       pushSearch(query.trim());
-    } catch { /* aborted/stale/failed — keep old results on screen */ }
+    } catch (err) {
+      /* aborted/stale: stay silent; a real failure gets a visible retry state */
+      if (runSeq.current !== my) return;
+      if (err?.name !== 'AbortError') setError(true);
+    }
     if (runSeq.current === my) setLoading(false);
   }, 400), []);
 
@@ -116,7 +140,10 @@ export default function Search() {
     setShowSuggest(false);
     setQ(v);
     setLoading(true);
+    setError(false);
     run(v);
+    // dismiss the keyboard so results own the screen (Enter or suggestion tap)
+    try { inputRef.current?.blur(); } catch { /* noop */ }
   };
 
   const startVoice = () => {
@@ -156,19 +183,29 @@ export default function Search() {
     <div className="pb-8">
       <div className="relative">
         <div className="flex gap-2">
-          <input value={q} onChange={e => { setQ(e.target.value); setSugActive(-1); setLoading(true); run(e.target.value); fetchSuggest(e.target.value); }}
-            onFocus={() => { if (hasSuggest) setShowSuggest(true); }}
-            onKeyDown={e => {
-              if (e.key === 'ArrowDown' && showSuggest && sugItems.length) { e.preventDefault(); setSugActive(a => (a + 1) % sugItems.length); }
-              else if (e.key === 'ArrowUp' && showSuggest && sugItems.length) { e.preventDefault(); setSugActive(a => (a - 1 + sugItems.length) % sugItems.length); }
-              else if (e.key === 'Enter') { if (showSuggest && sugActive >= 0 && sugItems[sugActive]) submit(sugItems[sugActive].q); else submit(); }
-              else if (e.key === 'Escape') setShowSuggest(false);
-            }}
-            onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
-            placeholder="Songs, artists, albums — try “songs like Desires”" enterKeyHint="search"
-            role="combobox" aria-expanded={showSuggest && hasSuggest} aria-controls="search-suggest" aria-autocomplete="list"
-            aria-activedescendant={sugActive >= 0 ? `sug-opt-${sugActive}` : undefined}
-            className="w-full field-hero" aria-label="Search music" />
+          <div className="relative flex-1 min-w-0">
+            <SearchIcon size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-dim pointer-events-none" />
+            <input ref={inputRef} value={q} onChange={e => { setQ(e.target.value); setSugActive(-1); setError(false); setLoading(true); run(e.target.value); fetchSuggest(e.target.value); }}
+              onFocus={() => { if (hasSuggest) setShowSuggest(true); }}
+              onKeyDown={e => {
+                if (e.key === 'ArrowDown' && showSuggest && sugItems.length) { e.preventDefault(); setSugActive(a => (a + 1) % sugItems.length); }
+                else if (e.key === 'ArrowUp' && showSuggest && sugItems.length) { e.preventDefault(); setSugActive(a => (a - 1 + sugItems.length) % sugItems.length); }
+                else if (e.key === 'Enter') { if (showSuggest && sugActive >= 0 && sugItems[sugActive]) submit(sugItems[sugActive].q); else submit(); }
+                else if (e.key === 'Escape') { if (showSuggest) setShowSuggest(false); else inputRef.current?.blur(); }
+              }}
+              onBlur={() => setTimeout(() => setShowSuggest(false), 150)}
+              placeholder="Songs, artists, albums — try “songs like Desires”" enterKeyHint="search"
+              autoCapitalize="off" autoComplete="off" autoCorrect="off" spellCheck={false}
+              role="combobox" aria-expanded={showSuggest && hasSuggest} aria-controls="search-suggest" aria-autocomplete="list"
+              aria-activedescendant={sugActive >= 0 ? `sug-opt-${sugActive}` : undefined}
+              className="w-full field-hero" data-clear={q ? 'true' : undefined} aria-label="Search music" />
+            {q && (
+              <button onClick={() => { setQ(''); setError(false); setResults({ songs: [], albums: [], artists: [], youtube: [], ytVideos: [] }); setShowSuggest(false); setSugActive(-1); inputRef.current?.focus(); }}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 w-10 h-10 grid place-items-center rounded-full text-dim active:scale-90 transition-transform" aria-label="Clear search">
+                <CloseIcon size={16} />
+              </button>
+            )}
+          </div>
           {voiceSupported && (
             <button onClick={startVoice} title="Voice search"
               className={`shrink-0 w-12 rounded-2xl border border-soft grid place-items-center ${listening ? 'bg-red-500/80 text-white animate-pulse' : 'bg-soft text-dim'}`}
@@ -180,7 +217,8 @@ export default function Search() {
         </div>
 
         {showSuggest && hasSuggest && (
-          <div id="search-suggest" role="listbox" aria-label="Search suggestions" className="absolute z-30 left-0 right-0 mt-2 panel p-2 max-h-80 overflow-y-auto sheet-scroll">
+          <div id="search-suggest" role="listbox" aria-label="Search suggestions" style={{ maxHeight: sugMax }}
+            className="absolute z-30 left-0 right-0 mt-2 panel p-2 overflow-y-auto sheet-scroll">
             {suggest.songs.length > 0 && <p className="px-3 pt-1 t-eyebrow">SONGS</p>}
             {suggest.songs.map((s, i) => <SugBtn key={`s${i}`} s={s} idx={i} active={sugActive} onPick={submit} Icon={NoteIcon} />)}
             {suggest.artists.length > 0 && <p className="px-3 pt-2 t-eyebrow">ARTISTS</p>}
@@ -249,6 +287,21 @@ export default function Search() {
         </div>
       )}
 
+      {q && error && !loading && (
+        <div className="callout mt-5 flex items-center justify-between gap-3" role="alert">
+          <span className="font-semibold">Search failed — check your connection and try again.</span>
+          <button onClick={() => { setError(false); setLoading(true); run(q.trim()); }} className="chip chip-active shrink-0">Retry</button>
+        </div>
+      )}
+      {q && !loading && !error && emptyResults && (
+        <div className="mt-10 mb-4 flex flex-col items-center text-center anim-in">
+          <span className="w-16 h-16 rounded-full bg-[var(--surface-2)] grid place-items-center text-dim"><NoteIcon size={26} /></span>
+          <p className="mt-4 font-bold">No results for “{q}”</p>
+          <p className="t-caption mt-1 max-w-[260px]">Check the spelling, or try an artist, album or song name.</p>
+          <div className="flex flex-wrap gap-2 justify-center mt-4">{TRENDING.slice(0, 4).map(t => <button key={t} onClick={() => submit(t)} className="chip">{t}</button>)}</div>
+        </div>
+      )}
+
       {q && (
         <div className="flex gap-2 mt-5 overflow-x-auto no-scrollbar">
           {TABS.map(t => (
@@ -279,29 +332,29 @@ export default function Search() {
         </Link>
       )}
 
-      {q && tab === 'Songs' && (() => {
+      {q && tab === 'Songs' && !emptyResults && (() => {
         const visible = visibleSongs;
         const hidden = results.songs.length - visible.length;
         const shown = visible.slice(0, songCap);
         return (
-        <div className="card p-2 mt-4 flex flex-col">{shown.map((t, i) => <SongRow key={t.id} track={t} index={i} context={visible} />)}
+        <div key={`songs-${q}`} className="card p-2 mt-4 flex flex-col anim-in">{shown.map((t, i) => <SongRow key={t.id} track={t} index={i} context={visible} />)}
           {visible.length === 0 && <p className="p-4 text-sm text-dim">No songs found{filtersActive ? ' with these filters' : ''}.</p>}
           {hidden > 0 && <p className="px-4 py-1 text-[11px] text-dim font-semibold">{hidden} hidden by your taste filters.</p>}
           {visible.length > songCap && <button onClick={() => setSongCap(c => c + 20)} className="m-2 py-2.5 rounded-xl text-sm font-bold bg-white/10">Show more ({visible.length - songCap} more)</button>}</div>
         );
       })()}
-      {q && tab === 'Albums' && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4 [&>*]:min-w-0 [&>*]:max-w-none">{results.albums.map(a => <AlbumCard key={a.id} album={a} />)}
+      {q && tab === 'Albums' && !emptyResults && (
+        <div key={`albums-${q}`} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4 anim-in [&>*]:min-w-0 [&>*]:max-w-none">{results.albums.map(a => <AlbumCard key={a.id} album={a} />)}
           {results.albums.length === 0 && <p className="p-4 text-sm text-dim col-span-full">No albums found.</p>}</div>
       )}
-      {q && tab === 'Artists' && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4 [&>*]:min-w-0 [&>*]:max-w-none">{results.artists.map(a => <ArtistCard key={a.id} artist={a} />)}
+      {q && tab === 'Artists' && !emptyResults && (
+        <div key={`artists-${q}`} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4 anim-in [&>*]:min-w-0 [&>*]:max-w-none">{results.artists.map(a => <ArtistCard key={a.id} artist={a} />)}
           {results.artists.length === 0 && <p className="p-4 text-sm text-dim col-span-full">No artists found.</p>}</div>
       )}
-      {q && tab === 'YouTube' && (
+      {q && tab === 'YouTube' && !emptyResults && (
         <>
-          <div className="card p-2 mt-4 flex flex-col">
-            <p className="px-4 pt-2 pb-1 text-[11px] font-extrabold tracking-widest text-dim">YOUTUBE</p>
+          <div key={`yt-${q}`} className="card p-2 mt-4 flex flex-col anim-in">
+              <p className="px-4 pt-2 pb-1 text-[11px] font-extrabold tracking-widest text-dim">YOUTUBE</p>
             {visibleYtVideos.map((t, i) => <SongRow key={t.id} track={t} index={i} context={visibleYtVideos} />)}
             {visibleYtVideos.length === 0 && <p className="p-4 text-sm text-dim">No YouTube videos found.</p>}
             {visibleYtVideos.length > 0 && (

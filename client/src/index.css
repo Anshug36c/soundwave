@@ -444,7 +444,9 @@ button:disabled:hover,
   background: var(--surface-2);
   border: 1px solid transparent;
   border-radius: var(--r-lg);
-  padding: var(--space-3) var(--space-5);
+  /* left room for the leading search icon; utilities like pl-11 would lose to
+     this unlayered rule, so the icon clearance lives here instead */
+  padding: var(--space-3) var(--space-5) var(--space-3) calc(var(--space-5) + 24px);
   font-size: 1rem;
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-sub);
@@ -456,6 +458,8 @@ button:disabled:hover,
 @media (hover: hover) { .field-hero:hover { background: var(--surface-3); } }
 .field-hero:focus { background: var(--bg-card); border-color: var(--accent); box-shadow: var(--focus-halo); }
 .field-hero:focus-visible { outline: none; }
+/* right room for the clear button while there is text to clear */
+.field-hero[data-clear="true"] { padding-right: calc(var(--space-5) + 28px); }
 
 select.field { appearance: none; -webkit-appearance: none; padding-right: 1.75rem;
   background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%),
