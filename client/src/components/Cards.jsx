@@ -12,7 +12,7 @@ function Img_({ src, alt, className = '' }) {
   );
 }
 
-const SRC_TAG = { djp: 'DJP', dj: 'DJJ', mrj: 'MRJ', saavn: 'SVN', yt: 'YT' };
+const SRC_TAG = { djp: 'DJP', dj: 'DJJ', mrj: 'MRJ', saavn: 'SVN', yt: 'YT', audius: 'AUD' };
 export function SourceBadge({ track }) {
   const tag = SRC_TAG[track?.source] ? `${SRC_TAG[track.source]} · ` : '';
   /* hidden on phones: on a 320-390px row the badge steals most of the artist

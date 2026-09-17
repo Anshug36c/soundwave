@@ -1136,6 +1136,39 @@ function mergeTracks(lists) {
   return out;
 }
 
+// ---------------- Audius (open network: full streams, no key) ----------------
+// Probed 2026-09-17: discovery + search + /stream all live from this box;
+// streams 302 to creator nodes and carry full MP3s. User-uploaded catalogue,
+// so it mostly adds mirrors for known songs + long-tail coverage.
+const AUDIUS_APP = 'SoundWave';
+const AUDIUS_HOST = 'https://api.audius.co';
+async function audiusSearchSongs(q, limit = 6) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 9000);
+  try {
+    const r = await fetch(`${AUDIUS_HOST}/v1/tracks/search?query=${encodeURIComponent(q)}&app_name=${AUDIUS_APP}`, { signal: ctrl.signal });
+    if (!r.ok) throw new Error(`audius HTTP ${r.status}`);
+    const j = await r.json();
+    const out = [];
+    for (const t of j?.data || []) {
+      if (!t?.id || !t.title || t.is_streamable === false) continue;
+      out.push({
+        id: `audius:${t.id}`, source: 'audius', sourceId: String(t.id), type: 'track',
+        title: String(t.title).trim(),
+        artist: { id: '', name: t.user?.name || 'Unknown', image: t.user?.profile_picture?.['150x150'] || '' },
+        artists: [], album: { id: '', name: '', image: '' },
+        duration: +t.duration || 0,
+        image: t.artwork?.['1000x1000'] || t.artwork?.['480x480'] || t.artwork?.['150x150'] || '',
+        streamUrl: `/api/audio?src=audius&id=${t.id}`, previewUrl: '', isPreview: false,
+        codec: '', quality: '128', explicit: false, year: '', language: '',
+        plays: t.play_count || 0,
+      });
+      if (out.length >= limit) break;
+    }
+    return out;
+  } finally { clearTimeout(to); }
+}
+
 // ---------------- fastest-mirror audio ----------------
 const QUALITY_ORDER = { high: ['320', '160', '128', '96', '48'], medium: ['160', '128', '320', '96', '48'], low: ['96', '48', '160', '128', '320'] };
 const cdnMs = new Map(); // host -> EWMA latency ms (self-tuning speed rank)
@@ -1269,6 +1302,10 @@ async function resolveMirrorInner(source, sid) {
       const urls = await saavnStreamUrls(String(sid)).catch(() => null);
       return urls && Object.keys(urls).length ? { mp3s: urls, type: 'audio/mp4' } : null;
     }
+    if (source === 'audius') {
+      // /stream 302s to the creator node; tryStream's fetch follows redirects
+      return { mp3s: { '128': `${AUDIUS_HOST}/v1/tracks/${encodeURIComponent(String(sid))}/stream?app_name=${AUDIUS_APP}` } };
+    }
   return null;
 }
 async function resolveMirror(source, sid) {
@@ -1338,7 +1375,7 @@ function serveBuf(res, req, buf, cached, br, type = 'audio/mpeg') {
 
 
 // ---------------- self-healing sources: circuit breaker + cross-source recovery ----------------
-const srcHealth = { djp: { fails: 0, until: 0 }, dj: { fails: 0, until: 0 }, mrj: { fails: 0, until: 0 }, saavn: { fails: 0, until: 0 }, yt: { fails: 0, until: 0 } };
+const srcHealth = { djp: { fails: 0, until: 0 }, dj: { fails: 0, until: 0 }, mrj: { fails: 0, until: 0 }, saavn: { fails: 0, until: 0 }, yt: { fails: 0, until: 0 }, audius: { fails: 0, until: 0 } };
 function tripSource(source, ms = 60000) { const h = srcHealth[source]; if (h) { h.fails = 3; h.until = Date.now() + ms; } }
 function srcDegraded() { const now = Date.now(); return Object.keys(srcHealth).filter(s => srcHealth[s].until > now); }
 
@@ -1885,6 +1922,28 @@ async function tidalStitchedAudio(id) {
   tidalAudioCache.set(String(id), { buf, time: Date.now() });
   return buf;
 }
+// Deezer's open search (server-side only — their CORS blocks browsers) as a
+// second instant-preview net: 30s preview MP3s when Tidal has no match.
+// Probed 2026-09-17: search + preview CDN both reachable from this box.
+async function deezerPreview(title, artist) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 9000);
+  try {
+    const r = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(`${title} ${artist}`.trim())}&limit=6`, { signal: ctrl.signal });
+    if (!r.ok) return null;
+    const items = (await r.json())?.data || [];
+    let best = null, bestS = 0;
+    for (const t of items) {
+      const s = tpScore(title, artist, t.title || '', t.artist?.name || '');
+      if (s > bestS) { bestS = s; best = t; }
+    }
+    if (!best || bestS < 0.5 || !best.preview) return null;
+    const pr = await fetch(best.preview, { signal: ctrl.signal });
+    if (!pr.ok) return null;
+    return Buffer.from(await pr.arrayBuffer());
+  } finally { clearTimeout(to); }
+}
+
 function tpScore(qt, qa, tt, ta) {
   const w = s => new Set(String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(x => x.length > 1));
   const A = w(`${qt} ${qa}`), B = w(`${tt} ${ta}`);
@@ -1899,9 +1958,10 @@ app.get('/api/tidal-preview', async (req, res) => {
   if (!title) return res.status(400).json({ error: 'Missing title' });
   const key = `${title}|${artist}`.toLowerCase().replace(/[^a-z0-9|]/g, '');
   const hit = tidalPreviewCache.get(key);
-  if (hit && Date.now() - hit.time < 30 * 60 * 1000) return serveBuf(res, req, hit.buf, true, 'FLAC', 'audio/mp4');
+  if (hit && Date.now() - hit.time < 30 * 60 * 1000) return serveBuf(res, req, hit.buf, true, hit.br || 'FLAC', hit.type || 'audio/mp4');
   const neg = tidalPreviewNeg.get(key);
   if (neg && Date.now() - neg < 3600000) return res.status(404).json({ error: 'No preview match' });
+  let buf = null, br = 'FLAC', type = 'audio/mp4';
   try {
     const j = await tidalFetch(`/v1/search/tracks?query=${encodeURIComponent(`${title} ${artist}`.trim())}&limit=5`, 15000);
     const items = j?.items || [];
@@ -1910,16 +1970,20 @@ app.get('/api/tidal-preview', async (req, res) => {
       const s = tpScore(title, artist, t.title || '', (t.artists || []).map(a => a.name).join(' '));
       if (s > bestS) { bestS = s; best = t; }
     }
-    if (!best || bestS < 0.45) {
-      if (tidalPreviewNeg.size > 500) tidalPreviewNeg.clear();
-      tidalPreviewNeg.set(key, Date.now());
-      return res.status(404).json({ error: 'No preview match' });
-    }
-    const buf = await tidalStitchedAudio(best.id);
-    if (tidalPreviewCache.size >= 8) tidalPreviewCache.delete(tidalPreviewCache.keys().next().value);
-    tidalPreviewCache.set(key, { buf, time: Date.now() });
-    serveBuf(res, req, buf, false, 'FLAC', 'audio/mp4');
-  } catch (e) { if (!res.headersSent) res.status(502).json({ error: 'Preview failed', detail: e.message }); }
+    if (best && bestS >= 0.45) buf = await tidalStitchedAudio(best.id);
+  } catch { /* tidal down or no match — the Deezer net below still applies */ }
+  if (!buf) {
+    const dz = await deezerPreview(title, artist).catch(() => null);
+    if (dz) { buf = dz; br = 'DEEZER'; type = 'audio/mpeg'; }
+  }
+  if (!buf) {
+    if (tidalPreviewNeg.size > 500) tidalPreviewNeg.clear();
+    tidalPreviewNeg.set(key, Date.now());
+    return res.status(404).json({ error: 'No preview match' });
+  }
+  if (tidalPreviewCache.size >= 8) tidalPreviewCache.delete(tidalPreviewCache.keys().next().value);
+  tidalPreviewCache.set(key, { buf, time: Date.now(), br, type });
+  serveBuf(res, req, buf, false, br, type);
 });
 
 // ---------------- API ----------------
@@ -1947,6 +2011,14 @@ app.get('/api/sources', async (req, res) => {
   out.pendujatt = 'mirror';
   try { const t = await rthmx('/api/songs?q=test'); out.saavn = t?.results ? 'ok' : 'empty'; } catch (e) { out.saavn = `down: ${e.message}`; tripSource('saavn'); }
   try { await tidalToken(); out.tidal = 'ok (preview only)'; } catch (e) { out.tidal = `down: ${e.message}`; }
+  try {
+    const ar = await fetch(`${AUDIUS_HOST}/v1/tracks/trending?app_name=${AUDIUS_APP}&limit=1`, { signal: AbortSignal.timeout(6000) });
+    out.audius = ar.ok ? 'ok (full streams)' : `down: ${ar.status}`;
+  } catch (e) { out.audius = `down: ${e.message}`; tripSource('audius'); }
+  try {
+    const dr = await fetch('https://api.deezer.com/search?q=test&limit=1', { signal: AbortSignal.timeout(6000) });
+    out.deezer = dr.ok ? 'ok (previews)' : `down: ${dr.status}`;
+  } catch (e) { out.deezer = `down: ${e.message}`; }
   out.cdn = Object.fromEntries([...cdnMs.entries()].map(([h, ms]) => [h, Math.round(ms)]));
   out.uptime = Math.round(process.uptime());
   out.degraded = srcDegraded();
@@ -2315,7 +2387,7 @@ app.get('/api/search', async (req, res) => {
     const artistMode = !!artistHit;
     if (type === 'all' || type === 'songs') {
       const L = artistMode ? [18, 14, 14, 12] : [10, 8, 8, 8];
-      const [a, b, c, s, y, yv] = await Promise.all([
+      const [a, b, c, s, y, yv, au] = await Promise.all([
         safeSearch(djpSearchSongs(effQ, L[0]), 25000),
         safeSearch(djSearchSongs(effQ, L[1]), 25000),
         safeSearch(mrjSearchSongs(effQ, L[2]), 25000),
@@ -2324,15 +2396,19 @@ app.get('/api/search', async (req, res) => {
         // Real YouTube videos. Unlike the YouTube Music results above these
         // actually play: the client embeds the official player for them.
         safeSearch(ytVideoSearch(effQ, 12).catch(() => []), 15000),
+        safeSearch(audiusSearchSongs(effQ, 6).catch(e => { tripSource('audius'); return []; }), 9000),
       ]);
       youtube = (y || []).slice(0, 10);
       ytVideos = (yv || []).slice(0, 12);
-      songs = mergeTracks([interleave([a, b, c, s])]);
+      songs = mergeTracks([interleave([a, b, c, s, au])]);
       if (artistMode) {
         const rank = t => { const n = normName(t.artist?.name); return qw.every(w => n.includes(w)) ? 0 : 1; };
         songs.sort((x, y) => rank(x) - rank(y));
       }
-      {
+      // title-prefix boost is for title queries; on artist queries it
+      // backfires — user uploads titled "ARTIST - TRACK" would outrank the
+      // provider's clean catalogue (exposed when Audius joined the merge)
+      if (!artistMode) {
         const fq = fold(effQ);
         const er = t => { const tt = fold(t.title || ''); return tt === fq ? 0 : (fq && tt.startsWith(fq) ? 1 : 2); };
         songs.sort((x, y) => er(x) - er(y));
