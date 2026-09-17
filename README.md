@@ -570,6 +570,35 @@ Three supported targets (all build the client, then run the single Node process)
 
 No external database, Redis, or object storage is ever needed.
 
+### Vercel (static front-end only)
+
+`vercel.json` makes Vercel install and build the client correctly. **Important:**
+Vercel serves static files, not this Node server — the `/api/*` endpoints (search,
+`/api/audio` streaming, playlists, sign-in) will not exist there. So you must set
+`VITE_API_URL` to a running backend, e.g. your Render URL:
+
+| Vercel env var | Value |
+| --- | --- |
+| `VITE_API_URL` | `https://your-soundwave.onrender.com/api` |
+
+The client reads it at build time (`client/src/services/api.js`:
+`import.meta.env.VITE_API_URL || '/api'`), so **redeploy after changing it**. That
+backend must also allow the Vercel origin — set `FRONTEND_URL` on the server to
+your `*.vercel.app` URL so CORS and the Google sign-in redirect work.
+
+If you want search and playback to work with no extra setup, deploy on **Render**
+instead: one process serves both the API and the built client.
+
+### Why `vercel.json` exists
+
+The repo is a monorepo of *sibling* projects (`client/`, `server/`), each with its
+own `package.json` + lockfile, and the root has no `workspaces` field. A bare
+`npm install` / `bun install` at the root therefore installs only the root's one
+dev dependency (`concurrently`) and never touches `client/node_modules` — after
+which `vite build` dies with `sh: 1: vite: not found`. `vercel.json` overrides the
+install step to `npm --prefix client ci --include=dev`, matching what Render,
+Railway and the Dockerfile already do.
+
 ---
 
 ## 21. Error Handling
