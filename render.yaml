@@ -17,6 +17,11 @@ services:
         value: 20
       - key: ITUNES_COUNTRY
         value: IN
+      # The free instance has 512 MB. Default cache is 160 MB, which plus the
+      # ~41 MB baseline and V8 overhead gets OOM-killed under load — see the
+      # warning at server/server.js:179. 64 MB still holds several full tracks.
+      - key: AUDIO_CACHE_MB
+        value: 64
       # CORS allowlist — leave unset for this single-process deploy (same-origin,
       # no CORS needed). Set it only if you also serve the client from another
       # origin, e.g. a Vercel static front end:
