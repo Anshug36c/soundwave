@@ -1,159 +1,272 @@
 package com.soundwave.app
 
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Context
 import android.os.Bundle
 import android.util.Log
 import android.view.View
-import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.TextView
-import androidx.appcompat.app.AppCompatActivity
-// NOTE: this is the raw nodejs-mobile library, not the React Native plugin
-// (whose package is com.janeasystems.rn_nodejs_mobile and whose NDK toolchain
-// step is broken). If the class is not found at build time, this import and the
-// dependency coordinate in app/build.gradle.kts are the two lines to correct.
-import com.janeasystems.nodejs_mobile.NodeJsMobile
 import java.io.File
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
 
 /**
- * SoundWave on Android: an embedded Node.js server plus a WebView pointed at it.
+ * Runs the real backend on the phone.
  *
- * The APK carries the real backend (server/server.js and its dependencies) in
- * assets/nodejs-project. On first launch after an install or update it is copied
- * to filesDir — Node cannot run from inside the APK archive — and then the
- * runtime is started with assets/nodejs-project/main.js, which boots Express on
- * 127.0.0.1:5000. The WebView polls /api/health until the provider indexes have
- * loaded, then loads the app.
+ * The app bundles Termux's Node.js — a `node` executable actually built for
+ * Android (PT_INTERP = /system/bin/linker64) plus every library it links
+ * against — unpacks it into the app's private storage, and spawns it with
+ * ProcessBuilder. That process serves the whole app on 127.0.0.1:5000 and the
+ * WebView loads it.
  *
- * Nothing here talks to the network except the Node server itself; the WebView
- * only ever reaches loopback.
+ * This is why the APK needs no server and no Termux install: the runtime travels
+ * inside the APK.
  */
-class MainActivity : AppCompatActivity() {
+class MainActivity : Activity() {
 
-    private lateinit var web: WebView
+    companion object {
+        private const val TAG = "Soundwave"
+        private const val PORT = 5000
+
+        /** Bumped when the bundled runtime or app code changes incompatibly. */
+        private const val RUNTIME_VERSION = 1
+    }
+
     private lateinit var status: TextView
-    private var nodeStarted = false
+    @Volatile private var serverProcess: Process? = null
 
-    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
-        web = findViewById(R.id.web)
         status = findViewById(R.id.status)
 
-        val settings = web.settings
-        settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true       // playlists, likes and history live in localStorage
-        settings.mediaPlaybackRequiresUserGesture = false
-        settings.allowFileAccess = false
-        settings.allowContentAccess = false
-        settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
-
-        web.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                // Keep everything inside this WebView, including external links the
-                // provider metadata may contain.
-                return true
-            }
-        }
-
-        startNodeThenLoadApp()
-    }
-
-    private fun startNodeThenLoadApp() {
-        // Read the APK timestamp on the main thread: PackageManager is not safe
-        // to call from the worker thread on every OEM.
-        val apkTime = packageManager.getApplicationInfo(packageName, 0).lastUpdateTime
         Thread {
             try {
-                val nodeDir = File(filesDir, "nodejs-project")
-                if (apkTime != savedApkTime) {
-                    // The bundled project changes with every APK, so an update must
-                    // replace it — otherwise the old backend keeps running.
-                    nodeDir.deleteRecursively()
-                    copyAssetFolder("nodejs-project", nodeDir)
-                    savedApkTime = apkTime
-                }
-
-                if (!nodeStarted) {
-                    nodeStarted = true
-                    NodeJsMobile.startNodeWithArguments(
-                        arrayOf("node", File(nodeDir, "main.js").absolutePath)
-                    )
-                }
-
-                runOnUiThread { status.text = getString(R.string.starting) }
-                waitForServer()
+                start()
             } catch (e: Exception) {
                 Log.e(TAG, "startup failed", e)
-                runOnUiThread { status.text = getString(R.string.startup_failed, e.message ?: e.javaClass.simpleName) }
+                showStatus(getString(R.string.startup_failed, e.message ?: e.javaClass.simpleName))
             }
         }.start()
     }
 
-    /** Poll the embedded server until it answers, then hand over to the WebView. */
-    private fun waitForServer() {
-        val url = "http://127.0.0.1:$PORT/api/health"
-        var attempt = 0
-        while (attempt < MAX_ATTEMPTS) {
-            attempt++
-            try {
-                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                conn.connectTimeout = 1500
-                conn.readTimeout = 1500
-                conn.requestMethod = "GET"
-                if (conn.responseCode == 200) {
-                    runOnUiThread {
-                        status.visibility = View.GONE
-                        web.loadUrl("http://127.0.0.1:$PORT/")
-                    }
-                    return
-                }
-                conn.disconnect()
-            } catch (_: Exception) {
-                // not up yet — the provider indexes take a few seconds to load
-            }
-            Thread.sleep(500)
+    private fun start() {
+        val root = File(filesDir, "runtime")
+        val usr = File(root, "usr")
+
+        if (needsExtract(usr)) {
+            showStatus(getString(R.string.status_extracting))
+            extractRuntime(usr)
+            markExtracted()
         }
-        runOnUiThread { status.text = getString(R.string.startup_timeout) }
+
+        copyNodeProject(root)
+
+        showStatus(getString(R.string.status_booting))
+        spawnNode(usr, root)
+
+        if (!waitForHealth()) {
+            showStatus(getString(R.string.startup_timeout, tailOfNodeLog()))
+            return
+        }
+
+        runOnUiThread {
+            status.visibility = View.GONE
+            loadApp()
+        }
     }
 
-    /** APK timestamp of the copy currently extracted into filesDir. */
-    private var savedApkTime: Long
-        get() = getSharedPreferences(PREFS, MODE_PRIVATE).getLong(KEY_UPDATE_TIME, 0L)
-        set(value) = getSharedPreferences(PREFS, MODE_PRIVATE).edit().putLong(KEY_UPDATE_TIME, value).apply()
+    // ---------------------------------------------------------------- runtime
 
-    // ---------------- asset extraction ----------------
+    private fun needsExtract(usr: File): Boolean {
+        if (!File(usr, "bin/node").isFile) return true
+        val prefs = getSharedPreferences("soundwave", Context.MODE_PRIVATE)
+        return prefs.getInt("runtime_version", -1) != RUNTIME_VERSION
+    }
 
-    private fun copyAssetFolder(assetPath: String, dest: File) {
-        val assets = assets
-        val children = assets.list(assetPath)
-        if (children.isNullOrEmpty()) {
-            // A leaf: list() returns empty for files as well as for empty dirs.
+    private fun markExtracted() {
+        getSharedPreferences("soundwave", Context.MODE_PRIVATE)
+            .edit().putInt("runtime_version", RUNTIME_VERSION).apply()
+    }
+
+    /** Unpacks assets/runtime/usr.tar.xz (~22 MB) into filesDir/runtime/usr. */
+    private fun extractRuntime(dest: File) {
+        if (dest.exists()) dest.deleteRecursively()
+        dest.mkdirs()
+
+        assets.open("runtime/usr.tar.xz").use { raw ->
+            XZCompressorInputStream(raw).use { xz ->
+                TarArchiveInputStream(xz).use { tar ->
+                    var entry = tar.nextEntry
+                    while (entry != null) {
+                        if (!entry.isFile) {
+                            entry = tar.nextEntry
+                            continue
+                        }
+                        val out = File(dest, entry.name)
+                        // Refuse anything that escapes the destination.
+                        if (!out.canonicalPath.startsWith(dest.canonicalPath + File.separator)) {
+                            entry = tar.nextEntry
+                            continue
+                        }
+                        out.parentFile?.mkdirs()
+                        FileOutputStream(out).use { tar.copyTo(it) }
+                        // Termux ships bin/node already mode 755; honour it.
+                        if (entry.mode and 0b001_001_001 != 0) out.setExecutable(true, false)
+                        entry = tar.nextEntry
+                    }
+                }
+            }
+        }
+
+        val node = File(dest, "bin/node")
+        if (!node.isFile) throw IllegalStateException("runtime extracted but bin/node is missing")
+        if (!node.setExecutable(true, false)) {
+            throw IllegalStateException("could not mark bin/node executable")
+        }
+        File(dest, "tmp").mkdirs()
+        File(dest, "home").mkdirs()
+        Log.i(TAG, "runtime extracted to ${dest.absolutePath}")
+    }
+
+    /**
+     * Copies assets/nodejs-project into filesDir/runtime, but only when the APK
+     * itself changed — otherwise every launch would rewrite the whole tree.
+     */
+    private fun copyNodeProject(root: File) {
+        val prefs = getSharedPreferences("soundwave", Context.MODE_PRIVATE)
+        val update = packageManager.getPackageInfo(packageName, 0).lastUpdateTime
+        if (prefs.getString("apk_last_update_time", null) == update && File(root, "nodejs-project/main.js").isFile) {
+            return
+        }
+        val dest = File(root, "nodejs-project")
+        if (dest.exists()) dest.deleteRecursively()
+        copyAssetDir("nodejs-project", dest)
+        prefs.edit().putString("apk_last_update_time", update).apply()
+        Log.i(TAG, "node project staged at ${dest.absolutePath}")
+    }
+
+    private fun copyAssetDir(assetPath: String, dest: File) {
+        val children = assets.list(assetPath) ?: emptyArray()
+        if (children.isEmpty()) {
+            dest.parentFile?.mkdirs()
             assets.open(assetPath).use { input ->
-                dest.parentFile?.mkdirs()
-                FileOutputStream(dest).use { output -> input.copyTo(output) }
+                FileOutputStream(dest).use { input.copyTo(it) }
             }
             return
         }
         dest.mkdirs()
         for (child in children) {
-            copyAssetFolder("$assetPath/$child", File(dest, child))
+            copyAssetDir("$assetPath/$child", File(dest, child))
         }
     }
 
-    override fun onBackPressed() {
-        if (web.canGoBack()) web.goBack() else super.onBackPressed()
+    // ------------------------------------------------------------------- node
+
+    private fun spawnNode(usr: File, root: File) {
+        val node = File(usr, "bin/node")
+        val log = File(root, "node.log")
+
+        val pb = ProcessBuilder(
+            node.absolutePath,
+            File(root, "nodejs-project/main.js").absolutePath,
+        )
+        pb.directory(root)
+        pb.redirectErrorStream(true)
+        pb.redirectOutput(ProcessBuilder.Redirect.to(log))
+
+        // The binary's RUNPATH is /data/data/com.termux/files/usr/lib, which does
+        // not exist in this app's sandbox. Android's linker honours
+        // LD_LIBRARY_PATH for non-setuid executables, which is how Termux itself
+        // runs binaries from a non-default prefix. This is the single thing that
+        // makes the bundled runtime relocatable.
+        val env = pb.environment()
+        env["LD_LIBRARY_PATH"] = File(usr, "lib").absolutePath
+        env["PATH"] = "${File(usr, "bin").absolutePath}:/system/bin:/vendor/bin"
+        env["TMPDIR"] = File(usr, "tmp").absolutePath
+        env["HOME"] = File(usr, "home").absolutePath
+        env["NODE_ENV"] = "production"
+        // Keeps node from inheriting a TERM/PREFIX that points at Termux.
+        env.remove("PREFIX")
+
+        serverProcess = pb.start()
+        Log.i(TAG, "spawned node pid=${serverProcess}")
     }
 
-    companion object {
-        private const val TAG = "SoundWave"
-        private const val PORT = 5000
-        private const val MAX_ATTEMPTS = 120      // 120 x 500ms = up to 60s of cold start
-        private const val PREFS = "soundwave"
-        private const val KEY_UPDATE_TIME = "apk_last_update_time"
+    private fun tailOfNodeLog(): String {
+        return try {
+            val log = File(File(filesDir, "runtime"), "node.log")
+            if (!log.isFile) return "no output"
+            log.readLines().takeLast(4).joinToString(" | ")
+        } catch (e: Exception) {
+            "unreadable (${e.message})"
+        }
+    }
+
+    // ------------------------------------------------------------------ webview
+
+    private fun waitForHealth(): Boolean {
+        val url = URL("http://127.0.0.1:$PORT/api/health")
+        // Indexing 85k tracks takes a while on a phone; allow two minutes.
+        repeat(240) {
+            try {
+                val conn = url.openConnection() as HttpURLConnection
+                conn.connectTimeout = 750
+                conn.readTimeout = 750
+                if (conn.responseCode == 200) {
+                    conn.disconnect()
+                    return true
+                }
+                conn.disconnect()
+            } catch (_: Exception) {
+                // not up yet
+            }
+            Thread.sleep(500)
+        }
+        return false
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun loadApp() {
+        val web = findViewById<WebView>(R.id.web)
+        with(web.settings) {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            databaseEnabled = true
+            mediaPlaybackRequiresUserGesture = false
+            cacheMode = WebSettings.LOAD_DEFAULT
+            // Loopback audio is fetched by the page; mixed content would
+            // otherwise be blocked if the page ever loads over another scheme.
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        }
+        web.webViewClient = object : WebViewClient() {
+            override fun onReceivedError(
+                view: WebView?, code: Int, description: String?, failingUrl: String?,
+            ) {
+                Log.w(TAG, "webview error $code $description on $failingUrl")
+            }
+        }
+        web.loadUrl("http://127.0.0.1:$PORT/")
+    }
+
+    private fun showStatus(message: String) {
+        runOnUiThread {
+            status.visibility = View.VISIBLE
+            status.text = message
+        }
+    }
+
+    override fun onDestroy() {
+        // Take the Node process down with the activity. Without this the process
+        // outlives the UI and Android reaps it at an arbitrary later point.
+        try { serverProcess?.destroy() } catch (_: Exception) {}
+        super.onDestroy()
     }
 }

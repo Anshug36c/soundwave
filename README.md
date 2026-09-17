@@ -581,9 +581,15 @@ Three supported targets (all build the client, then run the single Node process)
 - **Your own device:** `docker compose up -d --build` — free, no card, no egress
   bill, no free-tier sleep. Reach it from anywhere with a Cloudflare Tunnel
   (no port forwarding, works behind CGNAT). See `docs/SELF_HOSTING.md`.
-- **Your Android phone:** the backend runs on-device under Termux (Node.js),
-  because the server has zero native dependencies — 4.3 MB of disk, ~41 MB of
-  RAM. No server anywhere. See `docs/TERMUX.md`.
+- **Your Android phone, as an APK:** the runtime is bundled *inside* the app —
+  Termux's real `node` binary plus its full library closure, ~22 MB packed. It
+  runs the unmodified backend on-device and serves the app to a WebView over
+  loopback. No server, no hosting, no Termux install. Built by GitHub Actions and
+  attached as a downloadable artifact. See `docs/APK.md`.
+- **Your Android phone, under Termux:** the same backend running in the Termux
+  app, because the server has zero native dependencies — 4.3 MB of disk, ~41 MB
+  of RAM. More setup than the APK, but it is the path that is known to run on a
+  phone today. See `docs/TERMUX.md`.
 - **No backend at all:** `standalone/index.html` is a single self-contained file
   that runs entirely in the browser using CORS-enabled APIs. Plays 30-second
   previews only, because the scraped providers send no CORS header.

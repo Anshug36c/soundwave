@@ -1,8 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">SoundWave</string>
-    <string name="booting">Starting SoundWave…</string>
-    <string name="starting">Loading music library…</string>
-    <string name="startup_timeout">The server did not start in time. Close and reopen the app.</string>
+
+    <!-- First launch unpacks the bundled runtime; later launches skip straight
+         to booting. Both are shown so a slow first start is not mistaken for a
+         hang. -->
+    <string name="status_extracting">Unpacking runtime… (first launch only)</string>
+    <string name="status_booting">Starting the music library…</string>
+
+    <!-- %1$s is the last few lines of the Node process output, so a failure on
+         the phone says what actually went wrong instead of just "failed". -->
+    <string name="startup_timeout">The server did not start.\n\n%1$s</string>
     <string name="startup_failed">Startup failed: %1$s</string>
 </resources>
