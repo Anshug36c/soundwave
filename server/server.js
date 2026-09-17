@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import crypto from 'crypto';
 import { mountAuth } from './auth.js';
+import { desDecryptBase64 } from './des.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -946,11 +947,13 @@ async function rthmx(path) {
 let saavnDesWarned = false;
 function saavnDecrypt(enc) {
   try {
-    const d = crypto.createDecipheriv('des-ecb', Buffer.from('38346591', 'utf8'), null);
-    d.setAutoPadding(true);
-    return d.update(String(enc), 'base64', 'utf8') + d.final('utf8');
+    // Pure-JS DES (see des.js). Node dropped des-ecb from its default OpenSSL
+    // provider in v17, which is why this used to need --openssl-legacy-provider.
+    // Doing it in JS means no flag, so the server starts anywhere Node runs —
+    // including embedded runtimes that reject that flag.
+    return desDecryptBase64(enc, Buffer.from('38346591', 'utf8')).toString('utf8');
   } catch (e) {
-    if (!saavnDesWarned) { saavnDesWarned = true; console.error('saavn DES unavailable (need --openssl-legacy-provider):', e.message); }
+    if (!saavnDesWarned) { saavnDesWarned = true; console.error('saavn DES failed:', e.message); }
     return '';
   }
 }

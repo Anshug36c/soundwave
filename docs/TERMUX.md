@@ -27,8 +27,8 @@ node -v        # must be 18 or newer
 ```
 
 `nodejs-lts` gives you Node 18+, which is what `server/package.json` requires.
-It also supports the `--openssl-legacy-provider` flag that JioSaavn decryption
-needs.
+JioSaavn decryption is pure JavaScript (`server/des.js`), so no special OpenSSL
+flags are required.
 
 ## 3. Get the app
 

@@ -716,7 +716,8 @@ Railway and the Dockerfile already do.
 ### Build fails
 - Client: `cd client && npm ci --include=dev && npm run build` (Node 20).
 - Server syntax: `cd server && node --check server.js`.
-- Saavn decryption errors at runtime = missing `--openssl-legacy-provider` (use `npm start`).
+- Saavn decryption is pure JS (`server/des.js`), so no `--openssl-legacy-provider`
+  is needed and the server starts anywhere Node runs.
 
 ---
 

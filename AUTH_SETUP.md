@@ -40,7 +40,7 @@ OAuth Client ID in Google Cloud and paste it into Render. No billing needed.
 ```bash
 GOOGLE_CLIENT_ID=<your-id>.apps.googleusercontent.com \
 SESSION_SECRET=dev-secret \
-PORT=5090 node --openssl-legacy-provider server/server.js
+PORT=5090 node server/server.js
 ```
 
 (Google requires the origin to match exactly — use `http://localhost:5173`

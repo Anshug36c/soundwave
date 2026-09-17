@@ -1,16 +1,16 @@
 {
   "name": "soundwave-server",
   "version": "1.0.0",
-  "description": "SoundWave backend — unified music API aggregator",
+  "description": "SoundWave backend \u2014 unified music API aggregator",
   "type": "module",
   "main": "server.js",
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "start": "node --openssl-legacy-provider server.js",
-    "dev": "node --openssl-legacy-provider --watch server.js",
-    "test": "node --test test/auth.test.js test/cors.test.js"
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test test/auth.test.js test/des.test.js test/cors.test.js"
   },
   "dependencies": {
     "compression": "^1.8.2",
