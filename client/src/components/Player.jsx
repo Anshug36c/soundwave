@@ -62,6 +62,7 @@ export function MiniPlayer() {
   const swipeX = useRef(null);
   const miniBarRef = useRef(null); // scrubbable progress strip on the bar
   const [kbOpen, setKbOpen] = useState(false);
+  const showFull = useStore(s => s.showFullPlayer);
   // soft keyboard open (search typing): the bar slides away so it never
   // floats over the keyboard or squeezes the results; desktop never trips
   // the coarse-pointer guard
@@ -112,7 +113,8 @@ export function MiniPlayer() {
   };
 
   return (
-    <div className="fixed left-0 right-0 z-30 player-in mini-offset">
+    <div className="fixed left-0 right-0 z-30 player-in mini-offset"
+      aria-hidden={showFull || undefined}>
       {/* mobile strip — sits above the tab bar; the bar owns the safe area */}
       <div className={`md:hidden ui-dark transition-transform duration-300 ${kbOpen ? 'translate-y-[180%]' : ''}`}
         onTouchStart={e => { swipeX.current = e.touches[0].clientX; }}
@@ -136,7 +138,7 @@ export function MiniPlayer() {
             <div className="w-full h-1 bg-[var(--surface-3)]"><div className={`h-full bg-accent ${buffering ? 'animate-pulse' : ''}`} style={{ width: `${pct}%` }} /></div>
           </div>
           <div className="glass px-2 h-16 flex items-center gap-1 sp-playerbar">
-            <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" aria-label="Open full player">
+            <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left active:opacity-80 transition-opacity" aria-label="Open full player">
               <Img src={track.image} alt={track.title} className="w-12 h-12 rounded-[7px] object-cover shadow-[var(--shadow-1)]" />
               <span className="min-w-0">
                 <p className="truncate text-[14px] font-semibold flex items-center gap-2">{isPlaying && <EqIcon />}{track.title}</p>
@@ -390,7 +392,7 @@ export function FullPlayer() {
     if (closingRef.current) return;
     closingRef.current = true;
     setClosing(true);
-    setTimeout(() => { closingRef.current = false; setClosing(false); setShow(false); }, 210);
+    setTimeout(() => { closingRef.current = false; setClosing(false); setShow(false); }, 250);
   };
   useEffect(() => {
     if (!show) return;
@@ -609,7 +611,8 @@ export function QueueDrawer() {
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-label="Queue">
       <div className="fade-in absolute inset-0 bg-black/60" onClick={() => setShow(false)} />
-      <div className="absolute right-0 top-0 bottom-0 w-full max-w-md bg-soft border-l border-soft p-4 overflow-y-auto drawer-in sheet-scroll">
+      <div className="absolute right-0 top-0 bottom-0 w-full max-w-md bg-soft border-l border-soft p-4 overflow-y-auto drawer-in sheet-scroll"
+        style={{ paddingTop: 'calc(1rem + env(safe-area-inset-top, 0px))', paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))' }}>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-extrabold">Queue ({queue.length})</h2>
           <div className="flex gap-2">

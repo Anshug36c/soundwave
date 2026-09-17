@@ -380,10 +380,10 @@ button:disabled:hover,
 .chip:disabled:hover { background: var(--surface-2); color: var(--text-dim); transform: none; }
 * { scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
 .btn-accent:active { transform: scale(.97); }
-@keyframes sheetUp { from { opacity: 0; transform: translateY(32px); } to { opacity: 1; transform: translateY(0); } }
-.sheet-in { animation: sheetUp var(--dur-4) var(--ease) both; }
-@keyframes sheetDown { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(9%); } }
-.sheet-out { animation: sheetDown .22s var(--ease) both; }
+@keyframes sheetUp { from { opacity: .35; transform: translateY(100%); } to { opacity: 1; transform: translateY(0); } }
+.sheet-in { animation: sheetUp var(--dur-5) var(--ease) both; }
+@keyframes sheetDown { from { opacity: 1; transform: translateY(0); } to { opacity: .35; transform: translateY(100%); } }
+.sheet-out { animation: sheetDown .26s var(--ease) both; }
 @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
 .fade-out { animation: fadeOut .22s var(--ease-color) both; }
 /* ---------- motion utilities ---------- */

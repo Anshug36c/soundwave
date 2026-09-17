@@ -178,8 +178,10 @@ export function BottomNav() {
   /* The bar owns the bottom edge (and the safe area) at all times; the mini
      player stacks above it via .mini-offset. h-14 must stay in sync with
      --bottomnav-h. */
+  const showFull = useStore(s => s.showFullPlayer);
   return (
-    <nav className="md:hidden fixed left-0 right-0 bottom-0 z-20 pb-safe glass border-t border-soft" style={{ background: 'var(--chrome)' }} aria-label="Mobile">
+    <nav className="md:hidden fixed left-0 right-0 bottom-0 z-20 pb-safe glass border-t border-soft" style={{ background: 'var(--chrome)' }} aria-label="Mobile"
+      aria-hidden={showFull || undefined}>
       <div className="grid grid-cols-4 h-14">
         {tabs.map(({ to, label, Icon }) => (
           <NavLink key={to} to={to}
