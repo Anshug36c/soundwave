@@ -1594,12 +1594,16 @@ app.get('/api/audio', async (req, res) => {
       return '';
     };
     const tryStream = async (list, recovered = false) => {
+    const tSeek = Date.now();
     const ranked = [...list].sort((a, b) => cdnScore(hostOf(a)) - cdnScore(hostOf(b)));
     const wantRange = !!req.headers.range;
     for (const br of order) {
       for (const m of ranked) {
         const urls = [m.r.mp3s[br] || []].flat().filter(Boolean);
         for (const url of urls) {
+        // aggregate seeking budget: N stalled candidates x 20s races must
+        // not stack into minutes — give up to cross-source recovery instead
+        if (Date.now() - tSeek > 45000) return false;
         const t0 = Date.now();
         const ctrl = new AbortController();
         let reader = null;
