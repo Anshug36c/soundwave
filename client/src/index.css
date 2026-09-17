@@ -40,6 +40,7 @@ body {
 .bg-soft { background: var(--bg-soft); }
 .bg-card { background: var(--bg-card); }
 .bg-hoverable:hover { background: var(--bg-hover); }
+.bg-hoverable { transition: background-color .15s ease; }
 .text-dim { color: var(--text-dim); }
 .accent { color: var(--accent); }
 .bg-accent { background: var(--accent); }
@@ -70,7 +71,7 @@ body {
 /* seek bar: light fill, green + knob on hover */
 .sp-progress { cursor: pointer; }
 .sp-track { background: rgba(128, 128, 128, 0.45); }
-.sp-fill { background: var(--text); transition: background .15s ease; }
+.sp-fill { background: var(--text); transition: background .15s ease, width .3s linear; will-change: width; }
 .sp-progress:hover .sp-fill { background: var(--accent); }
 .sp-knob { opacity: 0; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); transition: opacity .15s ease; }
 .sp-progress:hover .sp-knob { opacity: 1; }
@@ -83,6 +84,7 @@ body {
 
 @keyframes spin-slow { to { transform: rotate(360deg); } }
 .animate-spin-slow { animation: spin-slow 8s linear infinite; }
+.animate-spin-slower { animation: spin-slow 14s linear infinite; }
 .paused-spin { animation-play-state: paused; }
 
 @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
@@ -145,7 +147,36 @@ button, a, [role="button"], input[type="range"] { touch-action: manipulation; -w
 .btn-accent:active { transform: scale(.97); }
 @keyframes sheetUp { from { opacity: 0; transform: translateY(32px); } to { opacity: 1; transform: translateY(0); } }
 .sheet-in { animation: sheetUp .28s cubic-bezier(.32,.72,.35,1) both; }
+/* ---------- motion utilities ---------- */
+@keyframes fadeSlideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.anim-in { animation: fadeSlideIn .35s cubic-bezier(.32,.72,.35,1) both; }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.fade-in { animation: fadeIn .25s ease both; }
+.fade-in-slow { animation: fadeIn .6s ease both; }
+@keyframes playerIn { from { opacity: 0; transform: translateY(100%); } to { opacity: 1; transform: translateY(0); } }
+.player-in { animation: playerIn .4s cubic-bezier(.32,.72,.35,1) both; }
+@keyframes drawerIn { from { opacity: .4; transform: translateX(48px); } to { opacity: 1; transform: translateX(0); } }
+.drawer-in { animation: drawerIn .3s cubic-bezier(.32,.72,.35,1) both; }
+@keyframes toastIn { from { opacity: 0; transform: translateY(-8px) scale(.94); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.toast-in { animation: toastIn .22s cubic-bezier(.32,.72,.35,1) both; }
+@keyframes lyricPulse { 0%,100% { opacity: .35; transform: scale(.96); } 50% { opacity: 1; transform: scale(1.05); } }
+.lyric-prelude { animation: lyricPulse 1.6s ease-in-out infinite; }
+/* tactile press for icon buttons */
+.btn-press { transition: transform .15s ease, color .15s ease, background-color .15s ease; }
+.btn-press:hover { transform: scale(1.1); }
+.btn-press:active { transform: scale(.92); }
+/* fade long titles instead of hard-clipping */
+.text-fade-x { -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent); }
+/* ---------- synced lyrics ---------- */
+.lyrics-mask { -webkit-mask-image: linear-gradient(180deg, transparent, #000 14%, #000 86%, transparent); mask-image: linear-gradient(180deg, transparent, #000 14%, #000 86%, transparent); }
+.lyric-line { transition: opacity .5s ease, transform .5s cubic-bezier(.32,.72,.35,1), color .3s ease; transform-origin: left center; }
+.lyric-active { opacity: 1; color: #fff; transform: scale(1.03); }
+.lyric-past { opacity: .38; }
+.lyric-near { opacity: .68; }
+.lyric-far { opacity: .32; }
+
 @media (prefers-reduced-motion: reduce) {
-  .animate-spin-slow, .eq-bar, .skeleton { animation: none; }
-  .fade-up, .fade-up-1, .fade-up-2, .fade-up-3, .sheet-in { animation-duration: .01s; }
+  .animate-spin-slow, .animate-spin-slower, .eq-bar, .skeleton, .lyric-prelude { animation: none; }
+  .fade-up, .fade-up-1, .fade-up-2, .fade-up-3, .sheet-in, .anim-in, .fade-in, .fade-in-slow, .player-in, .drawer-in, .toast-in { animation-duration: .01s; }
+  .lyric-line, .sp-fill, .btn-press { transition: none; }
 }

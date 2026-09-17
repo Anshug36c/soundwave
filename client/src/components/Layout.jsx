@@ -107,7 +107,7 @@ export function TopBar() {
           <form onSubmit={(e) => { e.preventDefault(); if (q.trim()) navigate(`/search?q=${encodeURIComponent(q.trim())}`); }}>
             <SearchIcon size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-dim pointer-events-none" />
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="What do you want to listen to?" aria-label="Search"
-              className="w-full bg-soft border border-soft rounded-full pl-10 pr-4 py-2 text-sm outline-none focus:border-green-500" />
+              className="w-full bg-soft border border-soft rounded-full pl-10 pr-4 py-2 text-sm outline-none focus:border-green-500 transition-shadow focus:shadow-[0_0_0_3px_rgba(29,185,84,.22)]" />
           </form>
           )}
         </div>
@@ -134,7 +134,7 @@ export function BottomNav({ hasPlayer }) {
       <div className="grid grid-cols-4 h-14">
         {tabs.map(({ to, label, Icon }) => (
           <NavLink key={to} to={to}
-            className={({ isActive }) => `flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold ${isActive ? '' : 'text-dim'}`}
+            className={({ isActive }) => `flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold transition-colors ${isActive ? '' : 'text-dim'}`}
             style={({ isActive }) => isActive ? { color: 'var(--text)' } : undefined}>
             {({ isActive }) => (<><Icon size={21} active={isActive} />{label}</>)}
           </NavLink>
@@ -167,7 +167,7 @@ export function Toasts() {
   return (
     <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 items-center pointer-events-none">
       {toasts.map(t => (
-        <div key={t.id} className={`px-4 py-2 rounded-full text-sm font-semibold shadow-lg ${t.kind === 'error' ? 'bg-red-600 text-white' : 'bg-accent text-black'}`}>{t.msg}</div>
+        <div key={t.id} className={`toast-in px-4 py-2 rounded-full text-sm font-semibold shadow-lg ${t.kind === 'error' ? 'bg-red-600 text-white' : 'bg-accent text-black'}`}>{t.msg}</div>
       ))}
     </div>
   );

@@ -32,7 +32,7 @@ function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp,
   const isDisliked = !!disliked[track.id];
 
   return (
-    <div className={`group flex items-center gap-2 px-2 sm:gap-3 sm:px-3 py-2 rounded-lg ${isCurrent ? 'bg-accent/10' : 'bg-hoverable'}`} role="row">
+    <div className={`group flex items-center gap-2 px-2 sm:gap-3 sm:px-3 py-2 rounded-lg transition-colors ${isCurrent ? 'bg-accent/10' : 'bg-hoverable'}`} role="row">
       <span className="w-6 text-center text-sm text-dim shrink-0">
         {isCurrent && isPlaying ? <EqIcon /> : (
           <button onClick={() => playTrack(track, context)} aria-label={`Play ${track.title}`}>
@@ -43,18 +43,18 @@ function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp,
       </span>
       <button onClick={() => playTrack(track, context)} className="relative shrink-0" aria-label={`Play ${track.title}`}>
         <Img src={track.image} alt={track.title} className="w-10 h-10 sm:w-11 sm:h-11 rounded-md object-cover" />
-        <span className="absolute inset-0 grid place-items-center bg-black/50 rounded-md opacity-0 group-hover:opacity-100 text-white">▶</span>
+        <span className="absolute inset-0 grid place-items-center bg-black/50 rounded-md opacity-0 group-hover:opacity-100 text-white transition-opacity duration-150">▶</span>
       </button>
       <button onClick={() => playTrack(track, context)} className="flex-1 min-w-0 text-left">
         <p className={`truncate text-sm font-semibold ${isCurrent ? 'accent' : ''}`}>{track.title}</p>
         <p className="truncate text-xs text-dim">{track.artist?.name} <SourceBadge track={track} /></p>
       </button>
-      <button onClick={() => toggleLike(track)} className={`px-2.5 py-2 ${isLiked ? 'accent' : 'text-dim md:opacity-0 md:group-hover:opacity-100'}`} aria-label="Like"><HeartIcon size={17} filled={isLiked} /></button>
-      <button onClick={() => toggleDislike(track)} className={`px-2.5 py-2 ${isDisliked ? 'text-red-400' : 'text-dim md:opacity-0 md:group-hover:opacity-100'}`} aria-label="Dislike" title="Don't recommend this"><HideIcon size={17} /></button>
+      <button onClick={() => toggleLike(track)} className={`px-2.5 py-2 transition-all active:scale-90 ${isLiked ? 'accent' : 'text-dim md:opacity-0 md:group-hover:opacity-100'}`} aria-label="Like"><HeartIcon size={17} filled={isLiked} /></button>
+      <button onClick={() => toggleDislike(track)} className={`px-2.5 py-2 transition-all active:scale-90 ${isDisliked ? 'text-red-400' : 'text-dim md:opacity-0 md:group-hover:opacity-100'}`} aria-label="Dislike" title="Don't recommend this"><HideIcon size={17} /></button>
       {badge && <span className="hidden min-[400px]:block text-[11px] text-dim shrink-0">{badge}</span>}
       <span className="hidden min-[400px]:block text-xs text-dim w-10 text-right shrink-0">{formatTime(track.duration)}</span>
-      <button onClick={() => playNext(track)} className="hidden min-[400px]:block text-dim px-2 py-2 md:opacity-0 md:group-hover:opacity-100 text-[10px] font-extrabold" aria-label="Play next" title="Play next">NEXT</button>
-      <button onClick={() => addToQueue(track)} className="hidden min-[400px]:block text-dim px-1.5 py-1 md:opacity-0 md:group-hover:opacity-100" aria-label="Add to queue" title="Add to queue"><PlusIcon size={17} /></button>
+      <button onClick={() => playNext(track)} className="hidden min-[400px]:block text-dim px-2 py-2 md:opacity-0 md:group-hover:opacity-100 transition-opacity text-[10px] font-extrabold" aria-label="Play next" title="Play next">NEXT</button>
+      <button onClick={() => addToQueue(track)} className="hidden min-[400px]:block text-dim px-1.5 py-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity" aria-label="Add to queue" title="Add to queue"><PlusIcon size={17} /></button>
       {onMoveUp && <button onClick={onMoveUp} className="text-dim px-2 py-2 text-[10px]" aria-label="Move up">▲</button>}
       {onMoveDown && <button onClick={onMoveDown} className="text-dim px-2 py-2 text-[10px]" aria-label="Move down">▼</button>}
       {onRemove && <button onClick={onRemove} className="text-dim px-1" aria-label="Remove"><CloseIcon size={14} /></button>}
