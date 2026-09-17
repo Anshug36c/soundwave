@@ -581,6 +581,12 @@ Three supported targets (all build the client, then run the single Node process)
 - **Your own device:** `docker compose up -d --build` — free, no card, no egress
   bill, no free-tier sleep. Reach it from anywhere with a Cloudflare Tunnel
   (no port forwarding, works behind CGNAT). See `docs/SELF_HOSTING.md`.
+- **Your Android phone:** the backend runs on-device under Termux (Node.js),
+  because the server has zero native dependencies — 4.3 MB of disk, ~41 MB of
+  RAM. No server anywhere. See `docs/TERMUX.md`.
+- **No backend at all:** `standalone/index.html` is a single self-contained file
+  that runs entirely in the browser using CORS-enabled APIs. Plays 30-second
+  previews only, because the scraped providers send no CORS header.
 
 No external database, Redis, or object storage is ever needed.
 
