@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#121212">
+<title>SoundWave Lite</title>
+<!--
+  SoundWave Lite — standalone, zero-server music player.
+
+  Everything runs on the device. There is no backend, no build step, and nothing
+  to host: every API used here sends Access-Control-Allow-Origin: *, which was
+  verified directly (iTunes Search, iTunes artwork CDN, MusicBrainz, Lyrics.ovh).
+  That is what makes a no-server app possible at all — the providers the full
+  SoundWave scrapes (DJPunjab, Mr-Jatt, JioSaavn) send no CORS header, so a
+  browser cannot read them and a server is unavoidable for full tracks.
+
+  Trade-off, stated plainly: iTunes only exposes 30-second previews, so this
+  plays previews, not full songs. Full-length playback of those providers needs
+  a relay (server or a ~30-line Cloudflare Worker).
+
+  Open this file directly, or drop it on any static host / Cloudflare Pages.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: #121212; color: #fff; min-height: 100vh;
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding-bottom: 96px;
+  }
+  header { padding: 18px 16px 10px; position: sticky; top: 0; background: #121212; z-index: 5; }
+  h1 { font-size: 20px; margin: 0 0 12px; letter-spacing: .3px; }
+  h1 span { color: #1db954; }
+  .row { display: flex; gap: 8px; }
+  input {
+    flex: 1; min-width: 0; padding: 12px 14px; border-radius: 10px; border: 1px solid #2a2a2a;
+    background: #1b1b1b; color: #fff; font-size: 16px; outline: none;
+  }
+  input:focus { border-color: #1db954; }
+  button {
+    padding: 12px 18px; border: 0; border-radius: 10px; background: #1db954; color: #06240f;
+    font-weight: 650; font-size: 15px; cursor: pointer;
+  }
+  button:disabled { opacity: .5; }
+  main { padding: 8px 16px; }
+  .track {
+    display: flex; align-items: center; gap: 12px; padding: 9px; border-radius: 10px; cursor: pointer;
+  }
+  .track:hover, .track.active { background: #1e1e1e; }
+  .track img { width: 52px; height: 52px; border-radius: 6px; background: #242424; flex: none; }
+  .meta { min-width: 0; flex: 1; }
+  .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .a { color: #a7a7a7; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dur { color: #6f6f6f; font-size: 12px; flex: none; }
+  .note {
+    margin: 14px 0; padding: 11px 13px; border-radius: 10px; background: #1c1c1c;
+    border-left: 3px solid #1db954; color: #b9b9b9; font-size: 13px;
+  }
+  .empty, .err { color: #8a8a8a; padding: 26px 4px; text-align: center; }
+  .err { color: #ff7b72; }
+  #bar {
+    position: fixed; left: 0; right: 0; bottom: 0; background: #181818; border-top: 1px solid #262626;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); display: none; align-items: center; gap: 12px;
+  }
+  #bar.on { display: flex; }
+  #bar img { width: 46px; height: 46px; border-radius: 6px; flex: none; }
+  #bar .meta { flex: 1; }
+  #playpause { width: 46px; height: 46px; border-radius: 50%; padding: 0; font-size: 17px; flex: none; }
+  #seek { width: 100%; height: 4px; accent-color: #1db954; }
+  .seekrow { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+  .seekrow span { font-size: 11px; color: #7a7a7a; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SoundWave <span>Lite</span></h1>
+  <div class="row">
+    <input id="q" type="search" placeholder="Search songs or artists" enterkeyhint="search" autocomplete="off">
+    <button id="go">Search</button>
+  </div>
+</header>
+
+<main>
+  <div class="note">
+    Runs 100% on your device — no server, no account. Uses Apple's public music
+    catalogue, which only allows <b>30-second previews</b>, so full songs are not
+    available here.
+  </div>
+  <div id="results"><div class="empty">Search for something to play.</div></div>
+</main>
+
+<div id="bar">
+  <img id="bartArt" alt="">
+  <div class="meta">
+    <div class="t" id="bartTitle"></div>
+    <div class="a" id="bartArtist"></div>
+    <div class="seekrow">
+      <span id="cur">0:00</span>
+      <input id="seek" type="range" min="0" max="1000" value="0">
+      <span id="tot">0:30</span>
+    </div>
+  </div>
+  <button id="playpause" aria-label="Play or pause">❚❚</button>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // iTunes Search sends Access-Control-Allow-Origin: * (verified), so this can be
+  // called straight from the browser with no proxy. country=IN biases the
+  // catalogue toward what is licensed in India.
+  var SEARCH = 'https://itunes.apple.com/search?media=music&entity=song&limit=40&country=IN&term=';
+
+  var $ = function (id) { return document.getElementById(id); };
+  var audio = new Audio();
+  audio.preload = 'auto';
+
+  var tracks = [];
+  var current = -1;
+
+  function fmt(ms) {
+    if (!isFinite(ms) || ms < 0) ms = 0;
+    var s = Math.floor(ms / 1000);
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  // artworkUrl100 -> a larger size; the CDN host also sends ACAO: * (verified)
+  function art(url, size) {
+    if (!url) return '';
+    return String(url).replace(/\/\d+x\d+bb?\./, '/' + size + 'x' + size + 'bb.');
+  }
+
+  function render() {
+    var box = $('results');
+    if (!tracks.length) { box.innerHTML = '<div class="empty">No results.</div>'; return; }
+    box.innerHTML = tracks.map(function (t, i) {
+      return '<div class="track' + (i === current ? ' active' : '') + '" data-i="' + i + '">' +
+        '<img loading="lazy" decoding="async" src="' + escapeHtml(art(t.artworkUrl100, 120)) + '" alt="">' +
+        '<div class="meta"><div class="t">' + escapeHtml(t.trackName) + '</div>' +
+        '<div class="a">' + escapeHtml(t.artistName) + '</div></div>' +
+        '<div class="dur">' + fmt(t.trackTimeMillis) + '</div></div>';
+    }).join('');
+  }
+
+  function search() {
+    var term = $('q').value.trim();
+    if (!term) return;
+    $('results').innerHTML = '<div class="empty">Searching…</div>';
+    $('go').disabled = true;
+
+    fetch(SEARCH + encodeURIComponent(term))
+      .then(function (r) {
+        if (!r.ok) throw new Error('Search failed: HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (d) {
+        // keep only entries that actually have a playable preview
+        tracks = (d.results || []).filter(function (t) { return t.previewUrl; });
+        render();
+        if (!tracks.length) $('results').innerHTML = '<div class="empty">Nothing found for “' + escapeHtml(term) + '”.</div>';
+      })
+      .catch(function (e) {
+        $('results').innerHTML = '<div class="err">' + escapeHtml(e.message) + '</div>';
+      })
+      .finally(function () { $('go').disabled = false; });
+  }
+
+  function play(i) {
+    var t = tracks[i];
+    if (!t) return;
+    current = i;
+    // Same-origin policy does not apply to media elements, so the preview plays
+    // cross-origin with no CORS header needed. It does support Range requests
+    // (verified: 206 + Content-Range), so seeking works.
+    audio.src = t.previewUrl;
+    audio.play().catch(function () { /* autoplay policy: the tap counts as a gesture */ });
+    $('bar').classList.add('on');
+    $('bartArt').src = art(t.artworkUrl100, 120);
+    $('bartTitle').textContent = t.trackName || '';
+    $('bartArtist').textContent = t.artistName || '';
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: t.trackName || '', artist: t.artistName || '',
+          album: t.collectionName || '', artwork: [{ src: art(t.artworkUrl100, 300), sizes: '300x300', type: 'image/jpeg' }]
+        });
+      } catch (e) { /* not critical */ }
+    }
+    render();
+  }
+
+  audio.addEventListener('play',  function () { $('playpause').textContent = '❚❚'; });
+  audio.addEventListener('pause', function () { $('playpause').textContent = '▶'; });
+  audio.addEventListener('ended', function () { if (current + 1 < tracks.length) play(current + 1); });
+  audio.addEventListener('timeupdate', function () {
+    var d = audio.duration || 0;
+    $('cur').textContent = fmt(audio.currentTime * 1000);
+    $('tot').textContent = fmt(d * 1000);
+    if (d > 0 && document.activeElement !== $('seek')) {
+      $('seek').value = Math.round((audio.currentTime / d) * 1000);
+    }
+  });
+
+  $('seek').addEventListener('input', function () {
+    var d = audio.duration || 0;
+    if (d > 0) audio.currentTime = (this.value / 1000) * d;
+  });
+  $('playpause').addEventListener('click', function () {
+    if (audio.paused) audio.play().catch(function () {}); else audio.pause();
+  });
+  $('results').addEventListener('click', function (e) {
+    var el = e.target.closest('.track');
+    if (el) play(parseInt(el.getAttribute('data-i'), 10));
+  });
+  $('go').addEventListener('click', search);
+  $('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') search(); });
+})();
+</script>
+</body>
+</html>
