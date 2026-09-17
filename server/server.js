@@ -1265,9 +1265,57 @@ async function ytResolve(title, artist, vid) {
     mirrors.push({ source: t.source, sid: String(t.sourceId) });
     if (mirrors.length >= 3) break;
   }
+  // archive.org bridge as a last mirror: own-source picks stay first, the
+  // archived YT audio is the failover when every provider copy is dead
+  if (mirrors.length < 3) {
+    try {
+      const sid = await arcFind(title, artist);
+      if (sid && !mirrors.some(m => m.source === 'arc')) mirrors.push({ source: 'arc', sid });
+    } catch { /* archive down: own-source mirrors still apply */ }
+  }
   if (ytMatchCache.size > 500) ytMatchCache.delete(ytMatchCache.keys().next().value);
   ytMatchCache.set(String(vid), { mirrors, time: Date.now() });
   return mirrors;
+}
+
+// ---------------- archive.org YouTube-audio bridge ----------------
+// yt2ia continuously archives YouTube audio as .m4a/.mp3 with ranged,
+// CORS-open downloads. Piped, Invidious, Cobalt and every InnerTube client
+// are bot-walled from servers (probed 2026-09-17), so this is the one
+// server-side YT audio path that actually works. Verified: ranged 206,
+// MP4 base media bytes.
+const arcCache = new Map();    // title|artist -> { sid, time }
+const arcMetaCache = new Map(); // identifier -> { val, time }
+async function arcFind(title, artist) {
+  const key = `${title}|${artist || ''}`.toLowerCase();
+  const hit = arcCache.get(key);
+  if (hit && Date.now() - hit.time < 30 * 60 * 1000) return hit.sid;
+  const q = `identifier:yt2ia* AND title:"${String(title).replace(/["\\]/g, ' ')}"`;
+  const r = await fetch(`https://archive.org/advancedsearch.php?q=${encodeURIComponent(q)}&fl%5B%5D=identifier&fl%5B%5D=title&rows=3&output=json`, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(`arc HTTP ${r.status}`);
+  const docs = (await r.json())?.response?.docs || [];
+  const ft = fold(title);
+  const doc = docs.find(d => ft && fold(d.title || '').includes(ft)) || docs[0] || null;
+  const sid = doc ? doc.identifier : null;
+  if (arcCache.size > 400) arcCache.clear();
+  arcCache.set(key, { sid, time: Date.now() });
+  return sid;
+}
+async function arcMeta(sid) {
+  const hit = arcMetaCache.get(sid);
+  if (hit && Date.now() - hit.time < 60 * 60 * 1000) return hit.val;
+  const r = await fetch(`https://archive.org/metadata/${encodeURIComponent(sid)}`, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) return null;
+  const d = await r.json();
+  const pick = (d?.files || []).find(f => /^(MP3|VBR MP3|MPEG-4 Audio)$/.test(f.format || ''));
+  if (!pick) return null;
+  const val = {
+    mp3s: { '128': `https://archive.org/download/${sid}/${encodeURIComponent(pick.name)}` },
+    type: /mp3/i.test(pick.format || '') ? 'audio/mpeg' : 'audio/mp4',
+  };
+  if (arcMetaCache.size > 400) arcMetaCache.clear();
+  arcMetaCache.set(sid, { val, time: Date.now() });
+  return val;
 }
 async function resolveMirrorInner(source, sid) {
     if (source === 'djp') {
@@ -1305,6 +1353,9 @@ async function resolveMirrorInner(source, sid) {
     if (source === 'audius') {
       // /stream 302s to the creator node; tryStream's fetch follows redirects
       return { mp3s: { '128': `${AUDIUS_HOST}/v1/tracks/${encodeURIComponent(String(sid))}/stream?app_name=${AUDIUS_APP}` } };
+    }
+    if (source === 'arc') {
+      return await arcMeta(String(sid));
     }
   return null;
 }
@@ -1375,7 +1426,7 @@ function serveBuf(res, req, buf, cached, br, type = 'audio/mpeg') {
 
 
 // ---------------- self-healing sources: circuit breaker + cross-source recovery ----------------
-const srcHealth = { djp: { fails: 0, until: 0 }, dj: { fails: 0, until: 0 }, mrj: { fails: 0, until: 0 }, saavn: { fails: 0, until: 0 }, yt: { fails: 0, until: 0 }, audius: { fails: 0, until: 0 } };
+const srcHealth = { djp: { fails: 0, until: 0 }, dj: { fails: 0, until: 0 }, mrj: { fails: 0, until: 0 }, saavn: { fails: 0, until: 0 }, yt: { fails: 0, until: 0 }, audius: { fails: 0, until: 0 }, arc: { fails: 0, until: 0 } };
 function tripSource(source, ms = 60000) { const h = srcHealth[source]; if (h) { h.fails = 3; h.until = Date.now() + ms; } }
 function srcDegraded() { const now = Date.now(); return Object.keys(srcHealth).filter(s => srcHealth[s].until > now); }
 
@@ -2019,6 +2070,10 @@ app.get('/api/sources', async (req, res) => {
     const dr = await fetch('https://api.deezer.com/search?q=test&limit=1', { signal: AbortSignal.timeout(6000) });
     out.deezer = dr.ok ? 'ok (previews)' : `down: ${dr.status}`;
   } catch (e) { out.deezer = `down: ${e.message}`; }
+  try {
+    const ar2 = await fetch('https://archive.org/advancedsearch.php?q=identifier:yt2ia*&rows=1&output=json', { signal: AbortSignal.timeout(6000) });
+    out.archive = ar2.ok ? 'ok (yt audio bridge)' : `down: ${ar2.status}`;
+  } catch (e) { out.archive = `down: ${e.message}`; }
   out.cdn = Object.fromEntries([...cdnMs.entries()].map(([h, ms]) => [h, Math.round(ms)]));
   out.uptime = Math.round(process.uptime());
   out.degraded = srcDegraded();
