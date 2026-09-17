@@ -31,53 +31,58 @@ export function Sidebar() {
   const likedCount = Object.keys(liked).length;
 
   return (
-    <aside className="hidden md:flex w-[288px] shrink-0 flex-col gap-2 p-2 h-full">
-      <div className="panel px-3 py-5">
-        <Link to="/" className="flex items-center gap-2.5 px-3 text-[22px] font-extrabold tracking-tight" style={{ color: 'var(--text)' }}>
-          <WaveLogo size={36} /> SoundWave
+    <aside className="hidden md:flex w-[264px] shrink-0 flex-col h-full px-3 pt-5 pb-2">
+      {/* No boxed panel: the sidebar is one continuous column with hairline
+          separators, which is how Apple Music separates its sections. */}
+      <div className="px-3">
+        <Link to="/" className="flex items-center gap-2.5 text-[20px] font-bold tracking-[-0.02em]" style={{ color: 'var(--text)' }}>
+          <WaveLogo size={30} /> SoundWave
         </Link>
-        <nav className="mt-6 flex flex-col gap-1 px-1" aria-label="Primary">
-          {mainNav.map(({ to, label, Icon }) => (
-            <NavLink key={to} to={to}
-              className={({ isActive }) => `flex items-center gap-4 px-2 py-2.5 text-[15px] font-bold transition-colors ${isActive ? '' : 'text-dim hover:text-white'}`}
-              style={({ isActive }) => isActive ? { color: 'var(--text)' } : undefined}>
-              {({ isActive }) => (<><Icon size={24} active={isActive} />{label}</>)}
-            </NavLink>
-          ))}
-        </nav>
       </div>
-      <div className="panel p-3 flex-1 overflow-y-auto min-h-0">
-        <div className="flex items-center justify-between px-2 py-2">
-          <span className="text-[15px] font-bold text-dim">Playlists</span>
-          <button onClick={() => setCreating(v => !v)} className="p-1 rounded-full text-dim hover:text-white transition-colors" aria-label="Create playlist">
-            <PlusIcon size={20} />
+
+      <nav className="mt-7 flex flex-col gap-0.5 px-1" aria-label="Primary">
+        {mainNav.map(({ to, label, Icon }) => (
+          <NavLink key={to} to={to}
+            className={({ isActive }) => `nav-pill flex items-center gap-3.5 px-3 py-2 text-[15px] font-semibold ${isActive ? 'nav-active' : 'text-dim'}`}>
+            {({ isActive }) => (<><Icon size={21} active={isActive} />{label}</>)}
+          </NavLink>
+        ))}
+      </nav>
+
+      <div className="mt-7 mx-3 border-t border-soft" aria-hidden="true" />
+
+      <div className="mt-4 flex-1 overflow-y-auto min-h-0 px-1">
+        <div className="flex items-center justify-between px-3 py-1.5">
+          <span className="t-eyebrow">Playlists</span>
+          <button onClick={() => setCreating(v => !v)} className="btn-quiet p-1.5" aria-label="Create playlist">
+            <PlusIcon size={17} />
           </button>
         </div>
         {creating && (
           <form className="px-2 pb-2 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (!name.trim()) return; createPlaylist(name.trim()); setName(''); setCreating(false); toast('Playlist created'); }}>
-            <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Playlist name" className="w-full bg-soft border border-soft rounded-lg px-2 py-1.5 text-sm outline-none" />
-            <button className="btn-accent px-3 text-sm shrink-0">Add</button>
+            <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Playlist name" className="w-full bg-soft border border-soft rounded-[10px] px-2.5 py-1.5 text-sm outline-none focus:border-[var(--accent)] transition-colors" />
+            <button className="btn-accent px-3.5 text-sm shrink-0">Add</button>
           </form>
         )}
-        <Link to="/liked" className="flex items-center gap-3 px-2 py-2 rounded-md hover:bg-white/5 transition-colors">
-          <span className="w-12 h-12 rounded grid place-items-center shrink-0 bg-gradient-to-br from-indigo-600 via-purple-500 to-purple-300">
-            <HeartIcon size={20} filled className="text-white" />
+        <Link to="/liked" className="nav-pill flex items-center gap-3 px-2.5 py-2">
+          <span className="w-10 h-10 rounded-[8px] grid place-items-center shrink-0 bg-gradient-to-br from-indigo-600 via-purple-500 to-purple-300 shadow-[var(--shadow-1)]">
+            <HeartIcon size={17} filled className="text-white" />
           </span>
           <span className="min-w-0">
-            <span className="block text-[15px]" style={{ color: 'var(--text)' }}>Liked Songs</span>
-            <span className="block text-[13px] text-dim">Playlist · {likedCount}</span>
+            <span className="block text-[14px] font-semibold truncate" style={{ color: 'var(--text)' }}>Liked Songs</span>
+            <span className="block t-caption truncate">{likedCount} songs</span>
           </span>
         </Link>
         {playlists.map(p => (
-          <Link key={p.id} to={`/playlist/${encodeURIComponent(p.id)}`} className="flex items-center gap-3 px-2 py-2 rounded-md hover:bg-white/5 transition-colors">
-            <span className="w-12 h-12 rounded grid place-items-center shrink-0 bg-white/10 text-dim"><NoteIcon size={20} /></span>
+          <Link key={p.id} to={`/playlist/${encodeURIComponent(p.id)}`} className="nav-pill flex items-center gap-3 px-2.5 py-2">
+            <span className="w-10 h-10 rounded-[8px] grid place-items-center shrink-0 bg-[var(--surface-2)] text-dim"><NoteIcon size={17} /></span>
             <span className="min-w-0">
-              <span className="block text-[15px] truncate" style={{ color: 'var(--text)' }}>{p.name}</span>
-              <span className="block text-[13px] text-dim">Playlist · {p.tracks.length}</span>
+              <span className="block text-[14px] font-semibold truncate" style={{ color: 'var(--text)' }}>{p.name}</span>
+              <span className="block t-caption truncate">{p.tracks.length} songs</span>
             </span>
           </Link>
         ))}
-        {playlists.length === 0 && <p className="text-xs text-dim px-3 py-2">No playlists yet — create one!</p>}
+        {playlists.length === 0 && <p className="t-caption px-3 py-2">No playlists yet — create one.</p>}
       </div>
     </aside>
   );
@@ -93,26 +98,26 @@ export function TopBar() {
   const cycleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
 
   return (
-    <header className="sticky top-0 z-20 glass border-b border-soft">
-      <div className="flex items-center gap-2 px-4 py-3">
-        <button onClick={() => navigate(-1)} className="w-9 h-9 rounded-full bg-black/50 grid place-items-center text-dim hover:text-white shrink-0" aria-label="Go back">
+    <header className="sticky top-0 z-20 glass border-b border-soft" style={{ background: 'var(--chrome)' }}>
+      <div className="flex items-center gap-2 px-4 py-2.5">
+        <button onClick={() => navigate(-1)} className="btn-quiet w-9 h-9 grid place-items-center shrink-0" aria-label="Go back">
           <ChevronLeftIcon size={18} />
         </button>
-        <button onClick={() => navigate(1)} className="w-9 h-9 rounded-full bg-black/50 place-items-center text-dim hover:text-white shrink-0 hidden sm:grid" aria-label="Go forward">
+        <button onClick={() => navigate(1)} className="btn-quiet w-9 h-9 place-items-center shrink-0 hidden sm:grid" aria-label="Go forward">
           <ChevronRightIcon size={18} />
         </button>
         <div className="flex-1 max-w-xl relative">
           {/* one search bar per page: the Search page has the rich input, so the topbar yields there */}
           {!onSearchPage && (
           <form onSubmit={(e) => { e.preventDefault(); if (q.trim()) navigate(`/search?q=${encodeURIComponent(q.trim())}`); }}>
-            <SearchIcon size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-dim pointer-events-none" />
-            <input value={q} onChange={e => setQ(e.target.value)} placeholder="What do you want to listen to?" aria-label="Search"
-              className="w-full bg-soft border border-soft rounded-full pl-10 pr-4 py-2 text-sm outline-none focus:border-green-500 transition-shadow focus:shadow-[0_0_0_3px_rgba(29,185,84,.22)]" />
+            <SearchIcon size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-dim pointer-events-none" />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search" aria-label="Search"
+              className="w-full bg-[var(--surface-2)] border border-transparent rounded-full pl-10 pr-4 py-2 text-[14px] outline-none transition-[background-color,border-color,box-shadow] duration-200 hover:bg-[var(--surface-3)] focus:bg-[var(--surface-1)] focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgba(29,185,84,.18)] placeholder:text-[var(--text-dim)]" />
           </form>
           )}
         </div>
-        <button onClick={() => window.dispatchEvent(new Event('soundwave:palette'))} className="h-9 px-3 rounded-full bg-hoverable hidden sm:grid place-items-center text-sm font-bold shrink-0" aria-label="Command palette" title="Command palette (Ctrl+K)">⌘K</button>
-        <button onClick={cycleTheme} className="w-9 h-9 rounded-full bg-hoverable grid place-items-center text-dim hover:text-white shrink-0" aria-label="Cycle theme" title={`Theme: ${theme} (click to change)`}>
+        <button onClick={() => window.dispatchEvent(new Event('soundwave:palette'))} className="h-9 px-3 rounded-full bg-[var(--surface-2)] hover:bg-[var(--surface-3)] hidden sm:grid place-items-center text-[13px] font-semibold shrink-0 transition-colors" aria-label="Command palette" title="Command palette (Ctrl+K)">⌘K</button>
+        <button onClick={cycleTheme} className="btn-quiet w-9 h-9 grid place-items-center shrink-0" aria-label="Cycle theme" title={`Theme: ${theme} (click to change)`}>
           {theme === 'dark' ? <SunIcon size={18} /> : <MoonIcon size={18} />}
         </button>
         <AuthAvatar />
@@ -130,13 +135,12 @@ const tabs = [
 
 export function BottomNav({ hasPlayer }) {
   return (
-    <nav className={`md:hidden fixed left-0 right-0 z-20 glass bg-app border-t border-soft ${hasPlayer ? 'bottomnav-offset' : 'bottom-0 pb-safe'}`} aria-label="Mobile">
+    <nav className={`md:hidden fixed left-0 right-0 z-20 glass border-t border-soft ${hasPlayer ? 'bottomnav-offset' : 'bottom-0 pb-safe'}`} style={{ background: 'var(--chrome)' }} aria-label="Mobile">
       <div className="grid grid-cols-4 h-14">
         {tabs.map(({ to, label, Icon }) => (
           <NavLink key={to} to={to}
-            className={({ isActive }) => `flex flex-col items-center justify-center gap-0.5 text-[10px] font-semibold transition-colors ${isActive ? '' : 'text-dim'}`}
-            style={({ isActive }) => isActive ? { color: 'var(--text)' } : undefined}>
-            {({ isActive }) => (<><Icon size={21} active={isActive} />{label}</>)}
+            className={({ isActive }) => `flex flex-col items-center justify-center gap-1 text-[10px] font-semibold transition-colors duration-200 ${isActive ? 'accent' : 'text-dim'}`}>
+            {({ isActive }) => (<><Icon size={22} active={isActive} />{label}</>)}
           </NavLink>
         ))}
       </div>

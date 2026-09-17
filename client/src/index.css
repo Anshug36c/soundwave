@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* ------------------------------------------------------------------ tokens
+   The palette is unchanged — same background, same green. What changed is how
+   surfaces are layered: Apple Music gets its look from translucent depth and a
+   strict type scale rather than from tinted boxes, so the card/hover tints are
+   dialled back and elevation does that job instead. */
 :root {
   --bg: #121212;
   --bg-deep: #0a0a0a;
@@ -11,6 +16,26 @@
   --accent: #1db954;
   --accent-hover: #1ed760;
   --border: rgba(255, 255, 255, 0.08);
+
+  /* elevation + translucency, layered so surfaces read as depth, not outlines */
+  --surface-1: rgba(255, 255, 255, 0.035);
+  --surface-2: rgba(255, 255, 255, 0.065);
+  --surface-3: rgba(255, 255, 255, 0.1);
+  --hairline: rgba(255, 255, 255, 0.09);
+  --chrome: rgba(18, 18, 18, 0.72);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-2: 0 6px 20px -6px rgba(0, 0, 0, .5);
+  --shadow-3: 0 18px 48px -12px rgba(0, 0, 0, .62);
+  --ring: rgba(255, 255, 255, .1);
+
+  /* radii: artwork is larger and softer than UI chrome */
+  --r-art: 14px;
+  --r-ui: 10px;
+  --r-lg: 18px;
+  --r-pill: 999px;
+
+  /* motion: one curve everywhere, so the app feels like a single object */
+  --ease: cubic-bezier(.32, .72, .35, 1);
 }
 [data-theme="light"] {
   --bg-deep: #e7e5de;
@@ -21,19 +46,35 @@
   --text: #191414;
   --text-dim: #5c5c5c;
   --border: rgba(0, 0, 0, 0.08);
+
+  --surface-1: rgba(0, 0, 0, 0.03);
+  --surface-2: rgba(0, 0, 0, 0.055);
+  --surface-3: rgba(0, 0, 0, 0.09);
+  --hairline: rgba(0, 0, 0, 0.09);
+  --chrome: rgba(246, 246, 244, 0.78);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .07);
+  --shadow-2: 0 6px 20px -8px rgba(0, 0, 0, .14);
+  --shadow-3: 0 18px 48px -14px rgba(0, 0, 0, .2);
+  --ring: rgba(0, 0, 0, .08);
 }
 
 html, body, #root { height: 100%; }
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'CircularSp', 'Figtree', 'Nunito', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  letter-spacing: -0.01em;
+  /* SF Pro first — that is most of what reads as "Apple Music" on a Mac or
+     iPhone, and it costs nothing on the platforms that have it. */
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+               'Inter', 'Figtree', 'Segoe UI Variable Text', 'Segoe UI', Roboto,
+               'Helvetica Neue', Arial, sans-serif;
+  letter-spacing: -0.011em;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-variant-numeric: tabular-nums;
 }
 *::-webkit-scrollbar { width: 10px; height: 8px; }
-*::-webkit-scrollbar-thumb { background: #4d4d4d; border-radius: 8px; }
-*::-webkit-scrollbar-thumb:hover { background: #6e6e6e; }
+*::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 128, .55); }
 *::-webkit-scrollbar-track { background: transparent; }
 
 .bg-app { background: var(--bg); }
@@ -46,39 +87,69 @@ body {
 .bg-accent { background: var(--accent); }
 .border-soft { border-color: var(--border); }
 
-.card { background: var(--bg-card); border: var(--bw, 1px) solid var(--border); border-radius: var(--radius, 12px); box-shadow: var(--cshadow, none); transition: transform .18s ease, background .18s ease, box-shadow .18s ease; }
-.card:hover { background: var(--bg-hover); transform: translateY(-3px); box-shadow: var(--cshadow, 0 12px 28px rgba(0,0,0,.35)); }
+/* ---------------------------------------------------------------- type scale
+   Apple Music leans on a few deliberate sizes with tight leading. These are
+   utilities rather than component edits, so every page picks them up. */
+.h-display { font-size: clamp(1.75rem, 1.35rem + 1.7vw, 2.75rem); font-weight: 800; letter-spacing: -0.028em; line-height: 1.06; }
+.h-title   { font-size: clamp(1.25rem, 1.1rem + .6vw, 1.75rem); font-weight: 700; letter-spacing: -0.022em; line-height: 1.15; }
+.h-section { font-size: 1.3125rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
+.h-sub     { font-size: 1.0625rem; font-weight: 600; letter-spacing: -0.014em; }
+.t-eyebrow { font-size: .6875rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-dim); }
+.t-body    { font-size: .9375rem; letter-spacing: -0.011em; }
+.t-caption { font-size: .8125rem; color: var(--text-dim); letter-spacing: -0.008em; }
+
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--cshadow, none); transition: transform .22s var(--ease), background .22s var(--ease), box-shadow .22s var(--ease); }
+.card:hover { background: var(--bg-hover); transform: translateY(-2px); box-shadow: var(--cshadow, var(--shadow-3)); }
 .bg-deep { background: var(--bg-deep); }
-/* static container: card look, no hover lift */
+/* static container: elevation instead of a heavy outline */
 .panel {
-  background: var(--bg-card);
-  border: var(--bw, 1px) solid var(--border);
-  border-radius: var(--radius, 12px);
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
   box-shadow: var(--cshadow, none);
 }
-/* media tile: hover tint + reveal play, NO lift */
+/* Media tile: Apple Music has no card chrome at all — the artwork is the card.
+   So there is no background and no lift, only the image responding. */
 .media-card {
-  background: var(--bg-card);
-  border: var(--bw, 1px) solid var(--border, transparent);
-  border-radius: 8px;
-  box-shadow: var(--cshadow, none);
-  transition: background .2s ease;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-art);
+  transition: transform .22s var(--ease);
 }
-.media-card:hover { background: var(--bg-hover); }
-/* bottom player bar */
-.sp-playerbar { background: #000; }
-[data-theme="light"] .sp-playerbar { background: #fff; }
-/* seek bar: light fill, green + knob on hover */
+.media-card:hover { background: transparent; }
+.media-card:hover img { transform: scale(1.02); }
+.media-card img { transition: transform .3s var(--ease), box-shadow .3s var(--ease); border-radius: var(--r-art); box-shadow: var(--shadow-2); }
+.media-card:hover img { box-shadow: var(--shadow-3); }
+
+/* Floating frosted player bar. Height is unchanged on purpose: the mobile
+   nav offset and the main scroll padding are both keyed to it. */
+.sp-playerbar {
+  background: var(--chrome);
+  backdrop-filter: blur(28px) saturate(1.7);
+  -webkit-backdrop-filter: blur(28px) saturate(1.7);
+  border-top: 1px solid var(--hairline);
+  box-shadow: 0 -1px 0 rgba(255,255,255,.03), var(--shadow-2);
+}
+/* seek bar: quiet fill, accent + knob on hover */
 .sp-progress { cursor: pointer; }
-.sp-track { background: rgba(128, 128, 128, 0.45); }
+.sp-track { background: var(--surface-3); }
 .sp-fill { background: var(--text); transition: background .15s ease, width .3s linear; will-change: width; }
 .sp-progress:hover .sp-fill { background: var(--accent); }
 .sp-knob { opacity: 0; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); transition: opacity .15s ease; }
 .sp-progress:hover .sp-knob { opacity: 1; }
 
-.btn-accent { background: var(--accent); color: var(--accent-ink, #000); font-weight: 800; border-radius: 999px; transition: transform .15s ease, background .15s ease; }
-.btn-accent:hover { background: var(--accent-hover); transform: scale(1.04); }
+.btn-accent { background: var(--accent); color: var(--accent-ink, #000); font-weight: 700; border-radius: var(--r-pill); box-shadow: var(--shadow-1); transition: transform .18s var(--ease), background .18s var(--ease), box-shadow .18s var(--ease); }
+.btn-accent:hover { background: var(--accent-hover); transform: scale(1.035); box-shadow: var(--shadow-2); }
 
+/* quiet icon affordance, used across nav and the player */
+.btn-quiet { color: var(--text-dim); border-radius: var(--r-pill); transition: color .16s ease, background-color .16s ease, transform .16s var(--ease); }
+.btn-quiet:hover { color: var(--text); background: var(--surface-2); }
+.btn-quiet:active { transform: scale(.93); }
+
+/* pill used for the active navigation item */
+.nav-pill { border-radius: var(--r-pill); transition: background-color .18s var(--ease), color .18s ease; }
+.nav-pill:hover { background: var(--surface-2); }
+.nav-active { background: var(--surface-3); color: var(--text); }
 
 .glass { backdrop-filter: blur(24px) saturate(1.4); -webkit-backdrop-filter: blur(24px) saturate(1.4); }
 

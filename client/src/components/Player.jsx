@@ -97,30 +97,30 @@ export function MiniPlayer() {
           if (dx < -60) next();
           else if (dx > 60) prev();
         }}>
-        <div className="h-1 bg-white/10"><div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} /></div>
-        <div className="glass bg-black/85 border-t border-soft px-2 h-16 flex items-center gap-1">
-          <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" aria-label="Open full player">
-            <Img src={track.image} alt={track.title} className="w-12 h-12 rounded-lg object-cover ring-1 ring-white/10" />
-            <span className="min-w-0">
-              <p className="truncate text-sm font-bold flex items-center gap-2">{isPlaying && <EqIcon />}{track.title}</p>
-              <p className="truncate text-xs text-dim">{track.artist?.name}</p>
-            </span>
-          </button>
+          <div className="h-1 bg-[var(--surface-3)]"><div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} /></div>
+          <div className="glass px-2 h-16 flex items-center gap-1 sp-playerbar">
+            <button onClick={() => setShowFullPlayer(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" aria-label="Open full player">
+              <Img src={track.image} alt={track.title} className="w-12 h-12 rounded-[7px] object-cover shadow-[var(--shadow-1)]" />
+              <span className="min-w-0">
+                <p className="truncate text-[14px] font-semibold flex items-center gap-2">{isPlaying && <EqIcon />}{track.title}</p>
+                <p className="truncate t-caption">{track.artist?.name}</p>
+              </span>
+            </button>
           <button onClick={prev} className="p-2.5 text-dim hover:text-white btn-press" aria-label="Previous"><PrevIcon size={22} /></button>
           <button onClick={togglePlay} className="w-11 h-11 rounded-full btn-accent grid place-items-center shadow-[0_0_24px_-6px_var(--accent)]" aria-label={buffering && isPlaying ? 'Loading audio' : isPlaying ? 'Pause' : 'Play'}>{buffering && isPlaying ? <SpinIcon size={19} /> : isPlaying ? <PauseIcon size={19} /> : <PlayIcon size={19} />}</button>
           <button onClick={next} className="p-2.5 text-dim hover:text-white btn-press" aria-label="Next"><NextIcon size={22} /></button>
         </div>
       </div>
       {/* desktop 3-zone bar */}
-      <div className="hidden md:grid grid-cols-[1fr_1.3fr_1fr] items-center h-[88px] px-4 gap-4 sp-playerbar border-t border-soft">
-        <div className="flex items-center gap-3 min-w-0">
-          <button onClick={() => setShowFullPlayer(true)} className="shrink-0 rounded-lg overflow-hidden ring-1 ring-white/10 transition-transform duration-300 hover:scale-105" aria-hidden="true" tabIndex={-1}>
-            <Img src={track.image} alt={track.title} className="w-14 h-14 object-cover" />
-          </button>
-          <div key={track.id} className="anim-in min-w-0 max-w-[220px] text-fade-x">
-            <p className="truncate text-sm" style={{ color: 'var(--text)' }}>{track.title}</p>
-            <p className="truncate text-xs text-dim">{track.artist?.name}</p>
-          </div>
+        <div className="hidden md:grid grid-cols-[1fr_1.3fr_1fr] items-center h-[88px] px-5 gap-4 sp-playerbar">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <button onClick={() => setShowFullPlayer(true)} className="shrink-0 rounded-[8px] overflow-hidden shadow-[var(--shadow-2)] transition-transform duration-300 hover:scale-[1.04]" aria-hidden="true" tabIndex={-1}>
+              <Img src={track.image} alt={track.title} className="w-14 h-14 object-cover" />
+            </button>
+            <div key={track.id} className="anim-in min-w-0 max-w-[220px] text-fade-x">
+              <p className="truncate text-[14px] font-semibold" style={{ color: 'var(--text)' }}>{track.title}</p>
+              <p className="truncate t-caption">{track.artist?.name}</p>
+            </div>
           <button onClick={() => toggleLike(track)} aria-label="Like" className={`p-2 btn-press ${isLiked ? 'accent' : 'text-dim hover:text-white'}`}>
             <HeartIcon size={17} filled={isLiked} />
           </button>

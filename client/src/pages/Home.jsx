@@ -90,15 +90,22 @@ export default function Home() {
 
   return (
     <div className="pb-8">
-      <h1 className="text-2xl font-extrabold tracking-tight mb-4 px-1">{greeting()}</h1>
+      {/* Apple Music leads with a large display greeting and a quiet context
+          line, rather than a small bold label. */}
+      <header className="px-1 pt-2 pb-6 fade-up">
+        <h1 className="h-display">{greeting()}</h1>
+        <p className="t-caption mt-1.5">
+          {new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
+        </p>
+      </header>
 
 
-      {history.length === 0 ? (
-        <div className="card p-6 mt-6 text-center">
-          <p className="font-extrabold">Find your first song</p>
-          <p className="text-sm text-dim mt-1">Search above — your recent plays and recommendations will live here.</p>
-        </div>
-      ) : (
+        {history.length === 0 ? (
+          <div className="panel p-10 mt-2 text-center fade-up-1">
+            <p className="h-sub">Find your first song</p>
+            <p className="t-body text-dim mt-2 max-w-sm mx-auto">Search above — your recent plays and recommendations will live here.</p>
+          </div>
+        ) : (
         <SectionRow title="Recently Played" subtitle="Jump back in">
           {recent.map(t => <SongCard key={t.id} track={t} context={recent} />)}
         </SectionRow>

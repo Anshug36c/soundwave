@@ -13,7 +13,7 @@ function Img_({ src, alt, className = '' }) {
 const SRC_TAG = { djp: 'DJP', dj: 'DJJ', mrj: 'MRJ', saavn: 'SVN', yt: 'YT' };
 export function SourceBadge({ track }) {
   const tag = SRC_TAG[track?.source] ? `${SRC_TAG[track.source]} · ` : '';
-  return <span className="sticker ml-1 text-[9px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap bg-green-500/20 text-green-400">{tag}FULL</span>;
+  return <span className="sticker ml-1.5 text-[9px] font-bold px-1.5 py-[1px] rounded-[4px] whitespace-nowrap bg-[var(--surface-2)] text-dim align-middle">{tag}FULL</span>;
 }
 
 function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp, onMoveDown, badge }) {
@@ -32,8 +32,8 @@ function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp,
   const isDisliked = !!disliked[track.id];
 
   return (
-    <div className={`group flex items-center gap-2 px-2 sm:gap-3 sm:px-3 py-2 rounded-lg transition-colors ${isCurrent ? 'bg-accent/10' : 'bg-hoverable'}`} role="row">
-      <span className="w-6 text-center text-sm text-dim shrink-0">
+    <div className={`group flex items-center gap-2.5 px-3 sm:gap-3 py-2 rounded-[var(--r-ui)] transition-colors duration-200 ${isCurrent ? 'bg-[var(--surface-3)]' : 'bg-hoverable hover:bg-[var(--surface-2)]'}`} role="row">
+      <span className="w-6 text-center text-[13px] text-dim shrink-0 tabular-nums">
         {isCurrent && isPlaying ? <EqIcon /> : (
           <button onClick={() => playTrack(track, context)} aria-label={`Play ${track.title}`}>
             <span className="group-hover:hidden inline-block">{showIndex ? index + 1 : <NoteIcon size={14} />}</span>
@@ -42,22 +42,22 @@ function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp,
         )}
       </span>
       <button onClick={() => playTrack(track, context)} className="relative shrink-0" aria-label={`Play ${track.title}`}>
-        <Img src={track.image} alt={track.title} className="w-10 h-10 sm:w-11 sm:h-11 rounded-md object-cover" />
-        <span className="absolute inset-0 grid place-items-center bg-black/50 rounded-md opacity-0 group-hover:opacity-100 text-white transition-opacity duration-150">▶</span>
+        <Img src={track.image} alt={track.title} className="w-10 h-10 sm:w-11 sm:h-11 rounded-[7px] object-cover shadow-[var(--shadow-1)]" />
+        <span className="absolute inset-0 grid place-items-center bg-black/45 rounded-[7px] opacity-0 group-hover:opacity-100 text-white transition-opacity duration-200">▶</span>
       </button>
       <button onClick={() => playTrack(track, context)} className="flex-1 min-w-0 text-left">
-        <p className={`truncate text-sm font-semibold ${isCurrent ? 'accent' : ''}`}>{track.title}</p>
-        <p className="truncate text-xs text-dim">{track.artist?.name} <SourceBadge track={track} /></p>
+        <p className={`truncate text-[14px] font-semibold ${isCurrent ? 'accent' : ''}`}>{track.title}</p>
+        <p className="truncate t-caption flex items-center">{track.artist?.name} <SourceBadge track={track} /></p>
       </button>
-      <button onClick={() => toggleLike(track)} className={`px-2.5 py-2 transition-all active:scale-90 ${isLiked ? 'accent' : 'text-dim md:opacity-0 md:group-hover:opacity-100'}`} aria-label="Like"><HeartIcon size={17} filled={isLiked} /></button>
-      <button onClick={() => toggleDislike(track)} className={`px-2.5 py-2 transition-all active:scale-90 ${isDisliked ? 'text-red-400' : 'text-dim md:opacity-0 md:group-hover:opacity-100'}`} aria-label="Dislike" title="Don't recommend this"><HideIcon size={17} /></button>
-      {badge && <span className="hidden min-[400px]:block text-[11px] text-dim shrink-0">{badge}</span>}
-      <span className="hidden min-[400px]:block text-xs text-dim w-10 text-right shrink-0">{formatTime(track.duration)}</span>
-      <button onClick={() => playNext(track)} className="hidden min-[400px]:block text-dim px-2 py-2 md:opacity-0 md:group-hover:opacity-100 transition-opacity text-[10px] font-extrabold" aria-label="Play next" title="Play next">NEXT</button>
-      <button onClick={() => addToQueue(track)} className="hidden min-[400px]:block text-dim px-1.5 py-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity" aria-label="Add to queue" title="Add to queue"><PlusIcon size={17} /></button>
-      {onMoveUp && <button onClick={onMoveUp} className="text-dim px-2 py-2 text-[10px]" aria-label="Move up">▲</button>}
-      {onMoveDown && <button onClick={onMoveDown} className="text-dim px-2 py-2 text-[10px]" aria-label="Move down">▼</button>}
-      {onRemove && <button onClick={onRemove} className="text-dim px-1" aria-label="Remove"><CloseIcon size={14} /></button>}
+      <button onClick={() => toggleLike(track)} className={`btn-quiet px-2.5 py-2 active:scale-90 ${isLiked ? 'accent' : 'md:opacity-0 md:group-hover:opacity-100'}`} aria-label="Like"><HeartIcon size={17} filled={isLiked} /></button>
+      <button onClick={() => toggleDislike(track)} className={`px-2.5 py-2 transition-all active:scale-90 rounded-full ${isDisliked ? 'text-red-400' : 'text-dim md:opacity-0 md:group-hover:opacity-100 hover:text-[var(--text)]'}`} aria-label="Dislike" title="Don't recommend this"><HideIcon size={17} /></button>
+      {badge && <span className="hidden min-[400px]:block text-[12px] text-dim shrink-0">{badge}</span>}
+      <span className="hidden min-[400px]:block text-[12px] text-dim w-10 text-right shrink-0 tabular-nums">{formatTime(track.duration)}</span>
+      <button onClick={() => playNext(track)} className="hidden min-[400px]:block text-dim px-2 py-2 md:opacity-0 md:group-hover:opacity-100 transition-opacity text-[10px] font-bold hover:text-[var(--text)]" aria-label="Play next" title="Play next">NEXT</button>
+      <button onClick={() => addToQueue(track)} className="btn-quiet hidden min-[400px]:block px-1.5 py-1 md:opacity-0 md:group-hover:opacity-100" aria-label="Add to queue" title="Add to queue"><PlusIcon size={17} /></button>
+      {onMoveUp && <button onClick={onMoveUp} className="btn-quiet px-2 py-2 text-[10px]" aria-label="Move up">▲</button>}
+      {onMoveDown && <button onClick={onMoveDown} className="btn-quiet px-2 py-2 text-[10px]" aria-label="Move down">▼</button>}
+      {onRemove && <button onClick={onRemove} className="btn-quiet px-1 py-2" aria-label="Remove"><CloseIcon size={14} /></button>}
     </div>
   );
 }
@@ -80,13 +80,14 @@ function PlayButton({ onPlay }) {
 function SongCard_({ track, context }) {
   const playTrack = useStore(s => s.playTrack);
   return (
-    <div onClick={() => playTrack(track, context || [track])} className="media-card group relative p-3 cursor-pointer min-w-[150px] max-w-[190px]" role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && playTrack(track, context || [track])}>
+    <div onClick={() => playTrack(track, context || [track])} className="media-card group relative cursor-pointer min-w-[152px] max-w-[190px] pb-1" role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && playTrack(track, context || [track])}>
       <div className="relative">
-        <Img src={track.image} alt={track.title} className="w-full aspect-square rounded-lg object-cover" />
+        <Img src={track.image} alt={track.title} className="w-full aspect-square object-cover" />
         <PlayButton onPlay={() => playTrack(track, context || [track])} />
       </div>
-      <p className="mt-2 truncate text-sm font-bold">{track.title}</p>
-      <p className="truncate text-xs text-dim">{track.artist?.name}</p>
+      {/* Title sits outside the artwork with no card behind it. */}
+      <p className="mt-2.5 truncate text-[14px] font-semibold">{track.title}</p>
+      <p className="t-caption truncate">{track.artist?.name}</p>
     </div>
   );
 }
@@ -95,10 +96,10 @@ function AlbumCard_({ album }) {
   const [source, kind, ...rest] = String(album.id).split(':');
   const to = `/album/${source}/${rest.join(':') || kind}`;
   return (
-    <Link to={to} className="media-card group relative p-3 min-w-[150px] max-w-[190px]">
-      <Img src={album.image} alt={album.name} className="w-full aspect-square rounded-lg object-cover" />
-      <p className="mt-2 truncate text-sm font-bold">{album.name}</p>
-      <p className="truncate text-xs text-dim">{album.artist}{album.year ? ` · ${album.year}` : ''}</p>
+    <Link to={to} className="media-card group relative min-w-[152px] max-w-[190px] pb-1">
+      <Img src={album.image} alt={album.name} className="w-full aspect-square object-cover" />
+      <p className="mt-2.5 truncate text-[14px] font-semibold">{album.name}</p>
+      <p className="t-caption truncate">{album.artist}{album.year ? ` · ${album.year}` : ''}</p>
     </Link>
   );
 }
@@ -107,10 +108,10 @@ function ArtistCard_({ artist }) {
   const [source, kind, ...rest] = String(artist.id).split(':');
   const to = `/artist/${source}/${rest.join(':') || kind}`;
   return (
-    <Link to={to} className="media-card group p-3 min-w-[140px] max-w-[170px] text-center">
+    <Link to={to} className="media-card group min-w-[140px] max-w-[170px] text-center pb-1">
       <Img src={artist.image} alt={artist.name} className="w-full aspect-square rounded-full object-cover" />
-      <p className="mt-2 truncate text-sm font-bold">{artist.name}</p>
-      <p className="text-xs text-dim">Artist</p>
+      <p className="mt-2.5 truncate text-[14px] font-semibold">{artist.name}</p>
+      <p className="t-caption">Artist</p>
     </Link>
   );
 }
@@ -123,31 +124,31 @@ export function PlaylistCard({ playlist, to }) {
   }
   const mosaic = playlist.tracks?.slice(0, 4) || [];
   return (
-    <Link to={link} className="media-card group p-3 min-w-[150px] max-w-[190px]">
+    <Link to={link} className="media-card group min-w-[152px] max-w-[190px] pb-1">
       {mosaic.length >= 4 ? (
-        <div className="grid grid-cols-2 gap-[2px] rounded-lg overflow-hidden aspect-square">
+        <div className="grid grid-cols-2 gap-[2px] overflow-hidden aspect-square rounded-[var(--r-art)] shadow-[var(--shadow-2)]">
           {mosaic.map(t => <Img key={t.id} src={t.image} alt="" className="w-full h-full object-cover" />)}
         </div>
       ) : (
-        <Img src={playlist.image} alt={playlist.name} className="w-full aspect-square rounded-lg object-cover" />
+        <Img src={playlist.image} alt={playlist.name} className="w-full aspect-square object-cover" />
       )}
-      <p className="mt-2 truncate text-sm font-bold">{playlist.name}</p>
-      <p className="truncate text-xs text-dim">{playlist.tracks ? `${playlist.tracks.length} songs` : `${playlist.songCount || ''} songs`}</p>
+      <p className="mt-2.5 truncate text-[14px] font-semibold">{playlist.name}</p>
+      <p className="t-caption truncate">{playlist.tracks ? `${playlist.tracks.length} songs` : `${playlist.songCount || ''} songs`}</p>
     </Link>
   );
 }
 
 export function SectionRow({ title, subtitle, children, href }) {
   return (
-    <section className="mt-7">
-      <div className="flex items-end justify-between mb-3 px-1">
-        <div>
-          <h2 className="text-xl font-extrabold tracking-tight">{title}</h2>
-          {subtitle && <p className="text-xs text-dim">{subtitle}</p>}
+    <section className="mt-10 first:mt-6">
+      <div className="flex items-end justify-between mb-3.5 px-1 gap-4">
+        <div className="min-w-0">
+          <h2 className="h-section truncate">{title}</h2>
+          {subtitle && <p className="t-caption mt-0.5 truncate">{subtitle}</p>}
         </div>
-        {href && <Link to={href} className="text-xs font-bold text-dim hover:text-white">Show all</Link>}
+        {href && <Link to={href} className="text-[13px] font-semibold accent hover:opacity-75 transition-opacity shrink-0">See All</Link>}
       </div>
-      <div className="flex gap-3 overflow-x-auto no-scrollbar snap-x pb-2 px-1 [&>*]:snap-start">{children}</div>
+      <div className="flex gap-4 overflow-x-auto no-scrollbar snap-x pb-2 px-1 [&>*]:snap-start">{children}</div>
     </section>
   );
 }
