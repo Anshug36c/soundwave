@@ -114,12 +114,21 @@ const cache = new Map(); // key -> { v, t, ttl }
 function getCache(key) {
   const h = cache.get(key);
   if (!h) return null;
-  if (Date.now() - h.t > h.ttl) { cache.delete(key); return null; }
+  if (Date.now() - h.t > h.ttl) return null; // keep entry: peekCache may serve it stale
   return h.v;
 }
 function setCache(key, val, ttl = 5 * 60 * 1000) {
   if (cache.size > 500) cache.delete(cache.keys().next().value);
   cache.set(key, { v: val, t: Date.now(), ttl });
+}
+const SEARCH_TTL = parseInt(process.env.SEARCH_TTL || '', 10) || 30 * 60 * 1000; // searches rarely change: cache half an hour
+const swrBusy = new Set(); // keys currently revalidating in the background
+/** stale-while-revalidate helper: expired-but-recent value, for instant repeats */
+function peekCache(key, maxAge = 2 * 3600 * 1000) {
+  const h = cache.get(key);
+  if (!h) return null;
+  if (Date.now() - h.t > maxAge) { cache.delete(key); return null; }
+  return h.v;
 }
 
 // ---------------- shared fetch ----------------
@@ -1357,6 +1366,10 @@ async function resolveMirrorInner(source, sid) {
     if (source === 'arc') {
       return await arcMeta(String(sid));
     }
+    if (source === 'dz') {
+      const t = await dzTrack(String(sid)).catch(() => null);
+      return t?.preview ? { mp3s: { '96': t.preview }, type: 'audio/mpeg' } : null;
+    }
   return null;
 }
 async function resolveMirror(source, sid) {
@@ -1995,6 +2008,45 @@ async function deezerPreview(title, artist) {
   } finally { clearTimeout(to); }
 }
 
+// Deezer catalogue in /api/search: mainstream coverage the scrape providers
+// miss. Rows are 30s previews (isPreview) and only fill gaps — they never
+// displace a full-stream match, and merging adds them as a last-resort mirror.
+async function dzSearchSongs(q, limit = 6) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    const r = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=${limit}`, { signal: ctrl.signal });
+    if (!r.ok) return [];
+    const out = [];
+    for (const t of (await r.json())?.data || []) {
+      if (!t?.id || !t.title || !t.preview) continue;
+      out.push({
+        id: `dz:${t.id}`, source: 'dz', sourceId: String(t.id), type: 'track',
+        title: String(t.title).trim(),
+        artist: { id: '', name: t.artist?.name || 'Unknown', image: t.artist?.picture_medium || '' },
+        artists: [], album: { id: '', name: t.album?.title || '', image: t.album?.cover_medium || '' },
+        duration: +t.duration || 0,
+        image: t.album?.cover_medium || t.artist?.picture_medium || '',
+        streamUrl: `/api/audio?src=dz&id=${t.id}`, previewUrl: t.preview, isPreview: true,
+        codec: '', quality: 'preview', explicit: false, year: String(t.release_date || '').slice(0, 4), language: '', plays: 0,
+      });
+    }
+    return out;
+  } catch { return []; } finally { clearTimeout(to); }
+}
+const dzTrackCache = new Map(); // id -> { preview, t }
+async function dzTrack(sid) {
+  const h = dzTrackCache.get(String(sid));
+  if (h && Date.now() - h.t < 3600000) return h;
+  const r = await fetch(`https://api.deezer.com/track/${encodeURIComponent(String(sid))}`, { signal: AbortSignal.timeout(6000) });
+  if (!r.ok) return null;
+  const j = await r.json();
+  const e = { preview: j?.preview || '', t: Date.now() };
+  if (dzTrackCache.size > 300) dzTrackCache.delete(dzTrackCache.keys().next().value);
+  dzTrackCache.set(String(sid), e);
+  return e;
+}
+
 function tpScore(qt, qa, tt, ta) {
   const w = s => new Set(String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(x => x.length > 1));
   const A = w(`${qt} ${qa}`), B = w(`${tt} ${ta}`);
@@ -2390,25 +2442,25 @@ app.get('/api/search', async (req, res) => {
   const q = (req.query.q || '').trim().slice(0, 200);
   const type = (req.query.type || 'all').toLowerCase();
   if (!q) return res.json({ songs: [], albums: [], artists: [] });
-  const cached = getCache(req.originalUrl);
+  // normalized key: case/param-order variants share one cache entry
+  const ckey = 'search:' + [q.toLowerCase(), type, (req.query.y || '').trim(), req.query.minD || '', req.query.maxD || '', (req.query.lang || '').trim(), (req.query.exp || '').trim()].join('|');
+  const cached = getCache(ckey);
   if (cached) return res.json(cached);
+  const stale = peekCache(ckey);
+  const compute = async () => {
   const nl = parseNL(q);
   if (nl.mode === 'similar' && nl.ref) {
     const likeRes = await nlSimilar(nl.ref).catch(() => null);
     if (likeRes?.songs?.length) {
       nl.refLabel = likeRes.refLabel;
-      const payload = { songs: likeRes.songs, albums: [], artists: [], nl };
-      setCache(req.originalUrl, payload);
-      return res.json(payload);
+      return { songs: likeRes.songs, albums: [], artists: [], nl };
     }
     nl.note = `Couldn't find “${nl.ref}” — showing text matches instead.`;
     nl.mode = null;
   }
   const effQ = nl.unsupported ? '' : (nl.cleaned || q);
   if (nl.unsupported && !effQ) {
-    const payload = { songs: [], albums: [], artists: [], nl };
-    setCache(req.originalUrl, payload);
-    return res.json(payload);
+    return { songs: [], albums: [], artists: [], nl };
   }
   const yF = (req.query.y || '').trim().toLowerCase();
   const minD = parseInt(req.query.minD || '0', 10) || 0;
@@ -2420,10 +2472,10 @@ app.get('/api/search', async (req, res) => {
     let songs = [], albums = [], artists = [], youtube = [], ytVideos = [];
     if (type === 'all' || type === 'artists') {
       const [a, b, c, s] = await Promise.all([
-        safeSearch(djpSearchArtists(effQ, 6), 20000),
-        safeSearch(djSearchArtists(effQ, 6), 20000),
-        safeSearch(mrjSearchArtists(effQ, 6), 20000),
-        safeSearch(saavnSearchArtists(effQ, 6), 20000),
+        safeSearch(djpSearchArtists(effQ, 6), 8000),
+        safeSearch(djSearchArtists(effQ, 6), 8000),
+        safeSearch(mrjSearchArtists(effQ, 6), 8000),
+        safeSearch(saavnSearchArtists(effQ, 6), 8000),
       ]);
       const seen = new Set();
       artists = [...a, ...b, ...c, ...s].filter(ar => {
@@ -2440,18 +2492,27 @@ app.get('/api/search', async (req, res) => {
       return n && qw.every(w => n.includes(w));
     });
     const artistMode = !!artistHit;
+    // albums run concurrently with songs instead of a third sequential leg
+    const albumsP = (type === 'all' || type === 'albums') ? Promise.all([
+      safeSearch(djpSearchAlbums(effQ, 5), 8000),
+      safeSearch(djSearchAlbums(effQ, 4), 8000),
+      safeSearch(mrjSearchAlbums(effQ, 4), 8000),
+      safeSearch(saavnSearchAlbums(effQ, 4), 8000),
+    ]).then(([aa, bb, cc, ss]) => [...aa, ...bb, ...cc, ...ss]).catch(() => []) : Promise.resolve([]);
+    let dzP = Promise.resolve([]);
+    if (type === 'all' || type === 'songs') dzP = safeSearch(dzSearchSongs(effQ, 6), 6000);
     if (type === 'all' || type === 'songs') {
       const L = artistMode ? [18, 14, 14, 12] : [10, 8, 8, 8];
       const [a, b, c, s, y, yv, au] = await Promise.all([
-        safeSearch(djpSearchSongs(effQ, L[0]), 25000),
-        safeSearch(djSearchSongs(effQ, L[1]), 25000),
-        safeSearch(mrjSearchSongs(effQ, L[2]), 25000),
-        safeSearch(saavnSearchSongs(effQ, L[3]), 25000),
-        safeSearch(ytSearchSongs(effQ, 10).catch(e => { tripSource('yt'); return []; }), 15000),
+        safeSearch(djpSearchSongs(effQ, L[0]), 10000),
+        safeSearch(djSearchSongs(effQ, L[1]), 10000),
+        safeSearch(mrjSearchSongs(effQ, L[2]), 10000),
+        safeSearch(saavnSearchSongs(effQ, L[3]), 10000),
+        safeSearch(ytSearchSongs(effQ, 10).catch(e => { tripSource('yt'); return []; }), 10000),
         // Real YouTube videos. Unlike the YouTube Music results above these
         // actually play: the client embeds the official player for them.
-        safeSearch(ytVideoSearch(effQ, 12).catch(() => []), 15000),
-        safeSearch(audiusSearchSongs(effQ, 6).catch(e => { tripSource('audius'); return []; }), 9000),
+        safeSearch(ytVideoSearch(effQ, 12).catch(() => []), 10000),
+        safeSearch(audiusSearchSongs(effQ, 6).catch(e => { tripSource('audius'); return []; }), 6000),
       ]);
       youtube = (y || []).slice(0, 10);
       ytVideos = (yv || []).slice(0, 12);
@@ -2469,16 +2530,20 @@ app.get('/api/search', async (req, res) => {
         songs.sort((x, y) => er(x) - er(y));
       }
       songs = songs.slice(0, artistMode ? 40 : 20);
+      // Deezer gap-fill: 30s-preview rows only where no full-stream provider
+      // matched, appended after full results so they never crowd them out.
+      const dz = await dzP;
+      if (dz.length) {
+        const have = new Set(songs.map(t => normKey(t.title, t.artist?.name)));
+        const fill = dz.filter(t => {
+          if (have.has(normKey(t.title, t.artist?.name))) return false;
+          if (artistMode) return qw.every(w => normName(t.artist?.name).includes(w));
+          return true;
+        }).slice(0, artistMode ? 4 : 6);
+        if (fill.length) songs = [...songs, ...fill];
+      }
     }
-    if (type === 'all' || type === 'albums') {
-      const [a, b, c, s] = await Promise.all([
-        safeSearch(djpSearchAlbums(effQ, 5), 20000),
-        safeSearch(djSearchAlbums(effQ, 4), 20000),
-        safeSearch(mrjSearchAlbums(effQ, 4), 20000),
-        safeSearch(saavnSearchAlbums(effQ, 4), 20000),
-      ]);
-      albums = [...a, ...b, ...c, ...s].slice(0, 12);
-    }
+    albums = (await albumsP).slice(0, 12);
     if (effY || minD || maxD || langF || expF === 'clean') {
       songs = songs.filter(t => passFilters(t, { y: effY, minD, maxD, lang: langF, clean: expF === 'clean' }));
       if (effY) albums = albums.filter(a => passYear(a.year, effY));
@@ -2490,8 +2555,6 @@ app.get('/api/search', async (req, res) => {
       if (weak) didYouMean = await suggestCorrection(effQ).catch(() => '');
     }
     const payload = { songs, albums, artists, youtube, ytVideos, ...(artistMode ? { artist: { name: artistHit.name } } : {}), ...((nl.note || nl.mode || nl.year || nl.unsupported || nl.cleaned) ? { nl } : {}), ...(didYouMean ? { didYouMean } : {}) };
-    setCache(req.originalUrl, payload);
-    res.json(payload);
     // warm: resolve (API + decrypt) the top Saavn stream URLs in the background
     // so the first tap plays instantly instead of paying ~1.5s of latency
     try {
@@ -2505,6 +2568,22 @@ app.get('/api/search', async (req, res) => {
         saavnStreamUrls(sid).catch(() => {});
       }
     } catch { /* noop */ }
+    return payload;
+  } catch (e) { throw e; }
+  }; // end compute
+  try {
+    if (stale) {
+      // stale-while-revalidate: repeat searches answer instantly from the
+      // expired cache while one background refresh updates it
+      if (!swrBusy.has(ckey)) {
+        swrBusy.add(ckey);
+        compute().then(p => setCache(ckey, p, SEARCH_TTL)).catch(() => {}).finally(() => swrBusy.delete(ckey));
+      }
+      return res.json(stale);
+    }
+    const payload = await compute();
+    setCache(ckey, payload, SEARCH_TTL);
+    res.json(payload);
   } catch (e) { res.status(502).json({ error: 'Search failed', detail: e.message }); }
 });
 
