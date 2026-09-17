@@ -490,8 +490,12 @@ export function FullPlayer() {
         dragFade(0);
         if (dy > 100 && e.currentTarget.scrollTop <= 0) requestClose();
       }}>
-      <div key={track.image} ref={bgArtRef} className={`${closing ? 'fade-out' : 'fade-in-slow'} absolute inset-0 bg-cover bg-center blur-3xl scale-125 opacity-50`} style={{ backgroundImage: `url(${track.image})` }} />
-      <div ref={bgDimRef} className={`${closing ? 'fade-out' : 'fade-in'} absolute inset-0 bg-black/80 backdrop-blur-2xl`} />
+      {/* fixed, not absolute: the dialog is the scroll container, and absolute
+          backdrops scroll away with the sheet, leaving the page bleeding
+          through behind the panels. Viewport-fixed keeps the translucent
+          backdrop under the sheet at every scroll position. */}
+      <div key={track.image} ref={bgArtRef} className={`${closing ? 'fade-out' : 'fade-in-slow'} fixed inset-0 bg-cover bg-center blur-3xl scale-125 opacity-50`} style={{ backgroundImage: `url(${track.image})` }} />
+      <div ref={bgDimRef} className={`${closing ? 'fade-out' : 'fade-in'} fixed inset-0 bg-black/80 backdrop-blur-2xl`} />
       <div ref={sheetRef} className={`${closing ? 'sheet-out' : 'sheet-in'} relative max-w-5xl mx-auto px-4 min-h-full flex flex-col`}
         style={{ paddingTop: 'calc(1.5rem + env(safe-area-inset-top, 0px))', paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}>
         <div className="flex items-center justify-between select-none">

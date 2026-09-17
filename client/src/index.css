@@ -67,6 +67,8 @@
   --chrome: rgba(18, 18, 18, 0.72);
   --edge: rgba(255, 255, 255, .03);   /* light top edge on a floating bar */
   --scrim: rgba(0, 0, 0, .6);         /* behind a modal */
+  --panel-solid: #1a1a1a;             /* opaque base for panels that float over
+                                         translucent backdrops (the player sheet) */
   --shimmer: rgba(128, 128, 128, .25);
   --slider-track: rgba(128, 128, 128, .4);
   --scrollbar: rgba(255, 255, 255, .25);
@@ -216,8 +218,13 @@ body {
   background: var(--surface-1);
   border: 1px solid var(--hairline);
   border-radius: var(--r-lg);
-  box-shadow: var(--cshadow, none);
-}
+  box-shadow: var(--cshadow, none);}
+/* The player sheet floats over a translucent blurred-artwork backdrop, so the
+   usual surface wash reads as see-through there: lyrics / studio / details
+   panels (and the sheet's popovers) get an opaque base instead. The
+   translucent backdrop around them is intentional and stays. Page-level
+   .panel usage keeps the wash. */
+[aria-label="Now playing"] .panel { background: var(--panel-solid); }
 /* Media tile: Apple Music has no card chrome at all — the artwork is the card.
    So there is no background and no lift, only the image responding. */
 .media-card {
