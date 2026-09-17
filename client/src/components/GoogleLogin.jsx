@@ -98,14 +98,15 @@ export function AuthAvatar() {
 
   if (!authUser) {
     return (
-      <Link to="/settings" className="h-9 px-4 rounded-full bg-accent grid place-items-center font-bold text-black text-sm shrink-0" aria-label="Sign in" title="Sign in with Google">
+      <Link to="/settings" className="btn-accent px-4 grid place-items-center text-sm shrink-0" aria-label="Sign in" title="Sign in with Google">
         Sign in
       </Link>
     );
   }
   return (
     <div className="relative shrink-0">
-      <button onClick={() => setOpen(v => !v)} aria-label="Account" aria-haspopup="menu" aria-expanded={open} title={authUser.email}>
+      <button onClick={() => setOpen(v => !v)} aria-label="Account" aria-haspopup="menu" aria-expanded={open} title={authUser.email}
+        className="w-11 h-11 grid place-items-center rounded-full">
         {profile.picture
           ? <img src={profile.picture} alt="" referrerPolicy="no-referrer" className="w-9 h-9 rounded-full object-cover" />
           : <span className="w-9 h-9 rounded-full bg-accent grid place-items-center font-bold text-black">{(profile.name?.[0] || 'G').toUpperCase()}</span>}

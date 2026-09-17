@@ -87,9 +87,9 @@ export function MiniPlayer() {
   const isLiked = !!liked[track.id];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-30 player-in">
-      {/* mobile strip */}
-      <div className="md:hidden pb-safe ui-dark"
+    <div className="fixed left-0 right-0 z-30 player-in mini-offset">
+      {/* mobile strip — sits above the tab bar; the bar owns the safe area */}
+      <div className="md:hidden ui-dark"
         onTouchStart={e => { swipeX.current = e.touches[0].clientX; }}
         onTouchEnd={e => {
           if (swipeX.current == null) return;

@@ -2,7 +2,7 @@ import { NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { AuthAvatar } from './GoogleLogin';
-import { HomeIcon, SearchIcon, LibraryIcon, PlusIcon, HeartIcon, NoteIcon, ChevronLeftIcon, ChevronRightIcon, MoonIcon, SunIcon } from './Icons';
+import { HomeIcon, SearchIcon, LibraryIcon, PlusIcon, HeartIcon, NoteIcon, ChevronLeftIcon, MoonIcon, SunIcon } from './Icons';
 
 /**
  * Flags the scroll container's parent with data-scrolled so the top bar can gain
@@ -117,10 +117,13 @@ export function Sidebar() {
   );
 }
 
+const TAB_ROUTES = ['/', '/search', '/library', '/liked'];
+
 export function TopBar() {
   const navigate = useNavigate();
   const location = useLocation();
   const onSearchPage = location.pathname === '/search';
+  const onTab = TAB_ROUTES.includes(location.pathname);
   const theme = useStore(s => s.theme);
   const setTheme = useStore(s => s.setTheme);
   const [q, setQ] = useState('');
@@ -128,16 +131,23 @@ export function TopBar() {
   useScrollSpy();
 
   return (
-    <header className="topbar sticky top-0 z-20">
-      <div className="flex items-center gap-2 px-4 py-2.5">
-        <button onClick={() => navigate(-1)} className="btn-quiet w-9 h-9 grid place-items-center shrink-0" aria-label="Go back">
-          <ChevronLeftIcon size={18} />
-        </button>
-        <button onClick={() => navigate(1)} className="btn-quiet w-9 h-9 place-items-center shrink-0 hidden sm:grid" aria-label="Go forward">
-          <ChevronRightIcon size={18} />
-        </button>
-        <div className="flex-1 max-w-xl relative">
-          {/* one search bar per page: the Search page has the rich input, so the topbar yields there */}
+    <header className="topbar sticky top-0 z-20 pt-safe">
+      <div className="flex items-center gap-1.5 px-3 py-2 sm:px-4 sm:py-2.5">
+        {onTab ? (
+          /* Brand lives in the header on phones: the sidebar that holds it on
+             wide screens is hidden below md. */
+          <Link to="/" className="flex items-center gap-2 pl-1 pr-2 py-1.5 shrink-0" aria-label="SoundWave home">
+            <WaveLogo size={28} />
+            <span className="hidden min-[340px]:block text-[17px] font-extrabold tracking-[-0.02em]" style={{ color: 'var(--text)' }}>SoundWave</span>
+          </Link>
+        ) : (
+          <button onClick={() => navigate(-1)} className="btn-quiet w-9 h-9 grid place-items-center shrink-0" aria-label="Go back">
+            <ChevronLeftIcon size={20} />
+          </button>
+        )}
+        {/* The inline search is a wide-screen shortcut; on phones the Search
+            tab owns search, so the header gives the space back to content. */}
+        <div className="hidden md:block flex-1 max-w-xl relative">
           {!onSearchPage && (
           <form onSubmit={(e) => { e.preventDefault(); if (q.trim()) navigate(`/search?q=${encodeURIComponent(q.trim())}`); }}>
             <SearchIcon size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-dim pointer-events-none" />
@@ -146,6 +156,7 @@ export function TopBar() {
           </form>
           )}
         </div>
+        <div className="flex-1 md:hidden" />
         <button onClick={() => window.dispatchEvent(new Event('soundwave:palette'))} className="h-9 px-3 rounded-full bg-[var(--surface-2)] hover:bg-[var(--surface-3)] hidden sm:grid place-items-center text-[13px] font-semibold shrink-0 transition-colors" aria-label="Command palette" title="Command palette (Ctrl+K)">⌘K</button>
         <button onClick={cycleTheme} className="btn-quiet w-9 h-9 grid place-items-center shrink-0" aria-label="Cycle theme" title={`Theme: ${theme} (click to change)`}>
           {theme === 'dark' ? <SunIcon size={18} /> : <MoonIcon size={18} />}
@@ -163,14 +174,24 @@ const tabs = [
   { to: '/liked', label: 'Liked', Icon: HeartIcon },
 ];
 
-export function BottomNav({ hasPlayer }) {
+export function BottomNav() {
+  /* The bar owns the bottom edge (and the safe area) at all times; the mini
+     player stacks above it via .mini-offset. h-14 must stay in sync with
+     --bottomnav-h. */
   return (
-    <nav className={`md:hidden fixed left-0 right-0 z-20 glass border-t border-soft ${hasPlayer ? 'bottomnav-offset' : 'bottom-0 pb-safe'}`} style={{ background: 'var(--chrome)' }} aria-label="Mobile">
+    <nav className="md:hidden fixed left-0 right-0 bottom-0 z-20 pb-safe glass border-t border-soft" style={{ background: 'var(--chrome)' }} aria-label="Mobile">
       <div className="grid grid-cols-4 h-14">
         {tabs.map(({ to, label, Icon }) => (
           <NavLink key={to} to={to}
-            className={({ isActive }) => `flex flex-col items-center justify-center gap-1 text-[10px] font-semibold transition-colors duration-200 ${isActive ? 'accent' : 'text-dim'}`}>
-            {({ isActive }) => (<><Icon size={22} active={isActive} />{label}</>)}
+            className={({ isActive }) => `flex flex-col items-center justify-center gap-0.5 text-[11px] font-semibold transition-colors duration-200 ${isActive ? 'accent' : 'text-dim'}`}>
+            {({ isActive }) => (<>
+              {/* active pill: a quiet accent wash marks the current tab without
+                  adding a second colour to the bar */}
+              <span className={`grid place-items-center rounded-full px-4 py-0.5 -my-0.5 transition-colors duration-200 ${isActive ? 'bg-[var(--accent-ring)]' : ''}`}>
+                <Icon size={21} active={isActive} />
+              </span>
+              {label}
+            </>)}
           </NavLink>
         ))}
       </div>
@@ -189,7 +210,8 @@ export function OfflineBanner() {
   if (online) return null;
   return (
     <div className="px-4 md:px-6 pt-3">
-      <div className="max-w-6xl mx-auto px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-sm font-bold" role="alert">
+      {/* aligns with <main>'s content column: no extra inner inset */}
+      <div className="max-w-6xl mx-auto py-2.5 px-4 rounded-xl bg-red-500/10 border border-red-500/30 text-sm font-bold" role="alert">
         You're offline — saved songs still play. We'll reconnect automatically.
       </div>
     </div>
@@ -199,7 +221,8 @@ export function OfflineBanner() {
 export function Toasts() {
   const toasts = useStore(s => s.toasts);
   return (
-    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 items-center pointer-events-none">
+    <div className="fixed left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 items-center pointer-events-none"
+      style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}>
       {toasts.map(t => (
         <div key={t.id} className={`toast-in px-4 py-2 rounded-full text-sm font-semibold shadow-lg ${t.kind === 'error' ? 'bg-red-600 text-white' : 'bg-accent text-black'}`}>{t.msg}</div>
       ))}

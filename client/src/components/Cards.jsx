@@ -140,8 +140,8 @@ export function PlaylistCard({ playlist, to }) {
 
 export function SectionRow({ title, subtitle, children, href }) {
   return (
-    <section className="mt-10 first:mt-6">
-      <div className="flex items-end justify-between mb-3.5 px-1 gap-4">
+    <section className="mt-8 first:mt-4">
+      <div className="flex items-end justify-between mb-3 px-1 gap-4">
         <div className="min-w-0">
           <h2 className="h-section truncate">{title}</h2>
           {subtitle && <p className="t-caption mt-0.5 truncate">{subtitle}</p>}

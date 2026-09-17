@@ -106,6 +106,10 @@
   --tap: 44px;
   --tap-sm: 40px;
 
+  /* ---- chrome dimensions. The tab bar height is referenced by the mini
+         player's offset, so it lives here once instead of twice. ---- */
+  --bottomnav-h: 56px;
+
   /* ---- type ---- */
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
                'Inter', 'Figtree', 'Segoe UI Variable Text', 'Segoe UI', Roboto,
@@ -299,7 +303,13 @@ button, a, [role="button"], input[type="range"] { touch-action: manipulation; -w
 #main { overscroll-behavior-y: contain; }
 .sheet-scroll { overscroll-behavior: contain; }
 .pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
-.bottomnav-offset { bottom: calc(68px + env(safe-area-inset-bottom, 0px)); } /* = mobile strip: 4px progress + 64px bar */
+.pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+/* Thumb-first ordering: on a phone the mini player sits ABOVE the tab bar so
+   transport controls are never in the home-indicator zone; the tab bar owns
+   the bottom edge and the safe area. On wider screens the tab bar disappears
+   and the player returns flush to the bottom. */
+.mini-offset { bottom: calc(var(--bottomnav-h) + env(safe-area-inset-bottom, 0px)); }
+@media (min-width: 768px) { .mini-offset { bottom: 0; } }
 @media (pointer: coarse) {
   /* iOS auto-zooms inputs under 16px — force readable size on touch */
   input, select, textarea { font-size: 16px !important; }

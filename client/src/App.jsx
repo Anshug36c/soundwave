@@ -21,6 +21,11 @@ export default function App() {
   useAudioEngine();
 
   const location = useLocation();
+  // a new page always starts at its top; carrying the old scroll position
+  // into a shorter page reads as a layout jump
+  useEffect(() => {
+    document.getElementById('main')?.scrollTo({ top: 0 });
+  }, [location.pathname]);
   useEffect(() => {
     window.__SOUNDWAVE_MOUNTED = true;
     if (theme !== 'dark' && theme !== 'light') { useStore.getState().setTheme('dark'); return; }
@@ -80,7 +85,7 @@ export default function App() {
           </div>
         </main>
       </div>
-      <BottomNav hasPlayer={hasPlayer} />
+      <BottomNav />
       <MiniPlayer />
       <FullPlayer />
       <QueueDrawer />
