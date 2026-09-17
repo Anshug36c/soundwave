@@ -176,7 +176,7 @@ function Lyrics({ track }) {
   useEffect(() => {
     if (!track) return;
     setLoading(true); setLyrics(null);
-    api.lyrics({ artist: track.artist?.name, title: track.title })
+    api.lyrics({ artist: track.artist?.name, title: track.title, duration: track.duration, album: track.album?.name })
       .then(r => setLyrics(r.lyrics))
       .catch(() => setLyrics(null))
       .finally(() => setLoading(false));

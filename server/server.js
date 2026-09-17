@@ -2279,16 +2279,71 @@ app.get('/api/artist/:source/:id', async (req, res) => {
   } catch (e) { res.status(502).json({ error: 'Artist failed', detail: e.message }); }
 });
 
+// ---------------- Lyrics: LRCLIB (synced) first, lyrics.ovh fallback ----------------
+// Recipe ported from EchoMusicApp's LrcLib module: junk-phrase title cleanup,
+// primary-artist extraction, 5 escalating search strategies, duration match
+// (+-5s) preferring synced lines.
+const LRC_JUNK_RE = /\s*\((official|video|audio|lyrics?|visualizer|hd|hq|4k|remaster|remix|live|acoustic|version|edit|extended|radio|clean|explicit)[^)]*\)|\s*\[[^\]]*(official|video|audio|lyrics?|visualizer|hd|hq|4k|remaster|remix|live|acoustic|version|edit|extended|radio|clean|explicit)[^\]]*\]|\s*\u3010.*?\u3011|\s*\|.*$|\s*-\s*(official|video|audio|lyrics?|visualizer).*$/gi;
+const LRC_FEAT_RE = /\s*\((feat|ft)\..*?\)|\s*(feat|ft)\..*$/gi;
+const lrcCleanTitle = (t) => String(t || '').replace(LRC_JUNK_RE, '').replace(LRC_FEAT_RE, '').trim();
+function lrcPrimaryArtist(a) {
+  let c = String(a || '').trim();
+  for (const sep of [' & ', ' and ', ', ', ' x ', ' X ', ' feat. ', ' feat ', ' ft. ', ' ft ', ' featuring ', ' with ']) {
+    const i = c.toLowerCase().indexOf(sep);
+    if (i > 0) { c = c.slice(0, i); break; }
+  }
+  return c.trim();
+}
+async function lrcSearch(params) {
+  const u = new URL('https://lrclib.net/api/search');
+  for (const [k, v] of Object.entries(params)) if (v) u.searchParams.set(k, v);
+  const r = await fetch(u, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'SoundWave/1.0 (lyrics; +https://soundwave-nh48.onrender.com)' } });
+  if (!r.ok) return [];
+  const j = await r.json().catch(() => []);
+  return (Array.isArray(j) ? j : []).filter(t => t && (t.syncedLyrics || t.plainLyrics));
+}
+function lrcPick(tracks, duration) {
+  if (!tracks.length) return null;
+  if (!duration || duration <= 0) return tracks.find(t => t.syncedLyrics) || tracks[0];
+  const close = (t) => Math.abs((+t.duration || 0) - duration) <= 5;
+  return tracks.find(t => t.syncedLyrics && close(t)) || tracks.find(t => close(t)) || tracks.find(t => t.syncedLyrics) || tracks[0];
+}
+async function lrcLyrics(title, artist, album, duration) {
+  const ct = lrcCleanTitle(title), ca = lrcPrimaryArtist(artist);
+  const strategies = [
+    { track_name: ct, artist_name: ca, album_name: (album || '').trim() },
+    { track_name: ct },
+    { q: `${ca} ${ct}`.trim() },
+    { q: ct },
+  ];
+  if (ct !== String(title || '').trim() || ca !== String(artist || '').trim()) {
+    strategies.push({ track_name: String(title || '').trim(), artist_name: String(artist || '').trim() });
+  }
+  for (const s of strategies) {
+    const hits = await lrcSearch(s).catch(() => []);
+    const best = lrcPick(hits, duration);
+    if (best) return { text: best.syncedLyrics || best.plainLyrics, synced: !!best.syncedLyrics };
+  }
+  return null;
+}
 app.get('/api/lyrics', async (req, res) => {
   const artist = (req.query.artist || '').trim();
   const title = (req.query.title || '').trim();
+  const album = (req.query.album || '').trim();
+  const duration = Math.round(+req.query.duration || 0);
   if (!artist || !title) return res.json({ lyrics: null });
   const cached = getCache(req.originalUrl);
   if (cached) return res.json(cached);
   try {
-    const r = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`, { signal: AbortSignal.timeout(10000) });
+    const hit = await lrcLyrics(title, artist, album, duration).catch(() => null);
+    if (hit?.text) {
+      const payload = { lyrics: hit.text, synced: hit.synced, source: 'lrclib' };
+      setCache(req.originalUrl, payload, 3600000);
+      return res.json(payload);
+    }
+    const r = await fetch(`https://api.lyrics.ovh/v1/${encodeURIComponent(lrcPrimaryArtist(artist))}/${encodeURIComponent(lrcCleanTitle(title))}`, { signal: AbortSignal.timeout(10000) });
     const j = await r.json().catch(() => ({}));
-    const payload = { lyrics: j.lyrics || null };
+    const payload = { lyrics: j.lyrics || null, synced: false, source: j.lyrics ? 'ovh' : null };
     setCache(req.originalUrl, payload, 3600000);
     res.json(payload);
   } catch { res.json({ lyrics: null }); }

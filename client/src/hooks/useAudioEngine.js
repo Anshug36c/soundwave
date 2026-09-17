@@ -22,6 +22,7 @@ function getAudio() {
   if (!audio) {
     audio = new Audio();
     audio.preload = 'auto';
+    try { window.__audio = audio; } catch { /* noop */ } // test/debug handle
   }
   return audio;
 }
@@ -391,7 +392,30 @@ function onEnded() {
   const el = getAudio();
   const { repeat, next, index, queue } = useStore.getState();
   if (repeat === 'one') { el.currentTime = 0; syncPlayback(); return; }
-  if (index >= queue.length - 1 && repeat === 'off') { useStore.getState().setPlaying(false); return; }
+  if (index >= queue.length - 1 && repeat === 'off') {
+    // queue exhausted: Autoplay appends similar songs and keeps going
+    // (Echo Brain-style); any failure or user interference stops cleanly
+    const st = useStore.getState();
+    const last = st.queue[st.index];
+    if (st.autoplay && last?.title) {
+      api.similar(last.title, last.artist?.name || '', 8).then(j => {
+        const songs = (j?.songs || []).filter(t => t?.id && t.id !== last.id);
+        const cur = useStore.getState();
+        if (cur.index !== index || cur.queue.length !== queue.length || !songs.length) {
+          if (cur.index >= cur.queue.length - 1 && cur.repeat === 'off') cur.setPlaying(false);
+          return;
+        }
+        cur.appendTracks(songs);
+        cur.toast('Autoplay: kept playing similar songs');
+        cur.next();
+      }).catch(() => {
+        const cur = useStore.getState();
+        if (cur.index >= cur.queue.length - 1 && cur.repeat === 'off') cur.setPlaying(false);
+      });
+      return;
+    }
+    useStore.getState().setPlaying(false); return;
+  }
   next();
 }
 function onKey(e) {
@@ -445,6 +469,7 @@ function recreateAudio() {
   el.muted = useStore.getState().muted;
   try { el.playbackRate = useStore.getState().playbackRate || 1; } catch { /* noop */ }
   audio = el;
+  try { window.__audio = el; } catch { /* noop */ } // test/debug handle
   attachAudio(el);
   return el;
 }

@@ -107,6 +107,12 @@ export const useStore = create(
         if (t) get().pushHistory(t);
       },
       addToQueue: (track) => { if (!track?.id) return; set(s => ({ queue: [...s.queue, track] })); },
+      appendTracks: (tracks) => set(s => {
+        const have = new Set(s.queue.map(t => t?.id));
+        const fresh = (tracks || []).filter(t => t?.id && !have.has(t.id));
+        if (!fresh.length) return s;
+        return { queue: [...s.queue, ...fresh] };
+      }),
       addManyToQueue: (tracks) => {
         const list = (tracks || []).filter(t => t?.id);
         if (!list.length) return;
@@ -243,6 +249,7 @@ export const useStore = create(
       theme: 'dark',
       quality: 'auto', // auto = pick tier from network speed (effectiveType)
       crossfade: true, // smooth fade between tracks
+      autoplay: true, // queue ended: keep playing similar songs (Echo Brain-style)
       studioOn: false, // Studio sound: WebAudio EQ + visualizer via proxied streams
       eqEnabled: true,
       eqGains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -256,6 +263,7 @@ export const useStore = create(
       setTheme: (theme) => set({ theme }),
       setQuality: (quality) => set({ quality }),
       setCrossfade: (v) => set({ crossfade: v }),
+      setAutoplay: (v) => set({ autoplay: v }),
       setStudioOn: (v) => set({ studioOn: v }),
       setEqEnabled: (v) => set({ eqEnabled: v }),
       setEqGain: (i, db) => set(s => { const eqGains = [...s.eqGains]; eqGains[i] = db; return { eqGains, eqPreset: 'custom' }; }),
@@ -307,7 +315,7 @@ export const useStore = create(
         queue: s.queue.slice(0, 200), index: s.index,
         liked: s.liked, playlists: s.playlists, followedArtists: s.followedArtists,
         savedAlbums: s.savedAlbums, history: s.history, playCounts: s.playCounts, downloads: s.downloads,
-        theme: s.theme, quality: s.quality, playbackRate: s.playbackRate, crossfade: s.crossfade,
+        theme: s.theme, quality: s.quality, playbackRate: s.playbackRate, crossfade: s.crossfade, autoplay: s.autoplay,
         studioOn: s.studioOn, eqEnabled: s.eqEnabled, eqGains: s.eqGains,
         eqPreset: s.eqPreset, eqPreamp: s.eqPreamp, normalizeOn: s.normalizeOn,
         profile: s.profile, liveAccount: s.liveAccount, searchHistory: s.searchHistory, volume: s.volume, gain: s.gain,

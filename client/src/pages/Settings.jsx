@@ -56,6 +56,8 @@ export default function Settings() {
   const crossfade = useStore(s => s.crossfade);
   const setCrossfade = useStore(s => s.setCrossfade);
   const instantPreview = useStore(s => s.instantPreview);
+  const autoplay = useStore(s => s.autoplay);
+  const setAutoplay = useStore(s => s.setAutoplay);
   const setInstantPreview = useStore(s => s.setInstantPreview);
   const profile = useStore(s => s.profile);
   const setProfile = useStore(s => s.setProfile);
@@ -151,6 +153,9 @@ export default function Settings() {
         </Row>
         <Row label="Instant FLAC preview" desc="Play a 30s FLAC preview instantly, then auto-switch to the full MP3">
           <button onClick={() => { setInstantPreview(!instantPreview); toast(instantPreview ? 'Instant preview off' : 'Instant preview on'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${instantPreview ? 'bg-accent' : 'bg-white/10'}`} style={instantPreview ? { color: 'var(--accent-ink, #000)' } : {}}>{instantPreview ? 'ON' : 'OFF'}</button>
+        </Row>
+        <Row label="Autoplay" desc="When the queue ends, keep playing similar songs">
+          <button onClick={() => { setAutoplay(!autoplay); toast(autoplay ? 'Autoplay off' : 'Autoplay on'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${autoplay ? 'bg-accent' : 'bg-white/10'}`} style={autoplay ? { color: 'var(--accent-ink, #000)' } : {}}>{autoplay ? 'ON' : 'OFF'}</button>
         </Row>
         <Row label="Install app" desc="Add SoundWave to your home screen (PWA)">
           <button onClick={async () => { if (deferred) { deferred.prompt(); await deferred.userChoice; setDeferred(null); } else toast('Use browser menu → Install/Add to Home Screen'); }} className="btn-accent px-4 py-1.5 text-sm">Install</button>

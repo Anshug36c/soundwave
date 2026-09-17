@@ -74,7 +74,7 @@ Everything below exists in the codebase today.
 - Dark / light themes (persisted), loading skeletons, buffering spinners, toasts
 - Full keyboard control: `Space` play/pause, `N`/`P` next/prev, `←/→` seek,
   `↑/↓` volume, `M` mute, `S` shuffle, `R` repeat, `Q` queue, `⌘/Ctrl+K` palette
-- Synced (LRC) lyrics with auto-scrolling highlight when timestamps exist
+- Synced (LRC) lyrics via LRCLIB (Echo recipe: title cleanup + duration match), lyrics.ovh fallback, auto-scrolling highlight
 - Offline banner + connectivity-aware fetching; "Erase all local data" one-tap reset
 - Optional Google sign-in with per-account on-device libraries (guest works fully)
 
@@ -152,7 +152,7 @@ pause, seeking, volume, track changes, and recovery if a stream dies.
 - **Next/previous:** index math in the store (`next()` honors shuffle; `prev()`
   restarts when `currentTime > 3`, else steps back with wraparound).
 - **Track end:** `ended` advances according to repeat mode (`one` replays, `all`/queue
-  continues, end-of-queue stops).
+  continues, end-of-queue autoplays similar songs when Autoplay is on, else stops).
 - **Failure:** `error` → if the preview failed, fall back to full; else one silent
   `el.load()` retry per track; else toast + skip. A watchdog reloads streams stalled
   >12s (max 3 recoveries, then skips). After 4 errors in 15s the player stops with a
@@ -264,7 +264,7 @@ Player: Playing → A
 - **Reorder/remove:** drawer controls (move up/down, remove, clear); persisted.
 - **Next:** shuffle ? random different index : `(index+1) % length`.
 - **Previous:** `currentTime > 3` ? restart to 0 : step back with wraparound.
-- **Repeat:** `off → all → one → off`. `one` replays on `ended`; `all` wraps at the end.
+- **Repeat:** `off → all → one → off`. `one` replays on `ended`; `all` wraps at the end; `off` at queue end triggers Autoplay (toggle in Settings).
 - **Shuffle:** random next-index; also "Shuffle artist" (shuffled copy as queue).
 - **With preloading:** n1/n2 derive from `index`; the re-stage effect reruns on
   `[index, n1id, n2id, quality, repeat, shuffle, queue.length]`.

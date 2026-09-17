@@ -139,7 +139,7 @@ export const api = {
   album: (source, id) => get(`/album/${source}/${encodeURIComponent(id)}`),
   artist: (source, id) => get(`/artist/${source}/${encodeURIComponent(id)}`),
   artistSongs: (name, opts = {}) => get(`/artist-songs?name=${encodeURIComponent(name || '')}`, opts),
-  lyrics: ({ artist, title }) => get(`/lyrics?artist=${encodeURIComponent(artist || '')}&title=${encodeURIComponent(title || '')}`),
+  lyrics: ({ artist, title, duration, album }) => get(`/lyrics?artist=${encodeURIComponent(artist || '')}&title=${encodeURIComponent(title || '')}&duration=${Math.round(duration || 0)}&album=${encodeURIComponent(album || '')}`),
   tidalPreview: (title, artist) => `${BASE}/tidal-preview?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}`,
   similar: (title, artist, limit = 12) => get(`/similar?title=${encodeURIComponent(title || '')}&artist=${encodeURIComponent(artist || '')}&limit=${limit}`),
   auth: {
