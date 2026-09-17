@@ -23,18 +23,32 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'      # AGP 8 requires JDK 17
 
-      - uses: android-actions/setup-android@v3
+      # android-actions/setup-android is deliberately NOT used: its default
+      # package list includes "tools", which Google removed from the SDK
+      # repository, so it dies with "Failed to find package 'tools'" before this
+      # workflow does anything. The runner image already ships the SDK, so all
+      # that is needed is to point Gradle at it.
+      - name: Configure Android SDK
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          test -d "$SDK" || { echo "Android SDK not found at $SDK"; exit 1; }
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+          echo "--- SDK contents ---"
+          ls "$SDK"
 
       # ---- 1. Build the web client ----
       - name: Build client
@@ -103,7 +117,7 @@ jobs:
           "
 
       # ---- 3. Build the APK ----
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: Build debug APK
         working-directory: android
@@ -113,7 +127,7 @@ jobs:
         run: |
           find android -name '*.apk' -exec ls -lh {} \;
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: soundwave-apk
           path: android/app/build/outputs/apk/**/*.apk
