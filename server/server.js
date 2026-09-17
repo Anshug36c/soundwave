@@ -1105,6 +1105,90 @@ function refererFor(url) {
   return null;
 }
 
+// ---------------- YouTube Music via InnerTube (Echo's WEB_REMIX recipe) ----------------
+// Search/browse work fine from servers; the /player endpoint is bot-walled
+// (LOGIN_REQUIRED on every client), so YT tracks play via the closest
+// playable mirror resolved from our own sources at first-play time.
+const YT_KEY = 'AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX3';
+async function ytSearchSongs(q, limit = 10) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const r = await fetch(`https://music.youtube.com/youtubei/v1/search?key=${YT_KEY}&prettyPrint=false`, {
+      method: 'POST', signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', 'User-Agent': DJP_UA, 'X-YouTube-Client-Name': 'WEB_REMIX', 'X-YouTube-Client-Version': '1.20260213.01.00' },
+      body: JSON.stringify({ context: { client: { clientName: 'WEB_REMIX', clientVersion: '1.20260213.01.00', hl: 'en', gl: 'IN' } }, query: q }),
+    });
+    if (!r.ok) throw new Error(`yt HTTP ${r.status}`);
+    const j = await r.json();
+    const out = [], seen = new Set();
+    const walk = (o) => {
+      if (!o || out.length >= limit) return;
+      if (Array.isArray(o)) { for (const v of o) walk(v); return; }
+      if (typeof o !== 'object') return;
+      const m = o.musicResponsiveListItemRenderer || o.musicTwoRowItemRenderer;
+      if (m) {
+        const vid = m.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint?.videoId
+          || m.navigationEndpoint?.watchEndpoint?.videoId;
+        const cols = m.flexColumns || [];
+        const runs = (i) => cols[i]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
+        const title = runs(0).map(x => x.text).join('') || (m.title?.runs || []).map(x => x.text).join('');
+        const sub = runs(1).map(x => x.text).join('') || (m.subtitle?.runs || []).map(x => x.text).join('');
+        if (vid && title && !seen.has(vid)) {
+          seen.add(vid);
+          const raw = sub.split('\u2022').map(s => s.trim()).filter(Boolean);
+          const durM = (raw.find(p => /^\d+:\d+$/.test(p)) || '').split(':');
+          const parts = raw.filter(p => !/^(song|video|album|single|ep|artist|playlist|podcast|episode)$/i.test(p)
+            && !/^\d+:\d+$/.test(p) && !/^\d{4}$/.test(p) && !/views?|plays?/i.test(p));
+          out.push({ id: `yt:${vid}`, source: 'yt', sourceId: vid, type: 'track', title: title.trim(),
+            artist: { id: '', name: parts[0] || 'Unknown', image: '' }, artists: [],
+            album: { id: '', name: '', image: '' },
+            duration: durM.length === 2 ? (+durM[0]) * 60 + (+durM[1]) : 0,
+            image: `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`,
+            streamUrl: `/api/audio?src=yt&id=${vid}`, previewUrl: '', isPreview: false,
+            codec: '', quality: 'match', explicit: false, year: '', language: '', plays: 0 });
+        }
+        return;
+      }
+      for (const v of Object.values(o)) walk(v);
+    };
+    walk(j.contents);
+    return out;
+  } finally { clearTimeout(to); }
+}
+const ytMatchCache = new Map(); // videoId -> { mirrors: [{ source, sid }], time }
+async function ytResolve(title, artist, vid) {
+  const hit = ytMatchCache.get(String(vid));
+  if (hit && Date.now() - hit.time < PAGE_TTL) return hit.mirrors;
+  const q = [title, (artist && artist !== 'Unknown') ? artist : ''].filter(Boolean).join(' ');
+  if (!q) return null;
+  const withTimeout = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r([]), ms))]);
+  const lists = await Promise.all([
+    withTimeout(saavnSearchSongs(q, 3, false).catch(() => []), 12000),
+    withTimeout(djpSearchSongs(q, 3).catch(() => []), 12000),
+    withTimeout(djSearchSongs(q, 3).catch(() => []), 12000),
+    withTimeout(mrjSearchSongs(q, 3).catch(() => []), 12000),
+  ]);
+  const all = lists.flat().filter(t => t?.sourceId);
+  if (!all.length) return null;
+  const ft = fold(title), fa = fold((artist && artist !== 'Unknown') ? artist : '');
+  const score = (t) => {
+    const tt = fold(t.title || ''), ta = fold(t.artist?.name || '');
+    return (tt && ft && (tt.includes(ft) || ft.includes(tt)) ? 2 : 0) + (ta && fa && (ta.includes(fa) || fa.includes(ta)) ? 1 : 0);
+  };
+  all.sort((x, y) => score(y) - score(x));
+  // top-3 across distinct sources: tryStream failover survives dead picks
+  const seen = new Set(), mirrors = [];
+  for (const t of all) {
+    if (seen.has(t.source)) continue;
+    seen.add(t.source);
+    mirrors.push({ source: t.source, sid: String(t.sourceId) });
+    if (mirrors.length >= 3) break;
+  }
+  if (ytMatchCache.size > 500) ytMatchCache.delete(ytMatchCache.keys().next().value);
+  ytMatchCache.set(String(vid), { mirrors, time: Date.now() });
+  return mirrors;
+}
 async function resolveMirrorInner(source, sid) {
     if (source === 'djp') {
       const e = (await djpLoadIndex()).get(String(sid));
@@ -1191,7 +1275,7 @@ function serveBuf(res, req, buf, cached, br, type = 'audio/mpeg') {
 
 
 // ---------------- self-healing sources: circuit breaker + cross-source recovery ----------------
-const srcHealth = { djp: { fails: 0, until: 0 }, dj: { fails: 0, until: 0 }, mrj: { fails: 0, until: 0 }, saavn: { fails: 0, until: 0 } };
+const srcHealth = { djp: { fails: 0, until: 0 }, dj: { fails: 0, until: 0 }, mrj: { fails: 0, until: 0 }, saavn: { fails: 0, until: 0 }, yt: { fails: 0, until: 0 } };
 function tripSource(source, ms = 60000) { const h = srcHealth[source]; if (h) { h.fails = 3; h.until = Date.now() + ms; } }
 function srcDegraded() { const now = Date.now(); return Object.keys(srcHealth).filter(s => srcHealth[s].until > now); }
 
@@ -1469,9 +1553,17 @@ app.get('/api/audio', async (req, res) => {
     const i = String(s).indexOf(':');
     return i > 0 ? { source: s.slice(0, i), sid: s.slice(i + 1) } : null;
   }).filter(Boolean);
-  const mirrors = [{ source: src, sid: String(sid) }, ...ms].slice(0, 4);
   const recT = (req.query.t || '').trim(), recAr = (req.query.ar || '').trim();
-  const key = audioKey(src, sid, q, recT, recAr);
+  // YouTube Music results carry no playable stream (InnerTube /player is
+  // bot-walled from servers) — resolve to the closest playable mirror.
+  let effSrc = src, effSid = String(sid), isYtMatch = false, ytMirrors = null;
+  if (src === 'yt') {
+    ytMirrors = await ytResolve(recT, recAr, String(sid)).catch(() => null);
+    if (!ytMirrors?.length) return res.status(502).json({ error: 'No playable match found' });
+    effSrc = ytMirrors[0].source; effSid = ytMirrors[0].sid; isYtMatch = true;
+  }
+  const mirrors = (ytMirrors || [{ source: effSrc, sid: effSid }]).concat(ms).slice(0, 4);
+  const key = audioKey(effSrc, effSid, q, recT, recAr);
   const hit = audioCache.get(key);
   if (hit && Date.now() - hit.time < AUDIO_TTL) { touchAudio(key); audioHits++; return serveBuf(res, req, hit.buf, true, hit.br, hit.type || 'audio/mpeg'); }
   audioMiss++;
@@ -1488,8 +1580,10 @@ app.get('/api/audio', async (req, res) => {
   } else if (!wantRangeEarly) {
     audioInflight.set(key, new Promise((resolve) => { releaseOwn = () => { audioInflight.delete(key); resolve(true); }; }));
   }
+  // hard bounds: an unbounded scrape hang must never wedge the inflight key forever
+  const bounded = (p, ms, fb) => Promise.race([p, new Promise(r => setTimeout(() => r(fb), ms))]);
   try {
-    const resolved = (await Promise.all(mirrors.map(async m => ({ ...m, r: await resolveMirror(m.source, m.sid) })))).filter(x => x.r);
+    const resolved = (await Promise.all(mirrors.map(async m => ({ ...m, r: await bounded(resolveMirror(m.source, m.sid), 25000, null).catch(() => null) })))).filter(x => x.r);
     // (no early return: empty lists fall through to cross-source recovery below)
     const order = QUALITY_ORDER[q];
     const hostOf = (m) => {
@@ -1539,6 +1633,19 @@ app.get('/api/audio', async (req, res) => {
           res.setHeader('X-Audio-Mirror', m.source);
           if (recovered) res.setHeader('X-Audio-Recovered', '1');
           reader = up.body.getReader();
+          // every read is raced: cancel()/abort() alone can't be trusted to
+          // reject a read() parked on a wedged socket (it hangs forever)
+          const readRaced = (ms) => new Promise((resolve, reject) => {
+            const t = setTimeout(() => reject(new Error('stall')), ms);
+            reader.read().then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+          });
+          // pre-commit: the first chunk must arrive or we fail over to the
+          // next mirror with headers still unsent (a stalled first mirror
+          // used to wedge the whole response after committing 200+headers)
+          let first;
+          try { first = await readRaced(20000); }
+          catch { clearTimeout(to); try { reader.cancel(); } catch {} ctrl.abort(); continue; }
+          if (first.done || !first.value?.length) { try { reader.cancel(); } catch {} ctrl.abort(); continue; }
           let chunks = up.status === 200 ? [] : null;
           let received = 0, aborted = false;
           // 'close' also fires on normal completion — only a pre-finish close is an abort
@@ -1550,20 +1657,24 @@ app.get('/api/audio', async (req, res) => {
           const closedP = new Promise((r) => { closedResolve = r; });
           const onClosedDone = () => { try { closedResolve(); } catch {} };
           req.once('close', onClosedDone);
+          const writeChunk = async (value) => {
+            received += value.length;
+            if (chunks) { if (received > 20 * 1024 * 1024) chunks = null; else chunks.push(value); }
+            if (aborted) return;
+            let okWrite = true;
+            try { okWrite = res.write(value); } catch { aborted = true; return; }
+            // backpressure wait must also resolve on client disconnect,
+            // or this handler (and its inflight key) hangs forever
+            if (!okWrite && !aborted) await Promise.race([new Promise((r) => res.once('drain', r)), closedP]);
+          };
           bumpActivity();
           try {
-            while (true) {
-              const { done, value } = await reader.read();
+            await writeChunk(first.value);
+            while (!aborted) {
+              const { done, value } = await readRaced(25000);
               if (done) break;
               bumpActivity();
-              received += value.length;
-              if (chunks) { if (received > 20 * 1024 * 1024) chunks = null; else chunks.push(value); }
-              if (aborted) break;
-              let okWrite = true;
-              try { okWrite = res.write(value); } catch { aborted = true; break; }
-              // backpressure wait must also resolve on client disconnect,
-              // or this handler (and its inflight key) hangs forever
-              if (!okWrite && !aborted) await Promise.race([new Promise((r) => res.once('drain', r)), closedP]);
+              await writeChunk(value);
             }
           } finally {
             clearTimeout(to);
@@ -1590,9 +1701,9 @@ app.get('/api/audio', async (req, res) => {
     }
     return false;
     };
-    if (await tryStream(resolved)) return;
+    if (await tryStream(resolved, isYtMatch)) return;
     if (recT) {
-      const rec = await recoverMirrors(recT, recAr, mirrors).catch(() => []);
+      const rec = await bounded(recoverMirrors(recT, recAr, mirrors).catch(() => []), 45000, []);
       if (rec.length) {
         const resolvedRec = (await Promise.all(rec.map(async m => ({ ...m, r: await resolveMirror(m.source, m.sid) })))).filter(x => x.r);
         if (resolvedRec.length && await tryStream(resolvedRec, true)) return;
@@ -2085,7 +2196,7 @@ app.get('/api/search', async (req, res) => {
   const expF = (req.query.exp || '').trim().toLowerCase();
   const effY = nl.year || yF;
   try {
-    let songs = [], albums = [], artists = [];
+    let songs = [], albums = [], artists = [], youtube = [];
     if (type === 'all' || type === 'artists') {
       const [a, b, c, s] = await Promise.all([
         safeSearch(djpSearchArtists(effQ, 6), 20000),
@@ -2110,12 +2221,14 @@ app.get('/api/search', async (req, res) => {
     const artistMode = !!artistHit;
     if (type === 'all' || type === 'songs') {
       const L = artistMode ? [18, 14, 14, 12] : [10, 8, 8, 8];
-      const [a, b, c, s] = await Promise.all([
+      const [a, b, c, s, y] = await Promise.all([
         safeSearch(djpSearchSongs(effQ, L[0]), 25000),
         safeSearch(djSearchSongs(effQ, L[1]), 25000),
         safeSearch(mrjSearchSongs(effQ, L[2]), 25000),
         safeSearch(saavnSearchSongs(effQ, L[3]), 25000),
+        safeSearch(ytSearchSongs(effQ, 10).catch(e => { tripSource('yt'); return []; }), 15000),
       ]);
+      youtube = (y || []).slice(0, 10);
       songs = mergeTracks([interleave([a, b, c, s])]);
       if (artistMode) {
         const rank = t => { const n = normName(t.artist?.name); return qw.every(w => n.includes(w)) ? 0 : 1; };
@@ -2147,7 +2260,7 @@ app.get('/api/search', async (req, res) => {
       const weak = !songs.length || songs.slice(0, 3).every(t => overlapScore(titleTokens(effQ), titleTokens(t.title)) < 0.3);
       if (weak) didYouMean = await suggestCorrection(effQ).catch(() => '');
     }
-    const payload = { songs, albums, artists, ...(artistMode ? { artist: { name: artistHit.name } } : {}), ...((nl.note || nl.mode || nl.year || nl.unsupported || nl.cleaned) ? { nl } : {}), ...(didYouMean ? { didYouMean } : {}) };
+    const payload = { songs, albums, artists, youtube, ...(artistMode ? { artist: { name: artistHit.name } } : {}), ...((nl.note || nl.mode || nl.year || nl.unsupported || nl.cleaned) ? { nl } : {}), ...(didYouMean ? { didYouMean } : {}) };
     setCache(req.originalUrl, payload);
     res.json(payload);
     // warm: resolve (API + decrypt) the top Saavn stream URLs in the background
@@ -2326,6 +2439,27 @@ async function lrcLyrics(title, artist, album, duration) {
   }
   return null;
 }
+// KuGou lyrics (Echo's KuGou recipe): song search -> hash -> lyric search ->
+// base64 LRC download. Strict duration + timed-line guards — KuGou fuzzy
+// matching returns wrong-song junk otherwise.
+async function kugouLyrics(title, artist, album, duration) {
+  const clean = (s) => String(s || '').replace(/\(.*?\)|（.*?）|「.*?」|『.*?』|<.*?>|《.*?》|〈.*?〉|＜.*?＞/g, '').trim();
+  const kw = `${clean(title)} - ${clean(artist)}${album ? ' ' + clean(album) : ''}`.trim();
+  if (!clean(title) || !clean(artist)) return null;
+  const songs = await (await fetch(`https://mobileservice.kugou.com/api/v3/search/song?version=9108&plat=0&pagesize=5&showtype=0&keyword=${encodeURIComponent(kw)}`, { signal: AbortSignal.timeout(8000) })).json().catch(() => null);
+  for (const s of (songs?.data?.info || [])) {
+    if (duration > 0 && Math.abs((+s.duration || 0) - duration) > 8) continue;
+    if (!s.hash) continue;
+    const L = await (await fetch(`https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&hash=${encodeURIComponent(s.hash)}`, { signal: AbortSignal.timeout(8000) })).json().catch(() => null);
+    const cand = (L?.candidates || [])[0];
+    if (!cand?.id || !cand?.accesskey) continue;
+    const d = await (await fetch(`https://lyrics.kugou.com/download?fmt=lrc&charset=utf8&client=pc&ver=1&id=${cand.id}&accesskey=${encodeURIComponent(cand.accesskey)}`, { signal: AbortSignal.timeout(8000) })).json().catch(() => null);
+    if (!d?.content) continue;
+    const text = Buffer.from(d.content, 'base64').toString('utf8');
+    if ((text.match(/\[\d{1,2}:\d{2}/g) || []).length >= 5) return { text, synced: true };
+  }
+  return null;
+}
 app.get('/api/lyrics', async (req, res) => {
   const artist = (req.query.artist || '').trim();
   const title = (req.query.title || '').trim();
@@ -2338,6 +2472,12 @@ app.get('/api/lyrics', async (req, res) => {
     const hit = await lrcLyrics(title, artist, album, duration).catch(() => null);
     if (hit?.text) {
       const payload = { lyrics: hit.text, synced: hit.synced, source: 'lrclib' };
+      setCache(req.originalUrl, payload, 3600000);
+      return res.json(payload);
+    }
+    const kg = await kugouLyrics(title, artist, album, duration).catch(() => null);
+    if (kg?.text) {
+      const payload = { lyrics: kg.text, synced: kg.synced, source: 'kugou' };
       setCache(req.originalUrl, payload, 3600000);
       return res.json(payload);
     }

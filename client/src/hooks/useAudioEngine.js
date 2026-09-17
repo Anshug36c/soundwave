@@ -82,7 +82,7 @@ function preloadTrack(track, quality) {
     a.load();
     preloadPool.push(a);
     const st = useStore.getState();
-    if (st.instantPreview && track.title && track.artist?.name) {
+    if (st.instantPreview && track.title && track.artist?.name && track.artist.name !== 'Unknown') {
       try {
         const p = new Audio();
         p.preload = 'auto';
@@ -148,7 +148,7 @@ function armStandby(track, quality) {
   } catch { /* noop */ }
   try {
     const st = useStore.getState();
-    if (st.instantPreview && track.title && track.artist?.name) {
+    if (st.instantPreview && track.title && track.artist?.name && track.artist.name !== 'Unknown') {
       const p = new Audio();
       p.preload = 'auto';
       p.src = api.tidalPreview(track.title, track.artist.name);
@@ -551,7 +551,7 @@ export function useAudioEngine() {
         }
         el.dataset.trackId = track.id;
         fullUrl = url;
-        const wantPreview = st.instantPreview && track.title && track.artist?.name;
+        const wantPreview = st.instantPreview && track.title && track.artist?.name && track.artist.name !== 'Unknown';
         dbg('load', track.id, hot ? 'hot' : 'cold', wantPreview ? 'preview' : 'full');
         if (wantPreview) {
           // race: preview plays instantly, full MP3 swaps in when ready

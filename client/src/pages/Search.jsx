@@ -5,7 +5,7 @@ import { useStore } from '../store/useStore';
 import { SongRow, AlbumCard, ArtistCard, PlaylistCard, SkeletonList } from '../components/Cards';
 import { MicIcon, SlidersIcon, NoteIcon, DiscIcon, ClockIcon, BoltIcon } from '../components/Icons';
 
-const TABS = ['Songs', 'Albums', 'Artists'];
+const TABS = ['Songs', 'Albums', 'Artists', 'YouTube'];
 const TRENDING = ['AP Dhillon', 'Diljit Dosanjh', 'Guru Randhawa', 'Jasmine Sandlas', 'Tulsi Kumar', 'Karan Aujla', 'Shubh', 'Prem Dhillon'];
 const EMPTY_FILTERS = { y: '', minD: '', maxD: '', lang: '', exp: '' };
 
@@ -29,7 +29,7 @@ export default function Search() {
   const initialTab = TABS.includes(tabParam) ? tabParam : 'Songs';
   const [q, setQ] = useState(initial);
   const [tab, setTab] = useState(initialTab);
-  const [results, setResults] = useState({ songs: [], albums: [], artists: [] });
+  const [results, setResults] = useState({ songs: [], albums: [], artists: [], youtube: [] });
   const [loading, setLoading] = useState(false);
   const [suggest, setSuggest] = useState({ songs: [], albums: [], artists: [] });
   const [showSuggest, setShowSuggest] = useState(false);
@@ -47,6 +47,7 @@ export default function Search() {
   const hiddenArtists = useStore(s => s.hiddenArtists);
   // hoisted: stable identity across keystrokes so memoized rows skip re-render
   const visibleSongs = useMemo(() => tasteFiltered(results.songs, disliked, hiddenArtists), [results.songs, disliked, hiddenArtists]);
+  const visibleYT = useMemo(() => tasteFiltered(results.youtube || [], disliked, hiddenArtists), [results.youtube, disliked, hiddenArtists]);
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
   const recogRef = useRef(null);
@@ -67,7 +68,7 @@ export default function Search() {
     try { runCtrl.current?.abort(); } catch { /* noop */ }
     const ctrl = new AbortController();
     runCtrl.current = ctrl;
-    if (!query.trim()) { setResults({ songs: [], albums: [], artists: [] }); setLoading(false); return; }
+    if (!query.trim()) { setResults({ songs: [], albums: [], artists: [], youtube: [] }); setLoading(false); return; }
     setLoading(true);
     try {
       const f = filtersRef.current;
@@ -137,7 +138,7 @@ export default function Search() {
   const voiceSupported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   const filtersActive = !!(filters.y || filters.minD || filters.maxD || filters.lang || filters.exp);
   const hasSuggest = suggest.songs.length + suggest.albums.length + suggest.artists.length > 0;
-  const emptyResults = !results.songs.length && !results.albums.length && !results.artists.length;
+  const emptyResults = !results.songs.length && !results.albums.length && !results.artists.length && !(results.youtube || []).length;
   const sugItems = useMemo(() => [...suggest.songs, ...suggest.artists, ...suggest.albums], [suggest]);
   const playlists = useStore(s => s.playlists);
   const matchPlaylists = q.trim() ? playlists.filter(p => p.name.toLowerCase().includes(q.trim().toLowerCase())) : [];
@@ -293,6 +294,11 @@ export default function Search() {
       {q && tab === 'Artists' && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4 [&>*]:min-w-0 [&>*]:max-w-none">{results.artists.map(a => <ArtistCard key={a.id} artist={a} />)}
           {results.artists.length === 0 && <p className="p-4 text-sm text-dim col-span-full">No artists found.</p>}</div>
+      )}
+      {q && tab === 'YouTube' && (
+        <div className="card p-2 mt-4 flex flex-col">{visibleYT.map((t, i) => <SongRow key={t.id} track={t} index={i} context={visibleYT} />)}
+          {visibleYT.length === 0 && <p className="p-4 text-sm text-dim">No YouTube Music results.</p>}
+          {visibleYT.length > 0 && <p className="px-4 py-1 text-[11px] text-dim font-semibold">Plays the closest playable match.</p>}</div>
       )}
     </div>
   );
