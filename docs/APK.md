@@ -69,34 +69,59 @@ shipping a dead app.
 
 ---
 
-## Known unverified piece
+## Status: BLOCKED — the native integration layer does not exist
 
-**The `nodejs-mobile` Gradle coordinate in `app/build.gradle.kts` could not be
-confirmed.** The upstream project (JaneaSystems) is unmaintained; the live fork
-is `github.com/nodejs-mobile`, which is active (Node 24 base, commits within the
-last month). If the build fails with `Could not find com.janeasystems:nodejs-mobile`,
-that single line is the cause — check that repository's README for the current
-coordinate and change only it.
+This was investigated to a conclusion rather than left as a guess. The findings,
+all verified:
 
-The matching import in `MainActivity.kt`
-(`com.janeasystems.nodejs_mobile.NodeJsMobile`) would need to change with it.
+1. **`com.janeasystems:nodejs-mobile` is not on Maven Central.** A search returns
+   zero hits, and `com/janeasystems/nodejs-mobile/maven-metadata.xml` is a 404.
+   CI failed with exactly this: `Could not find com.janeasystems:nodejs-mobile:0.10.1`.
+2. **The project distributes as a GitHub Release ZIP**, not a Maven artifact.
+   `nodejs-mobile-v18.20.4-android.zip` (55 MB).
+3. **That ZIP contains no Java/Kotlin layer.** Its entire contents are:
+   ```
+   bin/arm64-v8a/libnode.so    62.48 MB
+   bin/armeabi-v7a/libnode.so  58.72 MB
+   bin/x86_64/libnode.so       65.36 MB
+   include/node/**             634 stock Node headers
+   ```
+   No `.aar`, no `.jar`, no executable `node` binary, and no
+   nodejs-mobile-specific header.
+4. **`libnode.so` exports no entry point.** `readelf --dyn-syms` over the
+   extracted x86_64 library (65,957 symbols) shows no `nodejs_start` and nothing
+   matching `nodejs*` except `node::per_process::node_start_time`. What it does
+   export is N-API (`node_api_*`) and Node's C++ internals.
 
-Everything else follows the documented integration pattern: copy
-`assets/nodejs-project` to `filesDir`, then start the runtime with a script path.
+**Conclusion:** there is no drop-in dependency. Driving this library means
+writing JNI C++ against Node's embedder API
+(`NewIsolate → CreateEnvironment → LoadEnvironment → SpinEventLoop`), building it
+with the NDK for arm64, and marshalling the channel between Kotlin and C++. That
+is real native work requiring a device to test against, not a version bump.
 
-## What was verified locally
+The `android/` scaffold in this repository is therefore **not buildable**. It is
+kept because the parts that were verified are still useful — see below — but do
+not expect `gradle assembleDebug` to succeed.
 
-- The staged bundle boots and serves the app: `/api/health` returns loaded
-  indexes and `GET /` returns 200 with the real `assets/index-` markup, at 33 MB
-  RSS.
-- `main.js` parses; every `R.string` / `R.layout` / `R.id` referenced from Kotlin
-  exists in the resources.
-- Workflow YAML is valid; `main.js` survives a failed import without exiting, so
-  a broken bundle shows a readable error instead of a dead WebView.
+## What was verified and still holds
 
-## What was not verified
+The CI pipeline itself works, and proved the important part:
 
-No APK was compiled — there is no JDK 17 or Android SDK in the development
-sandbox. The Gradle build, the `nodejs-mobile` dependency resolution, and
-behaviour on a real phone are all untested. Expect the first CI run to surface
-the coordinate issue above.
+- The staged Node bundle **boots and serves the real app on a CI runner**
+  (`GET / → 200` with `assets/index-` markup, provider indexes loaded). So the
+  backend is genuinely portable; only the Android host layer is missing.
+- A layout regression is caught before the APK is built. `server.js` resolves the
+  client with `path.join(__dirname, '../client/dist')`; flattening `server.js` to
+  the project root makes it point outside the project, the static middleware
+  never mounts, and every route 404s. Both layouts were run and the broken one
+  produced `GET / → 404`.
+- `main.js` keeps the process alive on `uncaughtException`. The server's own
+  handler calls `exit(1)` for a supervisor, but there is none inside an APK, and
+  exiting would leave the WebView pointing at a dead port.
+
+## The alternative that works today
+
+`docs/TERMUX.md`. Termux runs Node.js on Android, so the unmodified backend runs
+on the phone — verified as feasible (zero native modules, zero `binding.gyp`, no
+absolute paths, 4.3 MB on disk, 41 MB RSS). It is not a single APK, but it is
+standalone-on-device and needs no unverified code.

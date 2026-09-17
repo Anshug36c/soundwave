@@ -4,15 +4,17 @@ name: Build Android APK
 # over loopback. The APK is attached as a downloadable artifact — no Android
 # Studio needed, and no signing key required for a debug build.
 
+# BLOCKED — do not enable until the native layer exists. See docs/APK.md.
+#
+# The nodejs-mobile release ships only libnode.so plus stock Node headers: no
+# AAR, no Java/Kotlin API, and (verified with readelf) no exported entry point
+# such as nodejs_start — only N-API and Node C++ symbols. Driving it therefore
+# requires hand-written JNI C++ against Node's embedder API, built with the NDK.
+# Until that exists, the Gradle step cannot resolve a dependency, so this
+# workflow is manual-only rather than failing on every push.
+
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'android/**'
-      - 'server/**'
-      - 'client/**'
-      - '.github/workflows/apk.yml'
 
 permissions:
   contents: read
