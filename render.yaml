@@ -17,6 +17,11 @@ services:
         value: 20
       - key: ITUNES_COUNTRY
         value: IN
+      # CORS allowlist — leave unset for this single-process deploy (same-origin,
+      # no CORS needed). Set it only if you also serve the client from another
+      # origin, e.g. a Vercel static front end:
+      # - key: FRONTEND_URL
+      #   value: https://soundwave.vercel.app
       # Optional — get free keys to enrich artist data:
       # - key: LASTFM_API_KEY
       #   sync: false

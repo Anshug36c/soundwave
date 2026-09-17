@@ -22,6 +22,13 @@ function getAudio() {
   if (!audio) {
     audio = new Audio();
     audio.preload = 'auto';
+    // Opt the element into CORS so a cross-origin API host (VITE_API_URL pointing at a
+    // separate backend) yields a clean, untainted stream. createMediaElementSource on a
+    // tainted element routes SILENCE — the player would look like it's playing while the
+    // EQ and visualizer output nothing. Must be set before src. Harmless same-origin:
+    // the server answers ACAO for every cross-origin request and same-origin media is
+    // clean regardless.
+    audio.crossOrigin = 'anonymous';
     try { window.__audio = audio; } catch { /* noop */ } // test/debug handle
   }
   return audio;
@@ -465,6 +472,7 @@ function recreateAudio() {
   }
   const el = new Audio();
   el.preload = 'auto';
+  el.crossOrigin = 'anonymous'; // see getAudio(): keeps the WebAudio graph un-muted cross-origin
   el.volume = useStore.getState().muted ? 0 : useStore.getState().volume;
   el.muted = useStore.getState().muted;
   try { el.playbackRate = useStore.getState().playbackRate || 1; } catch { /* noop */ }

@@ -20,6 +20,45 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   next();
 });
+
+// ---------------- CORS ----------------
+// The shipped single-process deployment is same-origin (server serves ../client/dist),
+// so a browser sends no Origin and this is a no-op. It only engages when the front
+// end is hosted elsewhere — e.g. the static client on Vercel pointing VITE_API_URL at
+// this server. Without it every /api fetch is blocked by the browser, and the WebAudio
+// graph (EQ / visualizer) is muted because cross-origin media is tainted.
+//
+// FRONTEND_URL accepts a comma/space-separated allowlist, e.g.
+//   FRONTEND_URL=https://soundwave.vercel.app,https://soundwave-nh48.onrender.com
+// Unset = allow any origin (all public read-only endpoints), never credentials.
+const CORS_ORIGINS = (process.env.FRONTEND_URL || '')
+  .split(/[,\s]+/)
+  .map((s) => s.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
+function corsOrigin(req) {
+  const o = req.headers.origin;
+  if (!o) return null;                       // same-origin / curl: no CORS headers needed
+  if (CORS_ORIGINS.length === 0) return '*'; // nothing configured: public data, any origin
+  return CORS_ORIGINS.includes(o.replace(/\/+$/, '')) ? o : null;
+}
+
+app.use((req, res, next) => {
+  const allow = corsOrigin(req);
+  if (!allow) return next();                 // disallowed origin: serve with no CORS headers
+  res.setHeader('Access-Control-Allow-Origin', allow);
+  // res.vary() appends rather than overwriting, so this composes with the
+  // 'Accept-Encoding' the compression middleware adds. Never let one origin's
+  // response be served from cache to another.
+  if (allow !== '*') res.vary('Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Max-Age', '600');
+  res.setHeader('Access-Control-Expose-Headers', 'X-Audio-Cache, X-Audio-Bitrate, X-Audio-Mirror, X-Audio-Recovered, Content-Range, Content-Length');
+  if (req.method === 'OPTIONS') return res.status(204).end(); // preflight: answer, don't route
+  next();
+});
+
 app.use(compression({
   filter: (req, res) => {
     if (req.path === '/api/audio' || req.path === '/api/tidal-preview') return false; // byte streams: identity only
@@ -2576,9 +2615,13 @@ app.post('/api/party/:code/end', (req, res) => {
   parties.delete(String(req.params.code || '').toUpperCase());
   res.json({ ok: true });
 });
-app.listen(PORT, '0.0.0.0', () => {
+// Exported so integration tests can close the socket and exit cleanly. Importing
+// this module starts the server — it is the process entry point.
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🎵 SoundWave server on http://localhost:${PORT} (djp + djjohal + mr-jatt)`);
   djpLoadIndex().then(m => console.log(`   DJPunjab index: ${m.size}`)).catch(() => {});
   djLoadIndex().then(m => console.log(`   DJJohal index: ${m.size}`)).catch(() => {});
   mrjLoadIndex().then(m => console.log(`   Mr-Jatt index: ${m.size}`)).catch(() => {});
 });
+
+export default server;
