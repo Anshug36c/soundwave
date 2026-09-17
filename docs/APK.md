@@ -61,6 +61,7 @@ ones it falls back to.
 | Asset format matches the Kotlin reader | GNU tar, xz, 62 relative paths, `bin/node` mode `0o755` |
 | The staged server boots and serves | CI runs it: `GET / → 200` with `assets/index-` |
 | Every resource reference resolves | `check-resources.py`, 10 refs; fails on both a dangling XML `@string/` and a dangling Kotlin `R.string.` — proven by reintroducing each |
+| Kotlin typechecks against android-34 | `typecheck-kotlin.sh`; reproduces the exact CI error (`'==' cannot be applied to 'String?' and 'Long'`) at the same line and column when the bug is reintroduced |
 | Backend is portable | 0 native modules, 0 `binding.gyp`, no `child_process`, 4.3 MB |
 
 ## What is not verified

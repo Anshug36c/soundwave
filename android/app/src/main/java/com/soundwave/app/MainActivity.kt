@@ -142,14 +142,15 @@ class MainActivity : Activity() {
      */
     private fun copyNodeProject(root: File) {
         val prefs = getSharedPreferences("soundwave", Context.MODE_PRIVATE)
+        // lastUpdateTime is epoch millis; -1 means "never recorded".
         val update = packageManager.getPackageInfo(packageName, 0).lastUpdateTime
-        if (prefs.getString("apk_last_update_time", null) == update && File(root, "nodejs-project/main.js").isFile) {
+        if (prefs.getLong("apk_last_update_time", -1L) == update && File(root, "nodejs-project/main.js").isFile) {
             return
         }
         val dest = File(root, "nodejs-project")
         if (dest.exists()) dest.deleteRecursively()
         copyAssetDir("nodejs-project", dest)
-        prefs.edit().putString("apk_last_update_time", update).apply()
+        prefs.edit().putLong("apk_last_update_time", update).apply()
         Log.i(TAG, "node project staged at ${dest.absolutePath}")
     }
 

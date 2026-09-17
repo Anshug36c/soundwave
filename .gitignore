@@ -13,3 +13,5 @@ android/app/src/main/assets/runtime/
 android/build/
 android/app/build/
 android/.gradle/
+.kotlincheck/
+.ktcold/

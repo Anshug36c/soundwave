@@ -53,11 +53,15 @@ jobs:
           echo "--- SDK contents ---"
           ls "$SDK"
 
-      # Fail fast on a dangling resource reference. The APK cannot be compiled
-      # anywhere except this job, and a missing string costs a full ten-minute
-      # round trip to discover — which is exactly what happened once.
+      # Fail fast on a dangling resource reference or a Kotlin type error. Both
+      # are otherwise only discoverable by a full Gradle run, and each has
+      # already cost a build. The typecheck uses kotlinc against the real
+      # android-34 stub jar, so it reports the same errors at the same lines.
       - name: Check resource references
         run: python3 android/scripts/check-resources.py
+
+      - name: Typecheck Kotlin
+        run: bash android/scripts/typecheck-kotlin.sh
 
       # ---- 1. Build the web client ----
       - name: Build client
