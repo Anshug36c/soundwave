@@ -141,13 +141,44 @@ def prune(root: str) -> int:
 
 
 def make_tarball(root: str, out_path: str) -> int:
-    """Pack the prefix as a single .tar.xz asset (~22 MB vs ~90 MB raw)."""
+    """Pack the prefix as a single .tar.xz asset.
+
+    bin/node is deliberately excluded: it ships as a JNI-style native library
+    instead, because Android will not execute a file the app wrote to its own
+    data directory (EACCES on exec). See stage_native_binary().
+    """
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    cmd = ["tar", "-cJf", out_path, "--format=gnu", "-C", root, "."]
+    cmd = ["tar", "-cJf", out_path, "--format=gnu", "--exclude=./bin/node",
+           "-C", root, "."]
     import subprocess
 
     subprocess.run(cmd, check=True)
     return os.path.getsize(out_path)
+
+
+def stage_native_binary(root: str, jni_dir: str) -> str:
+    """Copy bin/node into jniLibs/<abi>/ under a lib*.so name.
+
+    Android extracts lib/<abi>/*.so from the APK into the app's
+    nativeLibraryDir at install time, mode 0755 and labelled apk_data_file.
+    That directory is executable from the app's SELinux domain, which the app's
+    own filesDir is not — writing the binary there and executing it fails with
+    EACCES (errno 13) on Android 10 and later, which is exactly the failure this
+    works around.
+
+    The filename has to match Android's native-library pattern, hence the
+    lib*.so name for what is really an executable. That is the same trick
+    python-for-android and similar projects use, and it is cosmetic: the file is
+    exec'd by path, never loaded as a library.
+    """
+    import shutil
+
+    src = os.path.join(root, "bin", "node")
+    os.makedirs(jni_dir, exist_ok=True)
+    dest = os.path.join(jni_dir, "libnode.so")
+    shutil.copyfile(src, dest)
+    os.chmod(dest, 0o755)
+    return dest
 
 
 def main() -> int:
@@ -157,6 +188,11 @@ def main() -> int:
     ap.add_argument(
         "--tarball",
         help="also write a packed .tar.xz here (this is what ships in the APK)",
+    )
+    ap.add_argument(
+        "--jni-dir",
+        help="also copy bin/node here as libnode.so, so Gradle packages it as a "
+             "native library and Android extracts it to an executable directory",
     )
     args = ap.parse_args()
 
@@ -221,6 +257,11 @@ def main() -> int:
     if args.tarball:
         size = make_tarball(args.out, args.tarball)
         print(f"[termux-nodejs] packed {args.tarball} ({size / 1e6:.1f} MB)")
+
+    if args.jni_dir:
+        dest = stage_native_binary(args.out, args.jni_dir)
+        print(f"[termux-nodejs] staged native binary {dest} "
+              f"({os.path.getsize(dest) / 1e6:.1f} MB)")
     return 0
 
 

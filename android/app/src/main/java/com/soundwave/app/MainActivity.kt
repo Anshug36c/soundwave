@@ -86,7 +86,11 @@ class MainActivity : Activity() {
     // ---------------------------------------------------------------- runtime
 
     private fun needsExtract(usr: File): Boolean {
-        if (!File(usr, "bin/node").isFile) return true
+        // bin/node is not in the tarball any more — it ships as a native library
+        // so Android puts it somewhere executable. libicudata is the largest
+        // file in the bundle and the last thing a partial unpack would leave
+        // behind, so it is a reasonable marker that extraction completed.
+        if (!File(usr, "lib/libicudata.so.78.3").isFile) return true
         val prefs = getSharedPreferences("soundwave", Context.MODE_PRIVATE)
         return prefs.getInt("runtime_version", -1) != RUNTIME_VERSION
     }
@@ -147,10 +151,9 @@ class MainActivity : Activity() {
             }
         }
 
-        val node = File(dest, "bin/node")
-        if (!node.isFile) throw IllegalStateException("runtime extracted but bin/node is missing")
-        if (!node.setExecutable(true, false)) {
-            throw IllegalStateException("could not mark bin/node executable")
+        val marker = File(dest, "lib/libicudata.so.78.3")
+        if (!marker.isFile) {
+            throw IllegalStateException("runtime extracted but lib/libicudata.so.78.3 is missing")
         }
         File(dest, "tmp").mkdirs()
         File(dest, "home").mkdirs()
@@ -192,8 +195,32 @@ class MainActivity : Activity() {
 
     // ------------------------------------------------------------------- node
 
+    /**
+     * Locates the Node executable.
+     *
+     * Normally this is nativeLibraryDir/libnode.so, which the installer extracted
+     * from the APK. That directory is the only place the app is allowed to exec
+     * from — a copy in filesDir fails with EACCES on Android 10+.
+     *
+     * Some devices and install flows leave nativeLibraryDir empty, so fall back
+     * to the copy in the unpacked runtime and let the error surface if that is
+     * blocked too. Better a clear message than a silent dead app.
+     */
+    private fun nodeBinary(usr: File): File {
+        val native = File(applicationInfo.nativeLibraryDir, "libnode.so")
+        if (native.isFile) {
+            native.setExecutable(true, false)
+            Log.i(TAG, "node binary: ${native.absolutePath} (nativeLibraryDir)")
+            return native
+        }
+        Log.w(TAG, "nativeLibraryDir has no libnode.so; falling back to filesDir")
+        val fallback = File(usr, "bin/node")
+        fallback.setExecutable(true, false)
+        return fallback
+    }
+
     private fun spawnNode(usr: File, root: File) {
-        val node = File(usr, "bin/node")
+        val node = nodeBinary(usr)
         val log = File(root, "node.log")
 
         val pb = ProcessBuilder(
@@ -206,9 +233,8 @@ class MainActivity : Activity() {
 
         // The binary's RUNPATH is /data/data/com.termux/files/usr/lib, which does
         // not exist in this app's sandbox. Android's linker honours
-        // LD_LIBRARY_PATH for non-setuid executables, which is how Termux itself
-        // runs binaries from a non-default prefix. This is the single thing that
-        // makes the bundled runtime relocatable.
+        // LD_LIBRARY_PATH for non-setuid executables, so point it at the unpacked
+        // libraries instead. This is what makes the bundled runtime relocatable.
         val env = pb.environment()
         env["LD_LIBRARY_PATH"] = File(usr, "lib").absolutePath
         env["PATH"] = "${File(usr, "bin").absolutePath}:/system/bin:/vendor/bin"
@@ -219,7 +245,7 @@ class MainActivity : Activity() {
         env.remove("PREFIX")
 
         serverProcess = pb.start()
-        Log.i(TAG, "spawned node pid=${serverProcess}")
+        Log.i(TAG, "spawned node pid=${serverProcess} from ${node.absolutePath}")
     }
 
     private fun tailOfNodeLog(): String {

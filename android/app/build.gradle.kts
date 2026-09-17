@@ -69,27 +69,35 @@ val fetchTermuxNodejs by tasks.registering(Exec::class) {
     val script = file("$rootDir/scripts/fetch-termux-nodejs.py")
     val workDir = layout.buildDirectory.dir("termux-nodejs/usr").get().asFile
     val tarball = file("$projectDir/src/main/assets/runtime/usr.tar.xz")
+    val jniDir = file("$projectDir/src/main/jniLibs/arm64-v8a")
 
     inputs.file(script)
     outputs.file(tarball)
+    outputs.file(File(jniDir, "libnode.so"))
 
     doFirst {
         workDir.parentFile.mkdirs()
         tarball.parentFile.mkdirs()
+        jniDir.mkdirs()
     }
     commandLine(
         "python3", script.absolutePath,
         "--arch", "arm64-v8a",
         "--out", workDir.absolutePath,
         "--tarball", tarball.absolutePath,
+        "--jni-dir", jniDir.absolutePath,
     )
 
     doLast {
         if (!tarball.isFile) {
             throw GradleException("fetch-termux-nodejs.py produced no tarball")
         }
-        val mb = tarball.length() / 1_000_000.0
-        println("[termux-nodejs] asset ready: ${"%.1f".format(mb)} MB at ${tarball.relativeTo(rootDir)}")
+        val node = File(jniDir, "libnode.so")
+        if (!node.isFile) {
+            throw GradleException("fetch-termux-nodejs.py did not stage libnode.so")
+        }
+        println("[termux-nodejs] runtime ${"%.1f".format(tarball.length() / 1_000_000.0)} MB, " +
+                "node ${"%.1f".format(node.length() / 1_000_000.0)} MB")
     }
 }
 

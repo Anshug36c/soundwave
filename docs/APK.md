@@ -4,12 +4,17 @@ The APK contains a **real Node.js runtime and the real backend**. It needs no
 server, no hosting, and no Termux install — the runtime travels inside the APK.
 
 ```
-APK install → assets/runtime/usr.tar.xz (22 MB) unpacked to filesDir/runtime/usr
+APK install → Android unpacks lib/arm64-v8a/libnode.so to nativeLibraryDir
+            → assets/runtime/usr.tar.xz (13 MB) unpacked to filesDir/runtime/usr
             → assets/nodejs-project staged to filesDir/runtime/nodejs-project
-            → ProcessBuilder spawns usr/bin/node with LD_LIBRARY_PATH set
+            → ProcessBuilder spawns nativeLibraryDir/libnode.so, LD_LIBRARY_PATH
+              pointing at filesDir/runtime/usr/lib
             → Express serves everything on 127.0.0.1:5000
             → WebView loads it
 ```
+
+The executable and its libraries live in different places on purpose — see
+[Why the binary is not next to its libraries](#why-the-binary-is-not-next-to-its-libraries).
 
 ---
 
@@ -42,13 +47,37 @@ duplicate soname symlinks — 57 MB in total. `bin/node` needs no stripping;
 Termux already ships it stripped. `libicudata.so` is 32 MB on its own and cannot
 be removed, because Node aborts without full ICU.
 
-The one thing that makes the bundle relocatable is `LD_LIBRARY_PATH`. The
-binary's `RUNPATH` is `/data/data/com.termux/files/usr/lib`, which does not exist
-in another app's sandbox; Android's linker honours `LD_LIBRARY_PATH` for
-non-setuid executables, which is how Termux itself runs binaries from a
-non-default prefix. `MainActivity` also sets `TMPDIR` and `HOME` inside the
-prefix, since the binary contains 20 hardcoded Termux paths and those two are the
-ones it falls back to.
+The binary's `RUNPATH` is `/data/data/com.termux/files/usr/lib`, which does not
+exist in another app's sandbox. Android's linker honours `LD_LIBRARY_PATH` for
+non-setuid executables, so `MainActivity` points it at the unpacked libraries.
+`TMPDIR` and `HOME` are set inside the prefix too, since the binary contains 20
+hardcoded Termux paths and those two are the ones it falls back to.
+
+## Why the binary is not next to its libraries
+
+The first build shipped `bin/node` inside the tarball and ran it from
+`filesDir`. On a real phone that failed:
+
+```
+startup failed: cannot run program "/data/user/0/com.soundwave.app/files/
+runtime/usr/bin/node": error=13, Permission denied
+```
+
+`errno 13` on `exec()`, with the file present and mode 0755. Android refuses to
+execute a file that an app wrote into its own data directory; `nativeLibraryDir`
+is extracted by the installer and labelled differently, so it is executable.
+
+So the executable ships as `lib/arm64-v8a/libnode.so` — the `lib*.so` name is
+what makes Gradle package it as a native library, and it is cosmetic, since the
+file is `exec`'d by path and never loaded as a library. `extractNativeLibs="true"`
+in the manifest is what makes the installer unpack it rather than leaving it
+compressed inside the APK. The 45 MB binary then costs about 15 MB compressed
+instead of 13 MB in the tarball, and the tarball drops to 12.7 MB.
+
+Termux was checked rather than assumed here: its own 29 MB
+`libtermux-bootstrap.so` is a **JNI shared object** loaded with
+`System.loadLibrary`, not an executed binary, so Termux does not depend on
+executing from app storage either.
 
 ## What is verified
 

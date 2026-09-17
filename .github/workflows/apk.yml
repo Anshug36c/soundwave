@@ -142,18 +142,33 @@ jobs:
           python3 android/scripts/fetch-termux-nodejs.py \
             --arch arm64-v8a \
             --out  "$RUNNER_TEMP/termux-usr" \
-            --tarball android/app/src/main/assets/runtime/usr.tar.xz
+            --tarball android/app/src/main/assets/runtime/usr.tar.xz \
+            --jni-dir android/app/src/main/jniLibs/arm64-v8a
 
-          # Independently re-check the packed asset: right format, relative
-          # paths, executable node, and a complete library closure.
+          # Independently re-check both halves of the runtime.
           #
-          # The closure is checked against the TARBALL, not the directory, and it
-          # simulates the extractor. This matters: several libraries node links
-          # against ship only as a symlink to the versioned file, so a check that
-          # matched on name alone would pass while the phone ended up missing
-          # libicuuc.so.78 and libicui18n.so.78 — and node would not start.
+          # The executable ships as lib/arm64-v8a/libnode.so so the installer
+          # extracts it into nativeLibraryDir, which an app may exec from; a
+          # binary the app writes to its own filesDir gets EACCES (errno 13) on
+          # Android 10+, which is the bug this layout fixes.
+          #
+          # The library closure is checked against the TARBALL while simulating
+          # the extractor, because several libraries node links against exist
+          # only as a symlink to the versioned file — a name-only check passes
+          # while the device ends up missing them.
           python3 - <<'PY'
-          import io, lzma, os, re, subprocess, tarfile
+          import io, lzma, os, re, subprocess, tarfile, zipfile
+
+          node = 'android/app/src/main/jniLibs/arm64-v8a/libnode.so'
+          with open(node, 'rb') as f:
+              assert f.read(4) == b'\x7fELF', 'libnode.so is not an ELF file'
+          assert oct(os.stat(node).st_mode & 0o777) == '0o755', 'libnode.so is not 0755'
+          interp = subprocess.run(['readelf', '-lW', node],
+                                  capture_output=True, text=True).stdout
+          assert '/system/bin/linker64' in interp, 'libnode.so is not an Android binary'
+          print(f'native binary OK: {os.path.getsize(node)/1e6:.1f} MB, '
+                f'aarch64, interpreter /system/bin/linker64')
+
           p = 'android/app/src/main/assets/runtime/usr.tar.xz'
           raw = open(p, 'rb').read()
           assert raw[:6] == b'\xfd7zXZ\x00', 'not an xz stream'
@@ -162,9 +177,9 @@ jobs:
               members = list(t.getmembers())
               names = {m.name for m in members}
               assert all(not n.startswith('/') for n in names), 'absolute path in tarball'
-              node_m = t.getmember('./bin/node')
-              assert node_m.mode & 0o111, 'bin/node is not executable in the tarball'
-              assert node_m.isreg(), 'bin/node is not a regular file'
+              assert './bin/node' not in names, (
+                  'bin/node must not be in the tarball — it ships as libnode.so, '
+                  'and a copy in filesDir is not executable')
 
               # What the Kotlin extractor will actually produce on the device:
               # regular files, plus symlinks whose target is present.
@@ -177,8 +192,7 @@ jobs:
                   if any(('/lib/' + target) in n for n in names):
                       have.add(name)
 
-          tmp = os.environ['RUNNER_TEMP']
-          need = subprocess.run(['readelf', '-dW', f'{tmp}/termux-usr/bin/node'],
+          need = subprocess.run(['readelf', '-dW', node],
                                 capture_output=True, text=True).stdout
           need = re.findall(r'NEEDED\)\s+Shared library: \[([^\]]+)\]', need)
           system = {'libc.so', 'libm.so', 'libdl.so', 'liblog.so'}
