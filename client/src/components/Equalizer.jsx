@@ -25,7 +25,7 @@ export default function Equalizer() {
       <div className="p-3 rounded-xl bg-white/5 border border-soft flex items-center justify-between gap-3 flex-wrap">
         <div>
           <p className="font-extrabold text-sm">Studio sound</p>
-          <p className="text-xs text-dim">Routes audio through the server for EQ + visualizer. Uses more data.</p>
+          <p className="t-caption">Routes audio through the server for EQ + visualizer. Uses more data.</p>
         </div>
         <button onClick={() => { setStudioOn(!studioOn); toast(studioOn ? 'Studio sound off' : 'Studio sound on'); }}
           className={`px-5 py-1.5 rounded-full text-sm font-bold ${studioOn ? 'bg-accent text-black' : 'bg-white/10'}`}>
@@ -40,7 +40,7 @@ export default function Equalizer() {
           <p className="text-xs font-bold tracking-widest text-dim">PRESETS</p>
           <div className="flex gap-2">
             <button onClick={() => { const g = presets.flat.gains; setEqPreset('flat', g); live(() => setAllGains(g)); }}
-              className="text-xs font-bold px-3 py-1 rounded-full bg-white/10">Reset</button>
+              className="text-xs font-bold px-3 py-1 chip">Reset</button>
             <button onClick={() => { setEqEnabled(!eqEnabled); live(() => eqWire(!eqEnabled)); }}
               className={`text-xs font-bold px-3 py-1 rounded-full ${eqEnabled ? 'bg-accent text-black' : 'bg-white/10'}`}>
               EQ {eqEnabled ? 'ON' : 'OFF'}
@@ -79,7 +79,7 @@ export default function Equalizer() {
         <div className="flex items-center justify-between mt-3 p-3 rounded-xl bg-white/5 border border-soft">
           <div>
             <p className="font-bold text-sm">Normalize volume</p>
-            <p className="text-xs text-dim">Gentle compression so quiet & loud songs match</p>
+            <p className="t-caption">Gentle compression so quiet & loud songs match</p>
           </div>
           <button onClick={() => { setNormalizeOn(!normalizeOn); live(() => setNormalize(!normalizeOn)); }}
             className={`px-5 py-1.5 rounded-full text-sm font-bold ${normalizeOn ? 'bg-accent text-black' : 'bg-white/10'}`}>

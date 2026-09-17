@@ -251,3 +251,67 @@ button, a, [role="button"], input[type="range"] { touch-action: manipulation; -w
   .fade-up, .fade-up-1, .fade-up-2, .fade-up-3, .sheet-in, .anim-in, .fade-in, .fade-in-slow, .player-in, .drawer-in, .toast-in { animation-duration: .01s; }
   .lyric-line, .sp-fill, .btn-press { transition: none; }
 }
+
+/* ---------------------------------------------------------------- form + list
+   Shared so Search, Library and Settings stop repeating the same inline input
+   styling — and so a control looks identical everywhere it appears. */
+.field {
+  background: var(--surface-1);
+  border: 1px solid transparent;
+  border-radius: var(--r-ui);
+  padding: .5rem .75rem;
+  font-size: .875rem;
+  font-weight: 500;
+  color: var(--text);
+  outline: none;
+  transition: background-color .18s var(--ease), border-color .18s var(--ease), box-shadow .18s var(--ease);
+}
+.field::placeholder { color: var(--text-dim); }
+.field:hover { background: var(--surface-2); }
+.field:focus { background: var(--bg-card); border-color: var(--accent); box-shadow: 0 0 0 3px rgba(29, 185, 84, .16); }
+
+/* large search field: the one place a control should feel substantial */
+.field-hero {
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
+  padding: .875rem 1.25rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.014em;
+  color: var(--text);
+  outline: none;
+  transition: background-color .2s var(--ease), border-color .2s var(--ease), box-shadow .2s var(--ease);
+}
+.field-hero::placeholder { color: var(--text-dim); }
+.field-hero:hover { background: var(--surface-3); }
+.field-hero:focus { background: var(--bg-card); border-color: var(--accent); box-shadow: 0 0 0 4px rgba(29, 185, 84, .16); }
+
+select.field { appearance: none; -webkit-appearance: none; padding-right: 1.75rem;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-dim) 50%),
+                    linear-gradient(135deg, var(--text-dim) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%;
+  background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+
+/* quiet chip, used for filters and secondary actions */
+.chip {
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border-radius: var(--r-pill);
+  font-size: .75rem;
+  font-weight: 600;
+  padding: .375rem .75rem;
+  transition: background-color .18s var(--ease), color .18s ease;
+}
+.chip:hover { background: var(--surface-3); color: var(--text); }
+.chip-active { background: var(--accent); color: var(--accent-ink, #000); }
+.chip-active:hover { background: var(--accent-hover); color: var(--accent-ink, #000); }
+
+/* informational callout, quieter than the old tinted boxes */
+.callout {
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  padding: .75rem 1rem;
+  font-size: .875rem;
+}

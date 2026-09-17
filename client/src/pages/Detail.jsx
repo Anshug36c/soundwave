@@ -29,7 +29,7 @@ function Header({ image, round, kicker, title, sub, onPlay, extra }) {
       <Img src={image} alt={title} className={`w-28 h-28 sm:w-36 sm:h-36 object-cover shadow-2xl shrink-0 ${round ? 'rounded-full' : 'rounded-2xl'}`} />
       <div className="min-w-0">
         <p className="text-xs font-bold tracking-widest">{kicker}</p>
-        <h1 className="text-2xl sm:text-3xl md:text-5xl font-extrabold tracking-tight">{title}</h1>
+        <h1 className="h-display">{title}</h1>
         {sub && <p className="text-sm text-dim mt-1">{sub}</p>}
         <div className="flex gap-2 mt-3 flex-wrap">
           {onPlay && <button onClick={onPlay} aria-label="Play" className="w-12 h-12 rounded-full btn-accent grid place-items-center shrink-0"><PlayIcon size={20} /></button>}
@@ -53,7 +53,7 @@ export function AlbumPage() {
     <div className="pb-8">
       <Header image={data.image} kicker="ALBUM" title={data.name} sub={`${data.artist} ${data.year ? `· ${data.year}` : ''} · ${data.songs.length} songs`}
         onPlay={() => playTracks(data.songs, 0)}
-        extra={<button onClick={() => toggleSaveAlbum(data)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5">{saved ? <><CheckIcon size={15} />Saved</> : <><PlusIcon size={15} />Save</>}</button>} />
+        extra={<button onClick={() => toggleSaveAlbum(data)} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5">{saved ? <><CheckIcon size={15} />Saved</> : <><PlusIcon size={15} />Save</>}</button>} />
       <div className="panel p-2 mt-4 flex flex-col">
         {data.songs.map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.songs} />)}
       </div>
@@ -111,7 +111,7 @@ export function ArtistPage() {
       <Header image={data.image} round kicker={isAll ? 'ARTIST · ALL PROVIDERS' : 'ARTIST'} title={data.name}
         sub={(data.topSongs?.length || 0) + (isAll ? ' songs · full tracks' : ' top songs · full tracks') + (isAll ? provLine : '')}
         onPlay={data.topSongs?.length ? () => playTracks(data.topSongs, 0) : null}
-        extra={<span className="flex gap-2 flex-wrap"><button onClick={() => toggleFollowArtist(data)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5">{following ? <><CheckIcon size={15} />Following</> : <><PlusIcon size={15} />Follow</>}</button><button onClick={() => isHidden ? unhideArtist(data.name) : hideArtist(data.name)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">{isHidden ? 'Unhide' : 'Hide'}</button><button onClick={() => data.topSongs?.length && playTracks(shuffleList(data.topSongs), 0)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5" aria-label="Shuffle artist"><ShuffleIcon size={15} />Shuffle</button><button onClick={() => addManyToQueue(data.topSongs)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5" aria-label="Add artist songs to queue"><QueueIcon size={15} />Queue</button></span>} />
+        extra={<span className="flex gap-2 flex-wrap"><button onClick={() => toggleFollowArtist(data)} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5">{following ? <><CheckIcon size={15} />Following</> : <><PlusIcon size={15} />Follow</>}</button><button onClick={() => isHidden ? unhideArtist(data.name) : hideArtist(data.name)} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors">{isHidden ? 'Unhide' : 'Hide'}</button><button onClick={() => data.topSongs?.length && playTracks(shuffleList(data.topSongs), 0)} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5" aria-label="Shuffle artist"><ShuffleIcon size={15} />Shuffle</button><button onClick={() => addManyToQueue(data.topSongs)} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5" aria-label="Add artist songs to queue"><QueueIcon size={15} />Queue</button></span>} />
       <h2 className="text-xl font-extrabold mt-6 mb-2">{isAll ? 'All Songs' : 'Top Songs'}</h2>
       <div className="panel p-2 flex flex-col">
         {shownTop.map((t, i) => <SongRow key={t.id} track={t} index={i} context={data.topSongs} />)}

@@ -18,9 +18,9 @@ export function LikedSongs() {
         <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl grid place-items-center text-5xl sm:text-6xl shrink-0" style={{ background: 'linear-gradient(135deg,#450af5,#c4efd9)' }}>♥</div>
         <div>
           <p className="text-xs font-bold tracking-widest">PLAYLIST</p>
-          <h1 className="text-2xl sm:text-3xl md:text-5xl font-extrabold tracking-tight">Liked Songs</h1>
+          <h1 className="h-display">Liked Songs</h1>
           <p className="text-sm text-dim mt-1">{songs.length} songs</p>
-          {songs.length > 0 && <span className="flex gap-2 mt-3"><button onClick={() => playTracks(sorted, 0)} className="btn-accent px-6 py-2.5 text-sm inline-flex items-center gap-1.5"><PlayIcon size={15} />Play all</button><button onClick={() => playTracks(shuffleList(sorted), 0)} className="px-5 py-2.5 rounded-full text-sm font-bold bg-white/10">Shuffle</button></span>}
+          {songs.length > 0 && <span className="flex gap-2 mt-3"><button onClick={() => playTracks(sorted, 0)} className="btn-accent px-6 py-2.5 text-sm inline-flex items-center gap-1.5"><PlayIcon size={15} />Play all</button><button onClick={() => playTracks(shuffleList(sorted), 0)} className="px-5 py-2.5 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors">Shuffle</button></span>}
         </div>
       </div>
       <div className="flex justify-end mt-4">
@@ -86,21 +86,21 @@ export function LocalPlaylist() {
               <input value={name} onChange={e => setName(e.target.value)} placeholder={pl.name} className="bg-soft border border-soft rounded-lg px-3 py-1.5 font-bold" />
               <input value={desc} onChange={e => setDesc(e.target.value)} placeholder={pl.description || 'Description'} className="bg-soft border border-soft rounded-lg px-3 py-1.5 text-sm" />
               <div className="flex gap-2"><button className="btn-accent px-4 py-1.5 text-sm">Save</button>
-                <button type="button" onClick={() => setEditing(false)} className="px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Cancel</button></div>
+                <button type="button" onClick={() => setEditing(false)} className="px-4 py-1.5 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors">Cancel</button></div>
             </form>
           ) : (
             <>
-              <h1 className="text-2xl sm:text-3xl md:text-5xl font-extrabold tracking-tight">{pl.name}</h1>
-              {pl.description && <p className="text-sm text-dim">{pl.description}</p>}
+              <h1 className="h-display">{pl.name}</h1>
+              {pl.description && <p className="t-body text-dim">{pl.description}</p>}
               <p className="text-sm text-dim mt-1">{pl.tracks.length} songs</p>
             </>
           )}
           <div className="flex gap-2 mt-3 flex-wrap">
             {pl.tracks.length > 0 && <button onClick={() => playTracks(pl.tracks, 0)} className="btn-accent px-6 py-2 text-sm inline-flex items-center gap-1.5"><PlayIcon size={15} />Play</button>}
-            {pl.tracks.length > 0 && <button onClick={() => playTracks(shuffleList(pl.tracks), 0)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10">Shuffle</button>}
-            {!editing && <button onClick={() => { setName(pl.name); setDesc(pl.description || ''); setEditing(true); }} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5"><PencilIcon size={15} />Edit</button>}
-            <button onClick={sharePlaylist} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5"><ShareIcon size={15} />Share</button>
-            <button onClick={exportJSON} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5"><DownloadIcon size={15} />Export</button>
+            {pl.tracks.length > 0 && <button onClick={() => playTracks(shuffleList(pl.tracks), 0)} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors">Shuffle</button>}
+            {!editing && <button onClick={() => { setName(pl.name); setDesc(pl.description || ''); setEditing(true); }} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5"><PencilIcon size={15} />Edit</button>}
+            <button onClick={sharePlaylist} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5"><ShareIcon size={15} />Share</button>
+            <button onClick={exportJSON} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5"><DownloadIcon size={15} />Export</button>
           </div>
         </div>
       </div>
@@ -154,10 +154,10 @@ export default function Library() {
   return (
     <div className="pb-8">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl font-extrabold tracking-tight">Your Library</h1>
+        <h1 className="h-display">Your Library</h1>
         <div className="flex gap-2">
           <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter library…" className="bg-soft border border-soft rounded-full px-4 py-1.5 text-sm outline-none" aria-label="Filter library" />
-          <label className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1 cursor-pointer"><DownloadIcon size={15} />Import<input type="file" accept=".json,application/json" className="hidden" onChange={importFile} /></label>
+          <label className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1 cursor-pointer"><DownloadIcon size={15} />Import<input type="file" accept=".json,application/json" className="hidden" onChange={importFile} /></label>
           <button onClick={() => { const n = prompt('Playlist name:'); if (n?.trim()) { createPlaylist(n.trim()); toast('Playlist created'); } }} className="btn-accent px-4 py-2 text-sm inline-flex items-center gap-1"><PlusIcon size={15} />New</button>
         </div>
       </div>
@@ -185,19 +185,19 @@ export default function Library() {
       )}
       {offlineSongs.length > 0 && (
         <><h2 className="text-xl font-extrabold mt-8 mb-3"><DownloadIcon size={19} className="inline -mt-0.5 mr-1" />Offline Songs ({offlineSongs.length})</h2>
-          <div className="card p-2 flex flex-col">{offlineSongs.map((t, i) => <SongRow key={t.id} track={t} index={i} context={offlineSongs} />)}</div></>
+          <div className="panel p-2 flex flex-col">{offlineSongs.map((t, i) => <SongRow key={t.id} track={t} index={i} context={offlineSongs} />)}</div></>
       )}
       <div className="flex items-center justify-between mt-8 mb-3">
         <h2 className="text-xl font-extrabold">Recently Played</h2>
-        {history.length > 0 && <button onClick={clearHistory} className="text-xs font-bold text-dim">CLEAR</button>}
+        {history.length > 0 && <button onClick={clearHistory} className="t-eyebrow">CLEAR</button>}
       </div>
-      <div className="card p-2 flex flex-col">
+      <div className="panel p-2 flex flex-col">
         {history.slice(0, 20).map((t, i) => <SongRow key={t.id} track={t} index={i} context={history} badge={timeAgo(t._playedAt)} />)}
         {history.length === 0 && <p className="p-6 text-sm text-dim text-center">Nothing yet — go play something!</p>}
       </div>
       {mostPlayed.length > 0 && (
         <><h2 className="text-xl font-extrabold mt-8 mb-3">Most Played</h2>
-          <div className="card p-2 flex flex-col">
+          <div className="panel p-2 flex flex-col">
             {mostPlayed.map((e, i) => <SongRow key={e.track.id} track={e.track} index={i} context={mostPlayed.map(x => x.track)} badge={`${e.n} play${e.n > 1 ? 's' : ''}`} />)}
           </div></>
       )}

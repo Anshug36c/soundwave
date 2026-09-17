@@ -6,11 +6,11 @@ import GoogleLogin, { signOutEverywhere } from '../components/GoogleLogin';
 function Diagnostics() {
   const [, setTick] = useState(0);
   const [open, setOpen] = useState(false);
-  if (!open) return <Row label="Diagnostics" desc="Local request & playback health — this session only, never uploaded"><button onClick={() => setOpen(true)} className="px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Show</button></Row>;
+  if (!open) return <Row label="Diagnostics" desc="Local request & playback health — this session only, never uploaded"><button onClick={() => setOpen(true)} className="px-4 py-1.5 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors">Show</button></Row>;
   const reqs = [...diag.reqs].reverse();
   const slow = reqs.filter(r => r.ms > 2000);
   return (
-    <div className="card p-4">
+    <div className="panel p-4">
       <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
         <p className="font-bold text-sm">Diagnostics <span className="text-xs text-dim font-semibold">(local, this session)</span></p>
         <span className="flex gap-2">
@@ -40,7 +40,7 @@ function Diagnostics() {
 function Row({ label, desc, children }) {
   return (
     <div className="card p-4 flex items-center justify-between gap-4 flex-wrap">
-      <div><p className="font-bold text-sm">{label}</p>{desc && <p className="text-xs text-dim">{desc}</p>}</div>
+      <div><p className="font-bold text-sm">{label}</p>{desc && <p className="t-caption">{desc}</p>}</div>
       {children}
     </div>
   );
@@ -85,7 +85,7 @@ export default function Settings() {
 
   return (
     <div className="pb-8 max-w-2xl">
-      <h1 className="text-2xl font-extrabold tracking-tight">Profile & Settings</h1>
+      <h1 className="h-display">Profile & Settings</h1>
 
       <div className="card p-5 mt-4 flex items-center gap-4 flex-wrap">
         {authUser && profile.picture
@@ -98,7 +98,7 @@ export default function Settings() {
             <div>
               <p className="font-extrabold text-lg leading-tight">{profile.name}</p>
               <p className="text-xs text-dim font-semibold">{profile.email} · Signed in with Google</p>
-              <button onClick={signOutEverywhere} className="mt-2 px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Sign out</button>
+              <button onClick={signOutEverywhere} className="mt-2 px-4 py-1.5 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors">Sign out</button>
             </div>
           ) : (
             <div>
@@ -128,7 +128,7 @@ export default function Settings() {
             <div key={n} className="flex items-center gap-2 text-sm py-1">
               <span className="text-dim w-5">{i + 1}.</span><span className="font-semibold flex-1">{n}</span>
               <div className="w-32 h-1.5 bg-white/10 rounded-full"><div className="h-full bg-accent rounded-full" style={{ width: `${(c / topList[0][1]) * 100}%` }} /></div>
-              <span className="text-xs text-dim">{c} plays</span>
+              <span className="t-caption">{c} plays</span>
             </div>
           ))}
         </div>
@@ -161,7 +161,7 @@ export default function Settings() {
           <button onClick={async () => { if (deferred) { deferred.prompt(); await deferred.userChoice; setDeferred(null); } else toast('Use browser menu → Install/Add to Home Screen'); }} className="btn-accent px-4 py-1.5 text-sm">Install</button>
         </Row>
         <Row label="Taste profile" desc={`${Object.keys(liked).length} liked · ${Object.keys(disliked).length} disliked · ${Object.keys(hiddenArtists).length} artists hidden`}>
-          <button onClick={resetTaste} className="px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Reset taste</button>
+          <button onClick={resetTaste} className="px-4 py-1.5 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors">Reset taste</button>
         </Row>
         {Object.keys(hiddenArtists).length > 0 && (
         <Row label="Hidden artists" desc="Filtered from recommendations & song results">
@@ -169,7 +169,7 @@ export default function Settings() {
         </Row>
         )}
         <Row label="Listening history" desc={`${history.length} tracks stored locally`}>
-          <button onClick={() => { clearHistory(); toast('History cleared'); }} className="px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Clear</button>
+          <button onClick={() => { clearHistory(); toast('History cleared'); }} className="px-4 py-1.5 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors">Clear</button>
         </Row>
         <Row label="Storage" desc="Offline songs live in cache storage">
           <button onClick={async () => {
@@ -178,7 +178,7 @@ export default function Settings() {
               await Promise.all(keys.filter(k => k.includes('audio')).map(k => caches.delete(k)));
               toast('Offline cache cleared');
             } catch { toast('Could not clear cache', 'error'); }
-          }} className="px-4 py-1.5 rounded-full text-sm font-bold bg-white/10">Clear offline songs</button>
+          }} className="px-4 py-1.5 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors">Clear offline songs</button>
         </Row>
         <Row label="Privacy" desc="No account, no tracking. Likes, playlists, history & taste live only on this device; diagnostics never leave it.">
           <button onClick={async () => {

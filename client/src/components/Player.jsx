@@ -400,7 +400,7 @@ export function FullPlayer() {
             <div className="flex items-center gap-2 mt-5 flex-wrap justify-center">
               <button onClick={() => toggleLike(track)} className={`px-4 py-2 rounded-full text-sm font-bold inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95 ${isLiked ? 'bg-accent text-black' : 'bg-white/10'}`}><HeartIcon size={15} filled={isLiked} />{isLiked ? 'Liked' : 'Like'}</button>
               <div className="relative">
-                <button onClick={() => setShowPlMenu(v => !v)} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95"><PlusIcon size={15} />Playlist</button>
+                <button onClick={() => setShowPlMenu(v => !v)} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95"><PlusIcon size={15} />Playlist</button>
                 {showPlMenu && <div className="absolute bottom-12 left-1/2 -translate-x-1/2 sm:left-0 sm:translate-x-0 z-10"><AddToPlaylistMenu track={track} onDone={() => setShowPlMenu(false)} /></div>}
               </div>
               <button onClick={() => cycleLoopPoint(currentTime)} aria-label="Loop section (A-B)" title="Loop a section: tap to set A, again for B, again to clear"
@@ -408,11 +408,11 @@ export function FullPlayer() {
                 <RepeatIcon size={15} />{abLoop.b != null ? `${formatTime(abLoop.a)}–${formatTime(abLoop.b)}` : abLoop.a != null ? `A ${formatTime(abLoop.a)}…` : 'A–B'}
               </button>
               <button onClick={() => setShowParty(true)} aria-label="Listen Together" title="Listen Together: host or join a synced party"
-                className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95">
+                className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95">
                 <span className={`w-2 h-2 rounded-full ${party ? 'bg-green-500 animate-pulse' : 'bg-white/30'}`} aria-hidden />Together{party ? ` ${party.code}` : ''}
               </button>
-              <button onClick={share} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95"><ShareIcon size={15} />Share</button>
-              <button onClick={() => { toggleDownload(track); toast(downloads[track.id] ? 'Removed from offline' : 'Saved for offline'); }} className="px-4 py-2 rounded-full text-sm font-bold bg-white/10 inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95">
+              <button onClick={share} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95"><ShareIcon size={15} />Share</button>
+              <button onClick={() => { toggleDownload(track); toast(downloads[track.id] ? 'Removed from offline' : 'Saved for offline'); }} className="px-4 py-2 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors inline-flex items-center gap-1.5 transition-all hover:-translate-y-0.5 active:translate-y-0 active:scale-95">
                 {downloads[track.id] ? <CheckIcon size={15} /> : <DownloadIcon size={15} />}Offline
               </button>
               <div className="relative">

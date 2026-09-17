@@ -165,7 +165,7 @@ export default function Search() {
             placeholder="Songs, artists, albums — try “songs like Desires”" enterKeyHint="search"
             role="combobox" aria-expanded={showSuggest && hasSuggest} aria-controls="search-suggest" aria-autocomplete="list"
             aria-activedescendant={sugActive >= 0 ? `sug-opt-${sugActive}` : undefined}
-            className="w-full bg-soft border border-soft rounded-2xl px-5 py-3.5 text-base outline-none focus:border-green-500 font-semibold" aria-label="Search music" />
+            className="w-full field-hero" aria-label="Search music" />
           {voiceSupported && (
             <button onClick={startVoice} title="Voice search"
               className={`shrink-0 w-12 rounded-2xl border border-soft grid place-items-center ${listening ? 'bg-red-500/80 text-white animate-pulse' : 'bg-soft text-dim'}`}
@@ -178,44 +178,44 @@ export default function Search() {
 
         {showSuggest && hasSuggest && (
           <div id="search-suggest" role="listbox" aria-label="Search suggestions" className="absolute z-30 left-0 right-0 mt-2 panel p-2 max-h-80 overflow-y-auto sheet-scroll">
-            {suggest.songs.length > 0 && <p className="px-3 pt-1 text-[11px] font-extrabold text-dim tracking-wide">SONGS</p>}
+            {suggest.songs.length > 0 && <p className="px-3 pt-1 t-eyebrow">SONGS</p>}
             {suggest.songs.map((s, i) => <SugBtn key={`s${i}`} s={s} idx={i} active={sugActive} onPick={submit} Icon={NoteIcon} />)}
-            {suggest.artists.length > 0 && <p className="px-3 pt-2 text-[11px] font-extrabold text-dim tracking-wide">ARTISTS</p>}
+            {suggest.artists.length > 0 && <p className="px-3 pt-2 t-eyebrow">ARTISTS</p>}
             {suggest.artists.map((s, i) => <SugBtn key={`a${i}`} s={s} idx={suggest.songs.length + i} active={sugActive} onPick={submit} Icon={MicIcon} />)}
-            {suggest.albums.length > 0 && <p className="px-3 pt-2 text-[11px] font-extrabold text-dim tracking-wide">ALBUMS</p>}
+            {suggest.albums.length > 0 && <p className="px-3 pt-2 t-eyebrow">ALBUMS</p>}
             {suggest.albums.map((s, i) => <SugBtn key={`l${i}`} s={s} idx={suggest.songs.length + suggest.artists.length + i} active={sugActive} onPick={submit} Icon={DiscIcon} />)}
           </div>
         )}
       </div>
 
       {showFilters && (
-        <div className="card p-3 mt-3 flex flex-wrap gap-3 items-end">
-          <label className="text-xs font-bold text-dim">Year
+        <div className="panel p-4 mt-3 flex flex-wrap gap-3 items-end">
+          <label className="t-eyebrow">Year
             <input value={filters.y} onChange={e => setF('y', e.target.value)} placeholder="2021 or 2000s"
-              className="block mt-1 bg-soft border border-soft rounded-lg px-3 py-1.5 text-sm font-semibold outline-none w-32" /></label>
-          <label className="text-xs font-bold text-dim">Min (min)
+              className="field block mt-1.5 w-32" /></label>
+          <label className="t-eyebrow">Min (min)
             <input value={filters.minD} onChange={e => setF('minD', e.target.value.replace(/[^0-9]/g, ''))} placeholder="—"
-              inputMode="numeric" className="block mt-1 bg-soft border border-soft rounded-lg px-3 py-1.5 text-sm font-semibold outline-none w-20" /></label>
-          <label className="text-xs font-bold text-dim">Max (min)
+              inputMode="numeric" className="field block mt-1.5 w-20" /></label>
+          <label className="t-eyebrow">Max (min)
             <input value={filters.maxD} onChange={e => setF('maxD', e.target.value.replace(/[^0-9]/g, ''))} placeholder="—"
-              inputMode="numeric" className="block mt-1 bg-soft border border-soft rounded-lg px-3 py-1.5 text-sm font-semibold outline-none w-20" /></label>
-          <label className="text-xs font-bold text-dim">Language
+              inputMode="numeric" className="field block mt-1.5 w-20" /></label>
+          <label className="t-eyebrow">Language
             <select value={filters.lang} onChange={e => setF('lang', e.target.value)}
-              className="block mt-1 bg-soft border border-soft rounded-lg px-3 py-1.5 text-sm font-semibold outline-none">
+              className="field block mt-1.5">
               <option value="">Any</option><option value="punjabi">Punjabi</option><option value="hindi">Hindi</option><option value="english">English</option>
             </select></label>
-          <label className="text-xs font-bold text-dim">Lyrics
+          <label className="t-eyebrow">Lyrics
             <select value={filters.exp} onChange={e => setF('exp', e.target.value)}
-              className="block mt-1 bg-soft border border-soft rounded-lg px-3 py-1.5 text-sm font-semibold outline-none">
+              className="field block mt-1.5">
               <option value="">Any</option><option value="clean">Clean only</option>
             </select></label>
           {filtersActive && <button onClick={() => { setFilters(EMPTY_FILTERS); if (q.trim()) { setLoading(true); run(q.trim()); } }}
-            className="text-xs font-bold px-3 py-2 rounded-full bg-white/10">Clear</button>}
+            className="chip">Clear</button>}
         </div>
       )}
 
       {(results.nl?.note || results.nl?.mode === 'similar' || results.nl?.cleaned) && q && (
-        <div className="mt-4 px-4 py-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-sm font-semibold">
+        <div className="callout mt-4 font-semibold">
           {results.nl.mode === 'similar' ? `Songs like ${results.nl.refLabel || results.nl.ref}`
             : results.nl.note ? `${results.nl.note}`
             : `Showing matches for “${results.nl.cleaned}”`}
@@ -223,12 +223,12 @@ export default function Search() {
       )}
       {results.didYouMean && q && !loading && results.songs.length === 0 && (
         <div className="mt-4 text-sm">No matches. Did you mean{' '}
-          <button onClick={() => submit(results.didYouMean)} className="font-bold text-green-500 underline">{results.didYouMean}</button>?
+          <button onClick={() => submit(results.didYouMean)} className="font-semibold accent underline underline-offset-2">{results.didYouMean}</button>?
         </div>
       )}
       {results.didYouMean && q && !loading && results.songs.length > 0 && (
         <div className="mt-4 text-sm">Did you mean{' '}
-          <button onClick={() => submit(results.didYouMean)} className="font-bold text-green-500 underline">{results.didYouMean}</button>?
+          <button onClick={() => submit(results.didYouMean)} className="font-semibold accent underline underline-offset-2">{results.didYouMean}</button>?
         </div>
       )}
 
@@ -236,8 +236,8 @@ export default function Search() {
         <div className="mt-6">
           {searchHistory.length > 0 && (
             <div className="mb-6">
-              <div className="flex justify-between items-center mb-2"><h3 className="font-extrabold">Recent searches</h3>
-                <button onClick={clearSearchHistory} className="text-xs font-bold text-dim">CLEAR</button></div>
+              <div className="flex justify-between items-center mb-2"><h3 className="h-sub">Recent searches</h3>
+                <button onClick={clearSearchHistory} className="t-eyebrow">CLEAR</button></div>
               <div className="flex flex-wrap gap-2">{searchHistory.map(h => <button key={h} onClick={() => submit(h)} className="card px-4 py-2 text-sm font-semibold inline-flex items-center gap-1.5"><ClockIcon size={15} />{h}</button>)}</div>
             </div>
           )}

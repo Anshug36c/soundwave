@@ -118,8 +118,8 @@ export function AuthAvatar() {
             <p className="text-xs text-dim truncate mb-2">{profile.email}</p>
             <p className="text-[11px] text-dim mb-3">Your library on this device is kept separate for this account.</p>
             <div className="flex gap-2">
-              <Link to="/settings" onClick={() => setOpen(false)} className="flex-1 text-center px-3 py-1.5 rounded-full text-xs font-bold bg-white/10">Settings</Link>
-              <button onClick={() => { setOpen(false); signOutEverywhere(); }} className="flex-1 px-3 py-1.5 rounded-full text-xs font-bold bg-white/10">Sign out</button>
+              <Link to="/settings" onClick={() => setOpen(false)} className="flex-1 text-center chip">Settings</Link>
+              <button onClick={() => { setOpen(false); signOutEverywhere(); }} className="flex-1 chip">Sign out</button>
             </div>
           </div>
         </>
