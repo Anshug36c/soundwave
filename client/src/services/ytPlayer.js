@@ -9,10 +9,8 @@
 // bundles a Node runtime and nothing else. So the one path that actually
 // plays a YouTube video on the phone is YouTube's own player, embedded.
 //
-// That gives both modes this app offers:
-//   audio — the iframe is parked at 1x1 off-screen. The picture is still
-//           decoded, but nothing is visible, so a video plays as a song.
-//   video — the iframe is positioned over a host element the player renders.
+// The iframe is always parked off-screen. The app exposes YouTube as an audio
+// source only; the official player remains the reliable playback mechanism.
 //
 // "Play as mp3" is therefore audio-only playback, not an mp3 file: there is no
 // audio data here to hand to a downloader, and no way to route it through the
@@ -28,9 +26,6 @@ let player = null;
 let playerReady = false;
 let container = null;     // the div we create; the API replaces it with an iframe
 let iframe = null;        // the actual element to position, from player.getIframe()
-let host = null;          // element the video is shown inside (video mode)
-let hostObserver = null;
-let hostScrollTimer = null;
 let pollTimer = null;
 let volume = 90;
 let muted = false;
@@ -81,13 +76,7 @@ export function ensureYouTubeApi() {
   return apiPromise;
 }
 
-/**
- * The element to position and hide.
- *
- * YT.Player replaces the container div with an <iframe>, so after the player
- * exists the div is detached from the document and styling it does nothing.
- * getIframe() is the documented way to reach the element that is really there.
- */
+/** Returns the actual iframe created by the YouTube API. */
 function surface() {
   if (!iframe) { try { iframe = player?.getIframe?.() || null; } catch { iframe = null; } }
   return iframe || container;
@@ -127,8 +116,7 @@ function createPlayer() {
         onReady: () => {
           playerReady = true;
           try { iframe = player.getIframe(); } catch { iframe = null; }
-          // The host may already have been set before the player existed.
-          if (host) reposition();
+          Object.assign(surface()?.style || {}, OFFSCREEN);
           try { player.setVolume(volume); } catch { /* noop */ }
           if (muted) { try { player.mute(); } catch { /* noop */ } }
           resolve(true);
@@ -181,53 +169,6 @@ function startPoll() {
 
 function stopPoll() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-}
-
-/**
- * Positions the iframe over `el`, or parks it off-screen when `el` is null.
- *
- * The container is never re-parented: moving an iframe in the DOM reloads it,
- * which would restart the video on every mode switch. Instead it stays a fixed
- * overlay and is resized to track the host's rectangle.
- */
-export function setYouTubeHost(el) {
-  host = el || null;
-  if (hostObserver) { try { hostObserver.disconnect(); } catch { /* noop */ } hostObserver = null; }
-  if (hostScrollTimer) { clearInterval(hostScrollTimer); hostScrollTimer = null; }
-  reposition();
-  if (!host) return;
-  if (typeof ResizeObserver !== 'undefined') {
-    hostObserver = new ResizeObserver(reposition);
-    try { hostObserver.observe(host); } catch { /* noop */ }
-  }
-  // Scrolling moves the host but fires no resize; track it for as long as the
-  // video is on screen rather than attaching a permanent scroll listener.
-  hostScrollTimer = setInterval(reposition, 200);
-}
-
-function reposition() {
-  const el = surface();
-  if (!el) return;
-  if (!host) {
-    Object.assign(el.style, OFFSCREEN);
-    el.setAttribute('aria-hidden', 'true');
-    return;
-  }
-  const r = host.getBoundingClientRect();
-  if (r.width < 4 || r.height < 4) { Object.assign(el.style, OFFSCREEN); return; }
-  Object.assign(el.style, {
-    position: 'fixed',
-    left: `${Math.round(r.left)}px`,
-    top: `${Math.round(r.top)}px`,
-    width: `${Math.round(r.width)}px`,
-    height: `${Math.round(r.height)}px`,
-    opacity: '1',
-    pointerEvents: 'auto',
-    zIndex: '30',
-    overflow: 'hidden',
-    borderRadius: '16px',
-  });
-  el.setAttribute('aria-hidden', 'false');
 }
 
 /**

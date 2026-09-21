@@ -60,10 +60,6 @@ export const useStore = create(
       setDiscoverMix: (v) => set({ discoverMix: v }),
       resetTaste: () => { set({ liked: {}, disliked: {}, hiddenArtists: {}, similar: [] }); get().toast('Taste profile reset', 'info'); },
       sleepTimerMin: 0,
-      // How YouTube tracks play: 'audio' parks the embedded player off-screen
-      // so a video is heard like a song, 'video' shows it in the player.
-      ytMode: 'audio',
-      setYtMode: (m) => set({ ytMode: m === 'video' ? 'video' : 'audio' }),
 
       playTracks: (tracks, startIndex = 0) => {
         const list = (tracks || []).filter(Boolean);
@@ -297,7 +293,6 @@ export const useStore = create(
         eqPreset: s.eqPreset, eqPreamp: s.eqPreamp, normalizeOn: s.normalizeOn,
         profile: s.profile, searchHistory: s.searchHistory, volume: s.volume, gain: s.gain,
         disliked: s.disliked, hiddenArtists: s.hiddenArtists, discoverMix: s.discoverMix,
-        ytMode: s.ytMode,
       }),
     }
   )

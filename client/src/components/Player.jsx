@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
-import { api, formatTime, isYouTubeTrack } from '../services/musicApi';
-import { setYouTubeHost } from '../services/ytPlayer';
+import { api, formatTime } from '../services/musicApi';
 import { seekTo } from '../hooks/useAudioEngine';
 import { Img, EqIcon } from './Cards';
 import { SimilarSongs } from './SimilarSongs';
@@ -304,41 +303,6 @@ function AddToPlaylistMenu({ track, onDone }) {
   );
 }
 
-/**
- * The rectangle the embedded YouTube player is drawn into.
- *
- * The player is a single fixed-position iframe owned by ytPlayer.js and is
- * never re-parented — moving an iframe in the DOM reloads it, which would
- * restart the video on every mode switch. This div only tells that module
- * where to paint, so it can come and go freely.
- */
-function YtVideoSurface({ className }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    setYouTubeHost(ref.current);
-    return () => setYouTubeHost(null);
-  }, []);
-  return <div ref={ref} className={className} />;
-}
-
-/** Audio-only vs. video for YouTube tracks. */
-function YtModeToggle() {
-  const ytMode = useStore(s => s.ytMode);
-  const setYtMode = useStore(s => s.setYtMode);
-  const opt = (v, label) => (
-    <button onClick={() => setYtMode(v)} aria-pressed={ytMode === v}
-      className={`px-3 py-1 rounded-full text-[11px] font-extrabold tracking-wide transition-colors ${ytMode === v ? 'bg-accent text-black' : 'bg-white/10 text-dim'}`}>
-      {label}
-    </button>
-  );
-  return (
-    <div className="flex items-center gap-1 p-1 rounded-full bg-black/40 border border-soft" role="group" aria-label="YouTube playback mode">
-      {opt('audio', 'MP3')}
-      {opt('video', 'VIDEO')}
-    </div>
-  );
-}
-
 export function FullPlayer() {
   const show = useStore(s => s.showFullPlayer);
   const setShow = useStore(s => s.setShowFullPlayer);
@@ -375,7 +339,6 @@ export function FullPlayer() {
   const cycleSpeed = () => { const steps = [1, 1.25, 1.5, 2, 0.5]; setPlaybackRate(steps[(steps.indexOf(playbackRate) + 1) % steps.length]); };
   const setShowQueue = useStore(s => s.setShowQueue);
   const studioOn = useStore(s => s.studioOn);
-  const ytMode = useStore(s => s.ytMode);
   const setStudioOn = useStore(s => s.setStudioOn);
   const toast = useStore(s => s.toast);
   const [tab, setTab] = useState('lyrics');
@@ -505,9 +468,6 @@ export function FullPlayer() {
         </div>
         <div className="grid md:grid-cols-2 gap-8 mt-6 items-start">
           <div className="flex flex-col items-center">
-            {isYouTubeTrack(track) && ytMode === 'video' ? (
-              <YtVideoSurface className="w-full max-w-2xl aspect-video rounded-2xl overflow-hidden bg-black shadow-2xl border border-white/10" />
-            ) : (
             <div className={`relative ${isPlaying ? 'animate-spin-slower' : 'paused-spin animate-spin-slower'}`}>
               {/* paused/ended: the disc visibly cools down (desaturate + dim) so
                   state reads from across the room, not just the header word */}
@@ -517,9 +477,8 @@ export function FullPlayer() {
                 <div className="absolute inset-0 grid place-items-center">
                   <span className="w-14 h-14 rounded-full bg-black/70 grid place-items-center text-white"><SpinIcon size={26} /></span>
                 </div>
-              )}
-            </div>
             )}
+            </div>
             <div className="w-full mt-4">
               {studioOn ? <Visualizer /> : (
                 <button onClick={() => { setStudioOn(true); setTab('studio'); toast('Studio sound on'); }}
@@ -531,7 +490,6 @@ export function FullPlayer() {
             <div key={track.id} className="anim-in flex flex-col items-center">
               <h1 className="mt-4 text-2xl font-extrabold text-center text-balance">{track.title}</h1>
               <p className="text-dim font-semibold text-center">{track.artist?.name}{track.album?.name ? ` · ${track.album.name}` : ''}</p>
-              {isYouTubeTrack(track) && <div className="mt-3"><YtModeToggle /></div>}
             </div>
             <div className="w-full mt-5 slider-wrap">
               <input data-seeking="1" type="range" min={0} max={duration || 0} step={0.5} value={currentTime}
