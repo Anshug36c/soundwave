@@ -4,28 +4,6 @@ import { streamFor } from '../services/musicApi';
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
-// ---------- per-account on-device libraries (Google sign-in) ----------
-// Identity comes from the server session cookie; each account's library lives
-// in its own localStorage snapshot. No database, no uploads.
-const ACCOUNT_SLICES = ['liked', 'playlists', 'followedArtists', 'savedAlbums', 'history', 'playCounts', 'disliked', 'hiddenArtists', 'profile'];
-const BLANK_ACCOUNT = { liked: {}, playlists: [], followedArtists: {}, savedAlbums: {}, history: [], playCounts: {}, disliked: {}, hiddenArtists: {} };
-const acctKey = (k) => `soundwave-acct:${k}`;
-function snapshotAccount(key) {
-  try {
-    const s = useStore.getState();
-    const snap = {};
-    for (const k of ACCOUNT_SLICES) snap[k] = s[k];
-    localStorage.setItem(acctKey(key), JSON.stringify(snap));
-  } catch { /* quota/private-mode: session stays in memory */ }
-}
-function loadAccount(key) {
-  let snap = null;
-  try { snap = JSON.parse(localStorage.getItem(acctKey(key)) || 'null'); } catch { /* noop */ }
-  if (!snap && key !== 'guest') snap = { ...BLANK_ACCOUNT, profile: { name: 'Listener', email: '' } };
-  if (!snap) return; // guest with no snapshot: keep current (fresh) state
-  useStore.setState({ ...snap });
-}
-
 // persist writes fire on EVERY state change — including the ~4Hz playback clock
 // (setTime) — but currentTime/duration aren't in partialize, so clock ticks
 // re-emit a byte-identical payload. Skip identical writes: discrete actions
@@ -67,8 +45,6 @@ export const useStore = create(
       duration: 0,
       showFullPlayer: false,
       showQueue: false,
-      showParty: false,
-      party: null, // { role: 'host'|'guest', code } — session-only, never persisted
       similar: [], // similar songs for current track (transient, not persisted)
       setSimilar: (s) => set({ similar: s || [] }),
       disliked: {}, // trackId -> true (excluded from recommendations)
@@ -84,7 +60,6 @@ export const useStore = create(
       setDiscoverMix: (v) => set({ discoverMix: v }),
       resetTaste: () => { set({ liked: {}, disliked: {}, hiddenArtists: {}, similar: [] }); get().toast('Taste profile reset', 'info'); },
       sleepTimerMin: 0,
-      instantPreview: true, // instant FLAC preview, then auto-switch to full MP3
       // How YouTube tracks play: 'audio' parks the embedded player off-screen
       // so a video is heard like a song, 'video' shows it in the player.
       ytMode: 'audio',
@@ -188,12 +163,7 @@ export const useStore = create(
       cycleRepeat: () => set(s => ({ repeat: s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off' })),
       setShowFullPlayer: (v) => set({ showFullPlayer: v }),
       setShowQueue: (v) => set({ showQueue: v }),
-      setShowParty: (v) => set({ showParty: v }),
-      startParty: (code) => set({ party: { role: 'host', code } }),
-      joinParty: (code) => set({ party: { role: 'guest', code } }),
-      leaveParty: () => set(s => (s.party ? { party: null } : s)),
       setSleepTimer: (min) => set({ sleepTimerMin: min }),
-      setInstantPreview: (v) => set({ instantPreview: v }),
 
       // ---------- library ----------
       liked: {},            // id -> track
@@ -263,7 +233,7 @@ export const useStore = create(
         const dl = { ...s.downloads };
         // cache the EXACT playback URL (quality params included) — the raw
         // streamUrl never matches a playback request, so offline would always miss
-        const url = track.streamUrl ? streamFor(track, get().quality) : track.previewUrl;
+        const url = track.streamUrl ? streamFor(track, get().quality) : '';
         if (dl[track.id]) {
           delete dl[track.id];
           if (navigator.serviceWorker?.controller) navigator.serviceWorker.controller.postMessage({ type: 'UNCACHE_AUDIO', url });
@@ -287,8 +257,6 @@ export const useStore = create(
       eqPreamp: 0,
       normalizeOn: false,
       profile: { name: 'Guest Listener', email: '' },
-      liveAccount: 'guest', // which account the live store belongs to ('guest' or Google sub)
-      authUser: null, // { sub, name, email, picture } — session-only, restored via /api/auth/me
       searchHistory: [],
       setTheme: (theme) => set({ theme }),
       setQuality: (quality) => set({ quality }),
@@ -301,27 +269,6 @@ export const useStore = create(
       setEqPreamp: (v) => set({ eqPreamp: v }),
       setNormalizeOn: (v) => set({ normalizeOn: v }),
       setProfile: (p) => set(s => ({ profile: { ...s.profile, ...p } })),
-      loginWithGoogle: (user, { silent = false } = {}) => {
-        if (!user?.sub) return;
-        const cur = get().liveAccount || 'guest';
-        if (cur === user.sub) { set({ authUser: user }); return; }
-        snapshotAccount(cur);
-        loadAccount(user.sub);
-        set({ authUser: user, liveAccount: user.sub, profile: { name: user.name || 'Listener', email: user.email || '', picture: user.picture || '' } });
-        if (!silent) get().toast(`Signed in as ${user.name || user.email}`, 'info');
-      },
-      logoutToGuest: ({ silent = false } = {}) => {
-        const cur = get().liveAccount || 'guest';
-        if (cur !== 'guest') snapshotAccount(cur);
-        loadAccount('guest');
-        set({ authUser: null, liveAccount: 'guest' });
-        if (!silent) get().toast('Signed out', 'info');
-      },
-      // boot: align the live store with the server session (cookie)
-      reconcileSession: (user) => {
-        if (user?.sub) get().loginWithGoogle(user, { silent: true });
-        else if ((get().liveAccount || 'guest') !== 'guest') get().logoutToGuest({ silent: true });
-      },
       pushSearch: (q) => set(s => ({ searchHistory: [q, ...s.searchHistory.filter(x => x !== q)].slice(0, 12) })),
       clearSearchHistory: () => set({ searchHistory: [] }),
 
@@ -348,8 +295,8 @@ export const useStore = create(
         theme: s.theme, quality: s.quality, playbackRate: s.playbackRate, crossfade: s.crossfade, autoplay: s.autoplay,
         studioOn: s.studioOn, eqEnabled: s.eqEnabled, eqGains: s.eqGains,
         eqPreset: s.eqPreset, eqPreamp: s.eqPreamp, normalizeOn: s.normalizeOn,
-        profile: s.profile, liveAccount: s.liveAccount, searchHistory: s.searchHistory, volume: s.volume, gain: s.gain,
-        instantPreview: s.instantPreview, disliked: s.disliked, hiddenArtists: s.hiddenArtists, discoverMix: s.discoverMix,
+        profile: s.profile, searchHistory: s.searchHistory, volume: s.volume, gain: s.gain,
+        disliked: s.disliked, hiddenArtists: s.hiddenArtists, discoverMix: s.discoverMix,
         ytMode: s.ytMode,
       }),
     }

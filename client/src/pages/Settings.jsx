@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../store/useStore';
 import { diag } from '../services/musicApi';
-import GoogleLogin, { signOutEverywhere } from '../components/GoogleLogin';
 
 function Diagnostics() {
   const [, setTick] = useState(0);
@@ -55,13 +54,10 @@ export default function Settings() {
   const setStudioOn = useStore(s => s.setStudioOn);
   const crossfade = useStore(s => s.crossfade);
   const setCrossfade = useStore(s => s.setCrossfade);
-  const instantPreview = useStore(s => s.instantPreview);
   const autoplay = useStore(s => s.autoplay);
   const setAutoplay = useStore(s => s.setAutoplay);
-  const setInstantPreview = useStore(s => s.setInstantPreview);
   const profile = useStore(s => s.profile);
   const setProfile = useStore(s => s.setProfile);
-  const authUser = useStore(s => s.authUser);
   const history = useStore(s => s.history);
   const liked = useStore(s => s.liked);
   const playlists = useStore(s => s.playlists);
@@ -88,30 +84,14 @@ export default function Settings() {
       <h1 className="h-display">Profile & Settings</h1>
 
       <div className="card p-5 mt-4 flex items-center gap-4 flex-wrap">
-        {authUser && profile.picture
-          ? <img src={profile.picture} alt="" referrerPolicy="no-referrer" className="w-16 h-16 rounded-full object-cover shrink-0" />
-          : <div className="w-16 h-16 rounded-full bg-accent grid place-items-center text-2xl font-extrabold text-black shrink-0">
-              {(profile.name?.[0] || 'G').toUpperCase()}
-            </div>}
+        <div className="w-16 h-16 rounded-full bg-accent grid place-items-center text-2xl font-extrabold text-black shrink-0">
+          {(profile.name?.[0] || 'S').toUpperCase()}
+        </div>
         <div className="flex-1 min-w-0">
-          {authUser ? (
-            <div>
-              <p className="font-extrabold text-lg leading-tight">{profile.name}</p>
-              <p className="text-xs text-dim font-semibold">{profile.email} · Signed in with Google</p>
-              <button onClick={signOutEverywhere} className="mt-2 px-4 py-1.5 rounded-full text-[13px] font-semibold bg-[var(--surface-2)] hover:bg-[var(--surface-3)] transition-colors">Sign out</button>
-            </div>
-          ) : (
-            <div>
-              <form onSubmit={(e) => { e.preventDefault(); setProfile({ name: name || 'Guest Listener' }); toast('Profile updated'); }} className="flex gap-2 flex-wrap">
-                <input value={name} onChange={e => setName(e.target.value)} className="flex-1 min-w-0 bg-soft border border-soft rounded-lg px-3 py-2 font-bold outline-none" aria-label="Display name" />
-                <button className="btn-accent px-4 text-sm">Save</button>
-              </form>
-              <div className="mt-3 flex items-center gap-3 flex-wrap">
-                <GoogleLogin />
-                <p className="text-[11px] text-dim font-semibold">Sign in to keep a separate library per Google account on this device.</p>
-              </div>
-            </div>
-          )}
+          <form onSubmit={(e) => { e.preventDefault(); setProfile({ name: name || 'Guest Listener' }); toast('Profile updated'); }} className="flex gap-2 flex-wrap">
+            <input value={name} onChange={e => setName(e.target.value)} className="flex-1 min-w-0 bg-soft border border-soft rounded-lg px-3 py-2 font-bold outline-none" aria-label="Display name" />
+            <button className="btn-accent px-4 text-sm">Save</button>
+          </form>
           <div className="flex gap-x-4 gap-y-1 mt-2 text-xs text-dim font-semibold flex-wrap">
             <span>♥ {Object.keys(liked).length} liked</span>
             <span>♪ {playlists.length} playlists</span>
@@ -150,9 +130,6 @@ export default function Settings() {
         </Row>
         <Row label="Crossfade" desc="Smooth fade-out / fade-in between tracks">
           <button onClick={() => { setCrossfade(!crossfade); toast(`Crossfade ${!crossfade ? 'on' : 'off'}`); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${crossfade ? 'bg-accent' : 'bg-white/10'}`} style={crossfade ? { color: 'var(--accent-ink, #000)' } : {}}>{crossfade ? 'ON' : 'OFF'}</button>
-        </Row>
-        <Row label="Instant FLAC preview" desc="Play a 30s FLAC preview instantly, then auto-switch to the full MP3">
-          <button onClick={() => { setInstantPreview(!instantPreview); toast(instantPreview ? 'Instant preview off' : 'Instant preview on'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${instantPreview ? 'bg-accent' : 'bg-white/10'}`} style={instantPreview ? { color: 'var(--accent-ink, #000)' } : {}}>{instantPreview ? 'ON' : 'OFF'}</button>
         </Row>
         <Row label="Autoplay" desc="When the queue ends, keep playing similar songs">
           <button onClick={() => { setAutoplay(!autoplay); toast(autoplay ? 'Autoplay off' : 'Autoplay on'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${autoplay ? 'bg-accent' : 'bg-white/10'}`} style={autoplay ? { color: 'var(--accent-ink, #000)' } : {}}>{autoplay ? 'ON' : 'OFF'}</button>
@@ -196,13 +173,16 @@ export default function Settings() {
           }} className="px-4 py-1.5 rounded-full text-sm font-bold bg-red-500/15 text-red-400">Erase all local data</button>
         </Row>
         <Diagnostics />
+        <Row label="About SoundWave" desc="A focused music player for Android and the web">
+          <span className="text-sm font-bold accent">Made by Ansh</span>
+        </Row>
         <Row label="Keyboard shortcuts" desc="Space play/pause · ←/→ seek · ↑/↓ volume · M mute · N/P next/prev · S shuffle · R repeat · Q queue · Ctrl+K palette">
           <span className="text-xs text-dim font-bold">Built-in</span>
         </Row>
       </div>
 
       <p className="text-xs text-dim mt-6 leading-5">
-        SoundWave plays full MP3s from DJPunjab — every track is complete, no previews.
+        SoundWave plays full tracks from DJPunjab — every track is complete.
         Lyrics by Lyrics.ovh. Made with ♥ as a demo — respect artists & rights holders.
       </p>
     </div>

@@ -34,6 +34,16 @@ let hostScrollTimer = null;
 let pollTimer = null;
 let volume = 90;
 let muted = false;
+let activeVideoId = '';
+let loadWaiter = null;
+
+function settleLoad(ok) {
+  if (!loadWaiter) return;
+  const waiter = loadWaiter;
+  loadWaiter = null;
+  clearTimeout(waiter.timer);
+  waiter.resolve(ok);
+}
 
 const listeners = new Set();
 function emit(event, data) {
@@ -126,6 +136,7 @@ function createPlayer() {
         },
         onStateChange: (e) => {
           const S = window.YT.PlayerState;
+          if (e.data === S.PLAYING || e.data === S.CUED) settleLoad(true);
           if (e.data === S.PLAYING) { emit('playing'); startPoll(); }
           else if (e.data === S.PAUSED) { emit('paused'); stopPoll(); }
           else if (e.data === S.ENDED) { emit('ended'); stopPoll(); }
@@ -134,13 +145,23 @@ function createPlayer() {
         },
         onError: (e) => {
           stopPoll();
-          // 101/150 = the uploader disabled embedding, 2 = bad id, 5 = HTML5 error.
-          emit('error', e.data);
+          settleLoad(false);
+          // 2 = invalid id, 5 = HTML5 error, 100 = missing, 101/150 = embedding disabled.
+          emit('error', { code: Number(e.data), videoId: activeVideoId });
         },
       },
     });
     // A player that never fires onReady would wedge every YouTube track.
-    setTimeout(() => { if (!playerReady) resolve(false); }, 20000);
+    setTimeout(() => {
+      if (!playerReady) {
+        createPromise = null;
+        try { player?.destroy?.(); } catch { /* player may not have a DOM node yet */ }
+        player = null;
+        iframe = null;
+        container = null;
+        resolve(false);
+      }
+    }, 15000);
   });
   return createPromise;
 }
@@ -216,19 +237,31 @@ function reposition() {
 export async function youTubeLoad(videoId, { start = 0, autoplay = true } = {}) {
   const id = String(videoId || '');
   if (!id) return false;
+  await ensureYouTubeApi();
+  const ok = await createPlayer();
+  if (!ok || !playerReady || !player) return false;
+  settleLoad(false);
+  activeVideoId = id;
+  try { player.stopVideo(); } catch { /* release the previous video's decoder */ }
+  try { player.setVolume(volume); } catch { /* noop */ }
+  const started = new Promise(resolve => {
+    const timer = setTimeout(() => {
+      if (loadWaiter?.id === id) {
+        loadWaiter = null;
+        resolve(false);
+      }
+    }, 12000);
+    loadWaiter = { id, resolve, timer };
+  });
   try {
-    await ensureYouTubeApi();
-    const ok = await createPlayer();
-    // No emit here: the caller falls back on a false return. Emitting as well
-    // would run the fallback twice and re-assign the element's src.
-    if (!ok || !playerReady) return false;
-    try { player.setVolume(volume); } catch { /* noop */ }
-    if (autoplay) player.loadVideoById({ videoId: id, startSeconds: Math.max(0, start) });
-    else player.cueVideoById({ videoId: id, startSeconds: Math.max(0, start) });
-    return true;
+    const args = { videoId: id, startSeconds: Math.max(0, start) };
+    if (autoplay) player.loadVideoById(args);
+    else player.cueVideoById(args);
   } catch (e) {
+    settleLoad(false);
     return false;
   }
+  return started;
 }
 
 export function youTubePlay() { try { player?.playVideo(); } catch { /* noop */ } }
@@ -248,5 +281,7 @@ export function youTubeSetMuted(isMuted) {
 /** Stops and releases the player — used when the app tears playback down. */
 export function youTubeStop() {
   stopPoll();
+  settleLoad(false);
+  activeVideoId = '';
   try { player?.stopVideo(); } catch { /* noop */ }
 }

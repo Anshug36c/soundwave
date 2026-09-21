@@ -13,8 +13,8 @@ short_description: Spotify-style Punjabi music streaming
 
 An open-source, Spotify-style music discovery and playback website. Search across
 multiple Punjabi-music providers, play full tracks through a resilient streaming
-pipeline (server cache + instant previews + smart preloading), build playlists,
-and optionally sign in with Google.
+pipeline (server cache + smart preloading), build playlists, and keep your
+profile and library locally on the device.
 
 **Live demo:** `https://soundwave-nh48.onrender.com/`
 
@@ -35,12 +35,10 @@ from sites like DJPunjab, DJJohal, and Mr-Jatt, plus JioSaavn metadata.
   like music, build playlists, follow artists, read (even synced) lyrics, tweak a
   10-band EQ with a live visualizer, download songs for offline, install it as an app.
 - **Why was it built?** As a fast, local-first, open-source alternative to ad-heavy
-  MP3 sites — no account required, nothing you save ever leaves your device (unless
-  you choose Google sign-in, which only syncs *which* local library is active).
+  MP3 sites — no account required, and nothing you save ever leaves your device.
 - **What makes it different?** A backend that aggregates several providers with
-  mirror failover and CDN ranking; an instant ~30-second preview that starts
-  playback immediately while the full track loads; and aggressive-but-polite
-  preloading so skips feel instant.
+  mirror failover and CDN ranking, plus aggressive-but-polite preloading so skips
+  feel instant.
 - **Frontend-only or full-stack?** Both: a React frontend and a Node/Express backend.
   The backend does the provider scraping, audio proxying, and caching; the browser
   only ever talks to the backend (same-origin), never to provider sites directly.
@@ -67,9 +65,7 @@ Everything below exists in the codebase today.
 - Seeking (slider, arrow keys ±10s, elapsed/remaining toggle), volume + mute
 - Shuffle, repeat (off → all → one), playback speed (0.5×–2×, persisted)
 - Sleep timer with fade-out, crossfade between tracks
-- Listen Together (Echo-style): host a synced party with a 6-character code, guests follow via polling
 - YouTube Music search (Echo InnerTube recipe): Songs/Albums/Artists/YouTube tabs, YT tracks play via closest-mirror resolve, KuGou as 3rd lyrics provider
-- Instant-preview starter: ~30s preview plays immediately, full track swaps in silently
 - Hot-standby prefetch: next track staged before the current one ends
 - Boot resume: refresh mid-song → player reopens paused at the same position
 - MediaSession integration (OS media keys / lock-screen controls)
@@ -89,7 +85,7 @@ Everything below exists in the codebase today.
   `↑/↓` volume, `M` mute, `S` shuffle, `R` repeat, `Q` queue, `⌘/Ctrl+K` palette
 - Synced (LRC) lyrics via LRCLIB (Echo recipe: title cleanup + duration match), lyrics.ovh fallback, auto-scrolling highlight
 - Offline banner + connectivity-aware fetching; "Erase all local data" one-tap reset
-- Optional Google sign-in with per-account on-device libraries (guest works fully)
+- Local profile, library, playlists, history, and offline saves (no account required)
 
 ---
 
@@ -151,13 +147,8 @@ pause, seeking, volume, track changes, and recovery if a stream dies.
   in localStorage) keeps queue/index/settings across reloads; `isPlaying` is
   deliberately *not* persisted — a refresh always reopens paused ("honest boot").
 - **Track changes:** a `track.id` effect tears down preloads/standby, sets `el.src`
-  (preview race or direct full), and re-arms preloading. Same-track quality changes
+  directly to the full track, and re-arms preloading. Same-track quality changes
   reuse the element and keep the position.
-- **Preview race:** when enabled and artist info exists, the element plays
-  `/api/tidal-preview` instantly while a background `Audio` preloads the full MP3;
-  `trySwapToFull()` swaps `el.src` once the full file can play (≥8s buffered or
-  `readyState ≥ 3`), seeking to the preview's position with a max-preserving seek so
-  a boot-resume is never clobbered.
 - **Seek:** UI slider / arrow keys set `el.currentTime` (guarded — setting it before
   metadata throws, so all post-`src` seeks wait for `loadedmetadata`).
 - **Volume/mute/speed:** direct element properties, persisted (volume, speed) or
@@ -166,10 +157,9 @@ pause, seeking, volume, track changes, and recovery if a stream dies.
   restarts when `currentTime > 3`, else steps back with wraparound).
 - **Track end:** `ended` advances according to repeat mode (`one` replays, `all`/queue
   continues, end-of-queue autoplays similar songs when Autoplay is on, else stops).
-- **Failure:** `error` → if the preview failed, fall back to full; else one silent
-  `el.load()` retry per track; else toast + skip. A watchdog reloads streams stalled
-  >12s (max 3 recoveries, then skips). After 4 errors in 15s the player stops with a
-  toast instead of skip-looping forever.
+- **Failure:** `error` → one position-preserving stream reload per track; else toast
+  + skip. A watchdog reloads streams stalled >12s (max 3 recoveries, then skips).
+  After 4 errors in 15s the player stops with a toast instead of skip-looping forever.
 
 ---
 
@@ -336,9 +326,7 @@ All provider traffic happens **server-side**; the browser never contacts provide
 | **Mr-Jatt** (`mrj`) | Songs + MP3s; on-disk index | Search, audio | id → tracks, MP3s, hi-res covers | Same as above | None (built-in) |
 | **PenduJatt** | Extra mirror | Audio failover | id → MP3 | Skipped silently | None |
 | **JioSaavn** (`saavn`, via Rhythmax API) | Metadata + encrypted stream URLs | Search, audio | query/token → tracks, DES-encrypted URLs (decrypted with legacy OpenSSL + `_96→_160→_320` upgrade) | Skip / next mirror | None (built-in `rthmx.vercel.app`) |
-| **Tidal** | ~30s preview starter **only** | `/api/tidal-preview` | title+artist → short FLAC preview | Player falls back to full-only | `TIDAL_CLIENT_ID`/`_SECRET` (ship with working defaults) |
 | **lyrics.ovh** | Lyrics text | `/api/lyrics` | artist+title → lyrics (plain or LRC) | "Lyrics not available" | None |
-| **Google Identity** | Optional sign-in | `server/auth.js` | ID token → verified user → signed session cookie | Guest mode (fully usable) | `GOOGLE_CLIENT_ID`, `SESSION_SECRET` (see `AUTH_SETUP.md`) |
 
 Why several music providers? No single source has everything, and direct links rot.
 Mirrors + fastest-CDN ranking (`cdnScore`, visible in `/api/sources`) keep playback
@@ -371,8 +359,8 @@ working when any one source is slow or down.
          │  ranking │ mirror failover │ indexes│
          └──────┬──────────────┬────────┬───────┘
                 ↓              ↓        ↓
-          DJP / DJJ / MRJ   Saavn    Tidal (preview)
-          provider sites   (Rhythmax)  lyrics.ovh
+          DJP / DJJ / MRJ   Saavn    lyrics.ovh
+          provider sites   (Rhythmax)
 ```
 
 - **Browser:** renders everything, owns playback state, preloads via extra `Audio`
@@ -396,11 +384,11 @@ soundwave/
 │   │   └── favicon.svg
 │   └── src/
 │       ├── main.jsx         # React entry, router mount
-│       ├── App.jsx          # routes, auth restore, offline banner
+│       ├── App.jsx          # routes, offline banner
 │       ├── index.css        # Tailwind + theme
 │       ├── pages/           # Home, Search, Library, Detail (artist/album), Settings
 │       ├── components/      # Player, Cards, Layout, Equalizer, Visualizer,
-│       │                    # CommandPalette, SimilarSongs, GoogleLogin, Icons
+│       │                    # CommandPalette, SimilarSongs, Icons
 │       ├── hooks/
 │       │   └── useAudioEngine.js  # THE playback engine (element, queue fx, preload)
 │       ├── store/
@@ -423,13 +411,13 @@ soundwave/
 
 | File | Responsibility |
 |---|---|
-| `client/src/hooks/useAudioEngine.js` | Playback: element control, track loading, preview swap, seek/volume/keys, preloading, resume, watchdog, MediaSession |
+| `client/src/hooks/useAudioEngine.js` | Playback: element control, full-track loading, seek/volume/keys, preloading, resume, watchdog, MediaSession |
 | `client/src/store/useStore.js` | Queue + library + settings state, actions, localStorage persistence, offline-save + download logic |
 | `client/src/services/musicApi.js` | Backend client, `streamFor(track, quality)` URL builder, warm dedup, quality tiers, diagnostics counters |
 | `client/src/components/Player.jsx` | Player bar, full player, queue drawer, lyrics/EQ/details tabs, sleep/speed/menus |
 | `client/src/audio/studio.js` | WebAudio routing: 10-band EQ, preamp, loudness normalize, visualizer analyser |
 | `client/public/sw.js` | PWA shell cache + exact-URL offline audio cache with Range support |
-| `server/server.js` | Search fan-out, `/api/audio` proxy+cache+dedup+failover, warm, lyrics, tidal-preview, for-you recommendations, indexes, health |
+| `server/server.js` | Search fan-out, `/api/audio` proxy+cache+dedup+failover, warm, lyrics, for-you recommendations, indexes, health |
 | `server/auth.js` | Google sign-in verify + cookie sessions (optional; guest works without) |
 
 ---

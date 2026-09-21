@@ -1,7 +1,6 @@
 import { NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { useStore } from '../store/useStore';
-import { AuthAvatar } from './GoogleLogin';
 import { HomeIcon, SearchIcon, LibraryIcon, PlusIcon, HeartIcon, NoteIcon, ChevronLeftIcon, MoonIcon, SunIcon } from './Icons';
 
 /**
@@ -129,6 +128,7 @@ export function TopBar() {
   const [q, setQ] = useState('');
   const cycleTheme = () => setTheme(theme === 'dark' ? 'light' : 'dark');
   const showFull = useStore(s => s.showFullPlayer);
+  const profile = useStore(s => s.profile);
   useScrollSpy();
 
   return (
@@ -162,7 +162,10 @@ export function TopBar() {
         <button onClick={cycleTheme} className="btn-quiet w-9 h-9 grid place-items-center shrink-0" aria-label="Cycle theme" title={`Theme: ${theme} (click to change)`}>
           {theme === 'dark' ? <SunIcon size={18} /> : <MoonIcon size={18} />}
         </button>
-        <AuthAvatar />
+        <Link to="/settings" className="w-10 h-10 rounded-full bg-accent grid place-items-center text-sm font-extrabold text-black shrink-0"
+          aria-label="Open profile and settings" title="Profile and settings">
+          {(profile.name?.[0] || 'S').toUpperCase()}
+        </Link>
       </div>
     </header>
   );

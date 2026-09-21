@@ -12,12 +12,12 @@ function Img_({ src, alt, className = '' }) {
   );
 }
 
-const SRC_TAG = { djp: 'DJP', dj: 'DJJ', mrj: 'MRJ', saavn: 'SVN', yt: 'YT', audius: 'AUD', dz: 'DZR' };
+const SRC_TAG = { djp: 'DJP', dj: 'DJJ', mrj: 'MRJ', saavn: 'SVN', yt: 'YT', audius: 'AUD' };
 export function SourceBadge({ track }) {
   const tag = SRC_TAG[track?.source] ? `${SRC_TAG[track.source]} · ` : '';
   /* hidden on phones: on a 320-390px row the badge steals most of the artist
      line; the artist name wins there, the badge returns at >=400px */
-  return <span className="hidden min-[400px]:inline-block text-[9px] font-bold px-1.5 py-[1px] rounded-[4px] whitespace-nowrap bg-[var(--surface-2)] text-dim align-middle">{tag}{track?.isPreview ? 'PREVIEW' : 'FULL'}</span>;
+  return <span className="hidden min-[400px]:inline-block text-[9px] font-bold px-1.5 py-[1px] rounded-[4px] whitespace-nowrap bg-[var(--surface-2)] text-dim align-middle">{tag}FULL</span>;
 }
 
 function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp, onMoveDown, badge }) {
@@ -63,7 +63,6 @@ function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp,
           <span className="t-caption mt-0.5 flex min-w-0 items-center gap-1.5">
             <span className="truncate">{track.artist?.name}</span>
             <SourceBadge track={track} />
-            {track.isPreview && <span className="shrink-0 text-[9px] font-bold px-1 py-[1px] rounded-[4px] bg-[var(--surface-2)] text-dim" title="30 second preview">30s</span>}
           </span>
         </button>
         <button onClick={() => toggleLike(track)} className={`btn-quiet shrink-0 px-2 active:scale-90 ${isLiked ? 'accent' : ''}`} aria-label={isLiked ? 'Unlike' : 'Like'}>

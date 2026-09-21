@@ -1,5 +1,5 @@
 // SoundWave server — Punjabi multi-source backend (DJPunjab + DJJohal + Mr-Jatt/PenduJatt)
-// with fastest-mirror audio + instant Tidal FLAC previews.
+// with fastest-mirror full-track audio.
 import express from 'express';
 import compression from 'compression';
 import path from 'path';
@@ -63,7 +63,7 @@ app.use((req, res, next) => {
 
 app.use(compression({
   filter: (req, res) => {
-    if (req.path === '/api/audio' || req.path === '/api/tidal-preview') return false; // byte streams: identity only
+    if (req.path === '/api/audio') return false; // byte streams: identity only
     return compression.filter(req, res);
   },
 }));
@@ -91,8 +91,8 @@ app.use('/api', (req, res, next) => {
   if (++b.n > max) { res.setHeader('Retry-After', '30'); return res.status(429).json({ error: 'Too many requests, slow down' }); }
   next();
 });
-// hard timeout for metadata APIs (audio/preview streams legitimately run long)
-const SLOW_API = new Set(['/audio', '/tidal-preview']);
+// hard timeout for metadata APIs (audio streams legitimately run long)
+const SLOW_API = new Set(['/audio']);
 app.use('/api', (req, res, next) => {
   if (SLOW_API.has(req.path)) return next();
   const to = setTimeout(() => { if (!res.headersSent) res.status(503).json({ error: 'Upstream slow, try again' }); }, 55000);
@@ -1367,8 +1367,7 @@ async function resolveMirrorInner(source, sid) {
       return await arcMeta(String(sid));
     }
     if (source === 'dz') {
-      const t = await dzTrack(String(sid)).catch(() => null);
-      return t?.preview ? { mp3s: { '96': t.preview }, type: 'audio/mpeg' } : null;
+      return null;
     }
   return null;
 }
@@ -1917,178 +1916,6 @@ app.get('/api/audio', async (req, res) => {
   finally { try { releaseOwn?.(); } catch { /* noop */ } }
 });
 
-// ---------------- Tidal FLAC previews (instant starter while full MP3 loads) ----------------
-const TIDAL_CID = process.env.TIDAL_CLIENT_ID || 'txNoH4kkV41MfH25';
-const TIDAL_SECRET = process.env.TIDAL_CLIENT_SECRET || 'dQjy0MinCEvxi1O4UmxvxWnDjt4cgHBPw8ll6nYBk98=';
-let tidalTok = null, tidalTokExp = 0, tidalTokPromise = null;
-async function tidalToken(force = false) {
-  if (!force && tidalTok && Date.now() < tidalTokExp) return tidalTok;
-  if (!tidalTokPromise) {
-    tidalTokPromise = (async () => {
-      const body = new URLSearchParams({ client_id: TIDAL_CID, client_secret: TIDAL_SECRET, grant_type: 'client_credentials' });
-      const r = await fetch('https://auth.tidal.com/v1/oauth2/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: 'Basic ' + Buffer.from(`${TIDAL_CID}:${TIDAL_SECRET}`).toString('base64') },
-        body, signal: AbortSignal.timeout(15000),
-      });
-      if (!r.ok) throw new Error(`Tidal token HTTP ${r.status}`);
-      const j = await r.json();
-      if (!j.access_token) throw new Error('Tidal token missing');
-      tidalTok = j.access_token;
-      tidalTokExp = Date.now() + ((j.expires_in || 3600) - 60) * 1000;
-      return tidalTok;
-    })().finally(() => { tidalTokPromise = null; });
-  }
-  return tidalTokPromise;
-}
-async function tidalFetch(path, timeout = 20000, retry = true) {
-  const tok = await tidalToken();
-  const sep = path.includes('?') ? '&' : '?';
-  const r = await fetch(`https://api.tidal.com${path}${sep}countryCode=US`, { headers: { Authorization: `Bearer ${tok}`, 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(timeout) });
-  if (r.status === 401 && retry) { await tidalToken(true); return tidalFetch(path, timeout, false); }
-  if (!r.ok) throw new Error(`Tidal HTTP ${r.status} for ${path}`);
-  return r.json();
-}
-const tidalAudioCache = new Map();
-async function tidalStitchedAudio(id) {
-  const hit = tidalAudioCache.get(String(id));
-  if (hit && Date.now() - hit.time < 15 * 60 * 1000) return hit.buf;
-  const j = await tidalFetch(`/v1/tracks/${encodeURIComponent(id)}/playbackinfo?audioquality=HI_RES_LOSSLESS&playbackmode=STREAM&assetpresentation=FULL`, 30000);
-  const b64 = j?.manifest;
-  if (!b64) throw new Error(j?.userMessage || 'No manifest');
-  const xml = Buffer.from(b64, 'base64').toString('utf8');
-  const tpl = xml.match(/<SegmentTemplate[^>]*>/)?.[0] || '';
-  const init = (tpl.match(/initialization="([^"]+)"/)?.[1] || '').replace(/&amp;/g, '&');
-  const media = (tpl.match(/media="([^"]+)"/)?.[1] || '').replace(/&amp;/g, '&');
-  if (!init || !media || !media.includes('$Number$')) throw new Error('Unsupported manifest');
-  let count = 0;
-  for (const m of xml.matchAll(/<S\b[^>]*>/g)) {
-    const tag = m[0];
-    const r = parseInt(tag.match(/\br="(\d+)"/)?.[1] || '0', 10);
-    count += r + 1;
-  }
-  if (!count || count > 60) throw new Error('Bad segment timeline');
-  const urls = [init, ...Array.from({ length: count }, (_, i) => media.replace('$Number$', String(i + 1)))];
-  const parts = new Array(urls.length);
-  let next = 0;
-  const workers = Array.from({ length: 4 }, async () => {
-    while (next < urls.length) {
-      const i = next++;
-      const r = await fetch(urls[i], { headers: { 'User-Agent': 'SoundWave/1.0' }, signal: AbortSignal.timeout(25000) });
-      if (!r.ok) throw new Error(`Segment ${i} HTTP ${r.status}`);
-      parts[i] = Buffer.from(await r.arrayBuffer());
-    }
-  });
-  await Promise.all(workers);
-  const buf = Buffer.concat(parts);
-  if (buf.length < 10000) throw new Error('Stitched audio too small');
-  if (tidalAudioCache.size > 6) tidalAudioCache.delete(tidalAudioCache.keys().next().value);
-  tidalAudioCache.set(String(id), { buf, time: Date.now() });
-  return buf;
-}
-// Deezer's open search (server-side only — their CORS blocks browsers) as a
-// second instant-preview net: 30s preview MP3s when Tidal has no match.
-// Probed 2026-09-17: search + preview CDN both reachable from this box.
-async function deezerPreview(title, artist) {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 9000);
-  try {
-    const r = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(`${title} ${artist}`.trim())}&limit=6`, { signal: ctrl.signal });
-    if (!r.ok) return null;
-    const items = (await r.json())?.data || [];
-    let best = null, bestS = 0;
-    for (const t of items) {
-      const s = tpScore(title, artist, t.title || '', t.artist?.name || '');
-      if (s > bestS) { bestS = s; best = t; }
-    }
-    if (!best || bestS < 0.5 || !best.preview) return null;
-    const pr = await fetch(best.preview, { signal: ctrl.signal });
-    if (!pr.ok) return null;
-    return Buffer.from(await pr.arrayBuffer());
-  } finally { clearTimeout(to); }
-}
-
-// Deezer catalogue in /api/search: mainstream coverage the scrape providers
-// miss. Rows are 30s previews (isPreview) and only fill gaps — they never
-// displace a full-stream match, and merging adds them as a last-resort mirror.
-async function dzSearchSongs(q, limit = 6) {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 6000);
-  try {
-    const r = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=${limit}`, { signal: ctrl.signal });
-    if (!r.ok) return [];
-    const out = [];
-    for (const t of (await r.json())?.data || []) {
-      if (!t?.id || !t.title || !t.preview) continue;
-      out.push({
-        id: `dz:${t.id}`, source: 'dz', sourceId: String(t.id), type: 'track',
-        title: String(t.title).trim(),
-        artist: { id: '', name: t.artist?.name || 'Unknown', image: t.artist?.picture_medium || '' },
-        artists: [], album: { id: '', name: t.album?.title || '', image: t.album?.cover_medium || '' },
-        duration: +t.duration || 0,
-        image: t.album?.cover_medium || t.artist?.picture_medium || '',
-        streamUrl: `/api/audio?src=dz&id=${t.id}`, previewUrl: t.preview, isPreview: true,
-        codec: '', quality: 'preview', explicit: false, year: String(t.release_date || '').slice(0, 4), language: '', plays: 0,
-      });
-    }
-    return out;
-  } catch { return []; } finally { clearTimeout(to); }
-}
-const dzTrackCache = new Map(); // id -> { preview, t }
-async function dzTrack(sid) {
-  const h = dzTrackCache.get(String(sid));
-  if (h && Date.now() - h.t < 3600000) return h;
-  const r = await fetch(`https://api.deezer.com/track/${encodeURIComponent(String(sid))}`, { signal: AbortSignal.timeout(6000) });
-  if (!r.ok) return null;
-  const j = await r.json();
-  const e = { preview: j?.preview || '', t: Date.now() };
-  if (dzTrackCache.size > 300) dzTrackCache.delete(dzTrackCache.keys().next().value);
-  dzTrackCache.set(String(sid), e);
-  return e;
-}
-
-function tpScore(qt, qa, tt, ta) {
-  const w = s => new Set(String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(x => x.length > 1));
-  const A = w(`${qt} ${qa}`), B = w(`${tt} ${ta}`);
-  if (!A.size || !B.size) return 0;
-  let inter = 0;
-  A.forEach(x => { if (B.has(x)) inter++; });
-  return inter / Math.max(A.size, B.size);
-}
-const tidalPreviewCache = new Map(), tidalPreviewNeg = new Map();
-app.get('/api/tidal-preview', async (req, res) => {
-  const title = (req.query.title || '').trim(), artist = (req.query.artist || '').trim();
-  if (!title) return res.status(400).json({ error: 'Missing title' });
-  const key = `${title}|${artist}`.toLowerCase().replace(/[^a-z0-9|]/g, '');
-  const hit = tidalPreviewCache.get(key);
-  if (hit && Date.now() - hit.time < 30 * 60 * 1000) return serveBuf(res, req, hit.buf, true, hit.br || 'FLAC', hit.type || 'audio/mp4');
-  const neg = tidalPreviewNeg.get(key);
-  if (neg && Date.now() - neg < 3600000) return res.status(404).json({ error: 'No preview match' });
-  let buf = null, br = 'FLAC', type = 'audio/mp4';
-  try {
-    const j = await tidalFetch(`/v1/search/tracks?query=${encodeURIComponent(`${title} ${artist}`.trim())}&limit=5`, 15000);
-    const items = j?.items || [];
-    let best = null, bestS = 0;
-    for (const t of items) {
-      const s = tpScore(title, artist, t.title || '', (t.artists || []).map(a => a.name).join(' '));
-      if (s > bestS) { bestS = s; best = t; }
-    }
-    if (best && bestS >= 0.45) buf = await tidalStitchedAudio(best.id);
-  } catch { /* tidal down or no match — the Deezer net below still applies */ }
-  if (!buf) {
-    const dz = await deezerPreview(title, artist).catch(() => null);
-    if (dz) { buf = dz; br = 'DEEZER'; type = 'audio/mpeg'; }
-  }
-  if (!buf) {
-    if (tidalPreviewNeg.size > 500) tidalPreviewNeg.clear();
-    tidalPreviewNeg.set(key, Date.now());
-    return res.status(404).json({ error: 'No preview match' });
-  }
-  if (tidalPreviewCache.size >= 8) tidalPreviewCache.delete(tidalPreviewCache.keys().next().value);
-  tidalPreviewCache.set(key, { buf, time: Date.now(), br, type });
-  serveBuf(res, req, buf, false, br, type);
-});
-
 // ---------------- API ----------------
 mountAuth(app); // Google sign-in: /api/auth/config, /google, /me, /logout
 
@@ -2113,14 +1940,13 @@ app.get('/api/sources', async (req, res) => {
   catch (e) { out.mrjatt = `down: ${e.message}`; tripSource('mrj'); }
   out.pendujatt = 'mirror';
   try { const t = await rthmx('/api/songs?q=test'); out.saavn = t?.results ? 'ok' : 'empty'; } catch (e) { out.saavn = `down: ${e.message}`; tripSource('saavn'); }
-  try { await tidalToken(); out.tidal = 'ok (preview only)'; } catch (e) { out.tidal = `down: ${e.message}`; }
   try {
     const ar = await fetch(`${AUDIUS_HOST}/v1/tracks/trending?app_name=${AUDIUS_APP}&limit=1`, { signal: AbortSignal.timeout(6000) });
     out.audius = ar.ok ? 'ok (full streams)' : `down: ${ar.status}`;
   } catch (e) { out.audius = `down: ${e.message}`; tripSource('audius'); }
   try {
     const dr = await fetch('https://api.deezer.com/search?q=test&limit=1', { signal: AbortSignal.timeout(6000) });
-    out.deezer = dr.ok ? 'ok (previews)' : `down: ${dr.status}`;
+    out.deezer = dr.ok ? 'available' : `down: ${dr.status}`;
   } catch (e) { out.deezer = `down: ${e.message}`; }
   try {
     const ar2 = await fetch('https://archive.org/advancedsearch.php?q=identifier:yt2ia*&rows=1&output=json', { signal: AbortSignal.timeout(6000) });
@@ -2499,8 +2325,6 @@ app.get('/api/search', async (req, res) => {
       safeSearch(mrjSearchAlbums(effQ, 4), 8000),
       safeSearch(saavnSearchAlbums(effQ, 4), 8000),
     ]).then(([aa, bb, cc, ss]) => [...aa, ...bb, ...cc, ...ss]).catch(() => []) : Promise.resolve([]);
-    let dzP = Promise.resolve([]);
-    if (type === 'all' || type === 'songs') dzP = safeSearch(dzSearchSongs(effQ, 6), 6000);
     if (type === 'all' || type === 'songs') {
       const L = artistMode ? [18, 14, 14, 12] : [10, 8, 8, 8];
       const [a, b, c, s, y, yv, au] = await Promise.all([
@@ -2530,18 +2354,6 @@ app.get('/api/search', async (req, res) => {
         songs.sort((x, y) => er(x) - er(y));
       }
       songs = songs.slice(0, artistMode ? 40 : 20);
-      // Deezer gap-fill: 30s-preview rows only where no full-stream provider
-      // matched, appended after full results so they never crowd them out.
-      const dz = await dzP;
-      if (dz.length) {
-        const have = new Set(songs.map(t => normKey(t.title, t.artist?.name)));
-        const fill = dz.filter(t => {
-          if (have.has(normKey(t.title, t.artist?.name))) return false;
-          if (artistMode) return qw.every(w => normName(t.artist?.name).includes(w));
-          return true;
-        }).slice(0, artistMode ? 4 : 6);
-        if (fill.length) songs = [...songs, ...fill];
-      }
     }
     albums = (await albumsP).slice(0, 12);
     if (effY || minD || maxD || langF || expF === 'clean') {
@@ -2821,45 +2633,6 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// ---------------- Listen Together parties (Echo-style rooms, HTTP polling) ----------------
-// In-memory rooms: host beats state every ~5s, guests poll every ~3s.
-// No persistence, no accounts — rooms evaporate 60s after the last beat.
-const parties = new Map(); // code -> { track, position, isPlaying, updatedAt }
-const PARTY_TTL = 60000, PARTY_MAX = 200;
-const PARTY_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-function partySweep() {
-  const now = Date.now();
-  for (const [c, r] of parties) if (now - r.updatedAt > PARTY_TTL) parties.delete(c);
-  while (parties.size > PARTY_MAX) parties.delete(parties.keys().next().value);
-}
-app.post('/api/party', (req, res) => {
-  partySweep();
-  let code = '';
-  do { code = Array.from({ length: 6 }, () => PARTY_CHARS[Math.floor(Math.random() * PARTY_CHARS.length)]).join(''); } while (parties.has(code));
-  parties.set(code, { track: null, position: 0, isPlaying: false, updatedAt: Date.now() });
-  res.json({ code });
-});
-app.post('/api/party/:code/beat', (req, res) => {
-  partySweep();
-  const room = parties.get(String(req.params.code || '').toUpperCase());
-  if (!room) return res.json({ ended: true }); // 200, not 404: dead polls must not spam console errors
-  const t = req.body?.track;
-  room.track = t && typeof t === 'object' && t.id ? t : room.track;
-  room.position = Math.max(0, +req.body?.position || 0);
-  room.isPlaying = !!req.body?.isPlaying;
-  room.updatedAt = Date.now();
-  res.json({ ok: true });
-});
-app.get('/api/party/:code', (req, res) => {
-  partySweep();
-  const room = parties.get(String(req.params.code || '').toUpperCase());
-  if (!room) return res.json({ ended: true }); // 200, not 404: dead polls must not spam console errors
-  res.json(room);
-});
-app.post('/api/party/:code/end', (req, res) => {
-  parties.delete(String(req.params.code || '').toUpperCase());
-  res.json({ ok: true });
-});
 // Exported so integration tests can close the socket and exit cleanly. Importing
 // this module starts the server — it is the process entry point.
 const server = app.listen(PORT, '0.0.0.0', () => {

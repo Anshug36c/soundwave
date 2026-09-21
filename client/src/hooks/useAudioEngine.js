@@ -90,6 +90,7 @@ function syncPlayback() {
 // Set once a track's embed was refused and playback moved to a mirrored copy
 // from another source, so syncPlayback knows the element is back in charge.
 let ytMirrored = false;
+let ytRetryFor = '';
 
 /** Loads a YouTube track. Called instead of the normal src assignment. */
 async function loadYouTube(track) {
@@ -100,14 +101,16 @@ async function loadYouTube(track) {
   try { detachAudio(el); el.pause(); el.removeAttribute('src'); el.load(); } catch { /* noop */ }
   try { attachAudio(el); } catch { /* noop */ }
   el.dataset.trackId = track.id;
-  playMode = 'full';
-  fullUrl = '';
-  cleanupBg();
   try { document.title = `${track.title} — ${track.artist?.name || ''} · SoundWave`; } catch { /* noop */ }
   try { useStore.getState().clearLoop(); } catch { /* noop */ }
   if (useStore.getState().isPlaying) useStore.getState().setBuffering(true);
   dbg('yt load', track.ytId);
-  const ok = await youTubeLoad(track.ytId, { start: 0, autoplay: useStore.getState().isPlaying });
+  let ok = false;
+  try {
+    ok = await youTubeLoad(track.ytId, { start: 0, autoplay: useStore.getState().isPlaying });
+  } catch (e) {
+    dbg('yt load failed', e?.message || 'unknown error');
+  }
   if (!ok) ytFallback(track, 'load');
 }
 
@@ -129,24 +132,17 @@ function ytFallback(track, reason) {
   }
   dbg('yt fallback to mirror', track.ytId, reason);
   st.toast('Playing the closest audio match', 'info');
-  playMode = 'full';
   // From here the element owns playback, so syncPlayback must stop routing this
   // track to the embed. Set before the src assignment: syncPlayback is called
   // straight after and would otherwise hand the play() back to the iframe.
   ytMirrored = true;
   markSrcAssign();
   const el = getAudio();
-  fullUrl = url;
   el.dataset.trackId = track.id;
   el.src = url;
   syncPlayback();
 }
 
-// Instant-preview race state (module scope — survives element recreation)
-let playMode = 'full'; // 'preview' | 'full'
-let fullUrl = '';
-let bgAudio = null;
-let swapping = false;
 // ---------- prefetch: retained preload pool + server warm for instant next-track starts ----------
 const preloadPool = [];
 function preloadTrack(track, quality) {
@@ -160,16 +156,6 @@ function preloadTrack(track, quality) {
     a.src = streamFor(track, quality);
     a.load();
     preloadPool.push(a);
-    const st = useStore.getState();
-    if (st.instantPreview && track.title && track.artist?.name && track.artist.name !== 'Unknown') {
-      try {
-        const p = new Audio();
-        p.preload = 'auto';
-        p.src = api.tidalPreview(track.title, track.artist.name);
-        p.load();
-        preloadPool.push(p);
-      } catch { /* noop */ }
-    }
     while (preloadPool.length > 8) {
       const old = preloadPool.shift();
       try { old.removeAttribute('src'); old.load(); } catch { /* noop */ }
@@ -225,20 +211,6 @@ function armStandby(track, quality) {
     if (standbyTimer) clearTimeout(standbyTimer);
     standbyTimer = setTimeout(() => { standbyTimer = 0; if (standbyFor === id) settleStandby(id); }, 30000); // never stall n2 past 30s
   } catch { /* noop */ }
-  try {
-    const st = useStore.getState();
-    if (st.instantPreview && track.title && track.artist?.name && track.artist.name !== 'Unknown') {
-      const p = new Audio();
-      p.preload = 'auto';
-      p.src = api.tidalPreview(track.title, track.artist.name);
-      p.load();
-      preloadPool.push(p);
-      while (preloadPool.length > 8) {
-        const old = preloadPool.shift();
-        try { old.removeAttribute('src'); old.load(); } catch { /* noop */ }
-      }
-    }
-  } catch { /* noop */ }
 }
 function neighborAt(off) {
   const st = useStore.getState();
@@ -263,47 +235,6 @@ function refreshUpcoming() {
   const n1Settled = !n1 || standbySettledFor === (n1.id || '');
   if (n2 && n1Settled) { try { preloadTrack(n2, st.quality); } catch { /* noop */ } }
 }
-function cleanupBg() {
-  if (bgAudio) {
-    try { bgAudio.pause(); bgAudio.removeAttribute('src'); bgAudio.load(); } catch { /* noop */ }
-    bgAudio = null;
-  }
-}
-/** Swap preview -> full MP3 at the same position once the full file can play. */
-function trySwapToFull() {
-  if (swapping || playMode !== 'preview' || !fullUrl || !bgAudio) return;
-  const el = getAudio();
-  let buffered = 0;
-  try { if (bgAudio.buffered.length) buffered = bgAudio.buffered.end(bgAudio.buffered.length - 1); } catch { /* noop */ }
-  if (bgAudio.readyState < 3 && buffered < 8) return;
-  const t = el.currentTime || 0;
-  if (t > 26) return; // let the preview finish — ended handler takes full from 0
-  swapping = true;
-  dbg('preview→full swap at', Math.round(t), 's');
-  playMode = 'full';
-  markSrcAssign();
-  el.src = fullUrl;
-  if (useStore.getState().isPlaying) useStore.getState().setBuffering(true); // swap gap shows the spinner
-  // currentTime must be set AFTER metadata is ready, else the track restarts at 0.
-  // Token-guarded: if the user skipped while metadata was in flight, the stale
-  // seek must not yank the NEW track back to the old position.
-  const tid = el.dataset.trackId;
-  // ALWAYS wait for the new resource's metadata: readyState sampled right after
-  // a src set still describes the OLD resource, so a sync seek is silently lost.
-  el.addEventListener('loadedmetadata', () => {
-    if (getAudio().dataset.trackId !== tid) return;
-    // max-preserving: the boot-resume listener (attached earlier, same element)
-    // fires first on this metadata when the swap won the race against the tidal
-    // metadata — never yank its applied position back to our pre-swap reading.
-    // Normal swaps are unaffected (fresh resource reads ~0, so max() == t).
-    try { el.currentTime = Math.max(t, el.currentTime || 0); } catch { /* noop */ }
-    if (useStore.getState().isPlaying) syncPlayback(); // resume if the swap implicitly paused
-  }, { once: true });
-  cleanupBg();
-  syncPlayback();
-  swapping = false;
-}
-
 // currentTime throws InvalidStateError when metadata isn't loaded — never let a seek crash playback
 function safeCurrentTime(el, t) {
   try {
@@ -398,6 +329,7 @@ function onLoaded() {
 }
 function onPlay() {
   const st = useStore.getState();
+  lastProgressAt = Date.now();
   st.setPlaying(true);
   st.setBuffering(false);
   st.setPlayError(null);
@@ -405,7 +337,8 @@ function onPlay() {
   try { navigator.mediaSession.playbackState = 'playing'; } catch { /* noop */ }
 }
 function onWaiting() {
-  useStore.getState().setBuffering(true); // audible stall: spinner until data flows
+  lastProgressAt = Date.now();
+  useStore.getState().setBuffering(true);
 }
 function onCanPlay() {
   useStore.getState().setBuffering(false);
@@ -419,25 +352,28 @@ function onPause() {
   try { navigator.mediaSession.playbackState = 'paused'; } catch { /* noop */ }
 }
 let recentErrors = [];
+function reloadStream(el) {
+  const position = el.currentTime || 0;
+  const src = el.currentSrc || el.src;
+  if (!src) return;
+  markSrcAssign();
+  el.src = src;
+  el.load();
+  const trackId = el.dataset.trackId;
+  el.addEventListener('loadedmetadata', () => {
+    if (getAudio().dataset.trackId !== trackId) return;
+    safeCurrentTime(el, position);
+    if (useStore.getState().isPlaying) syncPlayback();
+  }, { once: true });
+}
 function onError() {
   useStore.getState().setBuffering(false);
-  // preview failed (no Tidal match etc.) — fall through to the full MP3
-  if (playMode === 'preview' && fullUrl) {
-    playMode = 'full';
-    const el = getAudio();
-    markSrcAssign();
-    el.src = fullUrl;
-    el.currentTime = 0;
-    cleanupBg();
-    syncPlayback();
-    return;
-  }
   const s = useStore.getState();
   // guard: if everything is failing, stop instead of skip-looping forever
   const now = Date.now();
   recentErrors = recentErrors.filter(t => now - t < 15000);
   recentErrors.push(now);
-  dbg('error', { mode: playMode, src: (() => { try { return getAudio().src.slice(0, 80); } catch { return ''; } })() });
+  dbg('error', { src: (() => { try { return getAudio().src.slice(0, 80); } catch { return ''; } })() });
   if (recentErrors.length >= 4) {
     recentErrors = [];
     s.setPlaying(false);
@@ -450,7 +386,7 @@ function onError() {
   const curId = s.queue[s.index]?.id || '';
   if (errRetryFor !== curId) {
     errRetryFor = curId;
-    try { getAudio().load(); } catch { /* noop */ }
+    reloadStream(getAudio());
     syncPlayback();
     return;
   }
@@ -459,17 +395,6 @@ function onError() {
 }
 let errRetryFor = '';
 function onEnded() {
-  // preview finished before full was ready — start the full MP3 from 0
-  if (playMode === 'preview' && fullUrl) {
-    playMode = 'full';
-    const el = getAudio();
-    markSrcAssign();
-    el.src = fullUrl;
-    el.currentTime = 0;
-    cleanupBg();
-    syncPlayback();
-    return;
-  }
   const el = getAudio();
   const { repeat, next, index, queue } = useStore.getState();
   if (repeat === 'one') {
@@ -482,7 +407,7 @@ function onEnded() {
     // (Echo Brain-style); any failure or user interference stops cleanly
     const st = useStore.getState();
     const last = st.queue[st.index];
-    if (st.autoplay && st.party?.role !== 'guest' && last?.title) {
+    if (st.autoplay && last?.title) {
       api.similar(last.title, last.artist?.name || '', 8).then(j => {
         const songs = (j?.songs || []).filter(t => t?.id && t.id !== last.id);
         const cur = useStore.getState();
@@ -528,6 +453,7 @@ function attachAudio(el) {
   el.addEventListener('play', onPlay);
   el.addEventListener('playing', onCanPlay);
   el.addEventListener('waiting', onWaiting);
+  el.addEventListener('stalled', onWaiting);
   el.addEventListener('canplay', onCanPlay);
   el.addEventListener('pause', onPause);
   el.addEventListener('error', onError);
@@ -539,6 +465,7 @@ function detachAudio(el) {
   el.removeEventListener('play', onPlay);
   el.removeEventListener('playing', onCanPlay);
   el.removeEventListener('waiting', onWaiting);
+  el.removeEventListener('stalled', onWaiting);
   el.removeEventListener('canplay', onCanPlay);
   el.removeEventListener('pause', onPause);
   el.removeEventListener('error', onError);
@@ -563,9 +490,7 @@ function recreateAudio() {
 /**
  * Core audio engine:
  * - single-owner playback (syncPlayback) — no overlapping play() races
- * - instant FLAC preview first (when enabled), auto-swaps to full MP3 at same
- *   position as soon as it can play — falls back to full-only on any failure
- * - all streams same-origin; crossfade, sleep fade-out, preloads next track
+ * - direct full-track playback with crossfade and staged next-track preloads
  * - MediaSession OS controls, keyboard shortcuts
  */
 export function useAudioEngine() {
@@ -597,7 +522,6 @@ export function useAudioEngine() {
   const quality = useStore(s => s.quality);
   const sleepTimerMin = useStore(s => s.sleepTimerMin);
   const studioOn = useStore(s => s.studioOn);
-  const party = useStore(s => s.party);
   const repeat = useStore(s => s.repeat);
   const shuffle = useStore(s => s.shuffle);
 
@@ -606,16 +530,13 @@ export function useAudioEngine() {
   // load track: set src only — syncPlayback (play/pause effect) owns playback
   useEffect(() => {
     const el = getAudio();
-    cleanupBg();
-    playMode = 'full';
-    fullUrl = '';
-    swapping = false;
     useStore.getState().setPlayError(null);
     // The embedded player keeps playing on its own, so leaving a YouTube track
     // has to stop it explicitly — otherwise the outgoing video plays over the
     // incoming one.
     youTubeStop();
     ytMirrored = false;
+    ytRetryFor = '';
     if (!track) { el.pause(); el.removeAttribute('src'); el.load(); useStore.getState().setPlaying(false); document.title = 'SoundWave — Music for Everyone'; return; }
     // No stream URL: the official YouTube player is the transport for this one.
     if (isYouTubeTrack(track)) { loadYouTube(track); return; }
@@ -652,25 +573,9 @@ export function useAudioEngine() {
           el.volume = 0; // fade-in from silence on fresh loads too
         }
         el.dataset.trackId = track.id;
-        fullUrl = url;
-        const wantPreview = st.instantPreview && track.title && track.artist?.name && track.artist.name !== 'Unknown';
-        dbg('load', track.id, hot ? 'hot' : 'cold', wantPreview ? 'preview' : 'full');
-        if (wantPreview) {
-          // race: preview plays instantly, full MP3 swaps in when ready
-          playMode = 'preview';
-          markSrcAssign();
-          el.src = api.tidalPreview(track.title, track.artist.name);
-          bgAudio = new Audio();
-          bgAudio.preload = 'auto';
-          bgAudio.src = url;
-          bgAudio.addEventListener('canplaythrough', trySwapToFull);
-          bgAudio.addEventListener('progress', trySwapToFull);
-          try { bgAudio.load(); } catch { /* noop */ }
-        } else {
-          playMode = 'full';
-          markSrcAssign();
-          el.src = url;
-        }
+        dbg('load', track.id, hot ? 'hot' : 'cold');
+        markSrcAssign();
+        el.src = url;
         if (pendingSeek && pendingSeek.id === track.id && pendingSeek.t >= 5) {
           // boot restore: resume where a refresh interrupted (same track, once)
           const rt = pendingSeek.t;
@@ -756,7 +661,7 @@ export function useAudioEngine() {
     const needGraph = studioOn || st.gain > 1;
     if (needGraph && studio.isRouted(el)) { studio.setMasterGain(st.gain); return; }
     if (!needGraph && !studio.isRouted(el)) return;
-    const direct = playMode === 'preview' ? el.src : (streamFor(track, st.quality) || '');
+    const direct = streamFor(track, st.quality) || '';
     if (!direct) return;
     const t = el.currentTime || 0;
     const wasPlaying = !el.paused;
@@ -801,7 +706,16 @@ export function useAudioEngine() {
         st.setTime(data.current, data.duration);
         lastProgressAt = Date.now();
       } else if (event === 'error') {
-        ytFallback(cur, data);
+        const code = typeof data === 'object' ? data.code : Number(data);
+        if (ytRetryFor !== cur.id && [2, 5, 100, 101, 150].includes(code)) {
+          ytRetryFor = cur.id;
+          st.setBuffering(true);
+          youTubeLoad(cur.ytId, { start: st.currentTime || 0, autoplay: st.isPlaying })
+            .then(ok => { if (!ok) ytFallback(cur, code); })
+            .catch(() => ytFallback(cur, code));
+        } else {
+          ytFallback(cur, code);
+        }
       }
     });
     return off;
@@ -815,67 +729,6 @@ export function useAudioEngine() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying, track?.id]);
 
-  // ---------- Listen Together: host beats, guest follows ----------
-  useEffect(() => {
-    if (!party || party.role !== 'host' || !track) return;
-    const el = getAudio();
-    if (el.src) api.party.beat(party.code, { track, position: el.currentTime || 0, isPlaying }).then(r => {
-      if (r?.ended && useStore.getState().party?.code === party.code) {
-        useStore.getState().leaveParty();
-        useStore.getState().toast('Party ended');
-      }
-    }).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [party, track?.id, isPlaying]);
-  useEffect(() => {
-    if (!party) return;
-    if (party.role === 'host') {
-      const iv = setInterval(() => {
-        const st = useStore.getState();
-        const t = st.queue[st.index];
-        if (!t) return;
-        api.party.beat(party.code, { track: t, position: getAudio().currentTime || 0, isPlaying: st.isPlaying }).then(r => {
-          if (r?.ended && useStore.getState().party?.code === party.code) {
-            useStore.getState().leaveParty();
-            useStore.getState().toast('Party ended');
-          }
-        }).catch(() => {});
-      }, 5000);
-      return () => clearInterval(iv);
-    }
-    let stop = false;
-    const follow = async () => {
-      try {
-        const room = await api.party.get(party.code);
-        if (stop || useStore.getState().party?.code !== party.code) return;
-        if (room?.ended) {
-          useStore.getState().leaveParty();
-          useStore.getState().toast('Party ended');
-          return;
-        }
-        if (!room?.track?.id) return;
-        const st = useStore.getState();
-        const cur = st.queue[st.index];
-        if (!cur || cur.id !== room.track.id) {
-          st.playTrack(room.track, [room.track]);
-          return; // drift self-heals on the next poll once loaded
-        }
-        const el = getAudio();
-        const target = room.isPlaying ? room.position + (Date.now() - room.updatedAt) / 1000 : room.position;
-        if (el.duration && Math.abs((el.currentTime || 0) - target) > 4) {
-          try { el.currentTime = Math.max(0, Math.min(target, el.duration)); } catch { /* noop */ }
-          st.setTime(el.currentTime, el.duration || 0);
-        }
-        if (room.isPlaying && el.paused) st.setPlaying(true);
-        else if (!room.isPlaying && !el.paused) st.setPlaying(false);
-      } catch { /* transient network error: next poll retries */ }
-    };
-    follow();
-    const iv = setInterval(follow, 3000);
-    return () => { stop = true; clearInterval(iv); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [party]);
-
   // volume (cancels crossfade ramps — the user's hand wins)
   useEffect(() => {
     cancelFade();
@@ -888,12 +741,11 @@ export function useAudioEngine() {
   }, [volume, muted]);
 
   // quality change: rebuild the current stream at the new tier, keep position
-  // (preview mode owns its own src — the flip to full picks the new tier up)
   const firstQuality = useRef(true);
   useEffect(() => {
     if (firstQuality.current) { firstQuality.current = false; return; }
     const el = getAudio();
-    if (!track || !el.src || playMode === 'preview') return;
+    if (!track || !el.src) return;
     const url = streamFor(track, quality);
     if (!url) return;
     const t = (pendingSeek?.id === track.id && pendingSeek.t >= 5) ? pendingSeek.t : (el.currentTime || 0);
@@ -976,7 +828,7 @@ export function useAudioEngine() {
         }
         st.toast('Connection stalled — recovering', 'info');
         dbg('watchdog recover #', recoverCount);
-        try { el.load(); } catch { /* noop */ }
+        reloadStream(el);
         lastProgressAt = Date.now();
         syncPlayback();
       } catch { /* noop */ }

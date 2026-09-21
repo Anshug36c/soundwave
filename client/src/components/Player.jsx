@@ -372,8 +372,6 @@ export function FullPlayer() {
   const setGain = useStore(s => s.setGain);
   const abLoop = useStore(s => s.abLoop);
   const cycleLoopPoint = useStore(s => s.cycleLoopPoint);
-  const party = useStore(s => s.party);
-  const setShowParty = useStore(s => s.setShowParty);
   const cycleSpeed = () => { const steps = [1, 1.25, 1.5, 2, 0.5]; setPlaybackRate(steps[(steps.indexOf(playbackRate) + 1) % steps.length]); };
   const setShowQueue = useStore(s => s.setShowQueue);
   const studioOn = useStore(s => s.studioOn);
@@ -575,10 +573,6 @@ export function FullPlayer() {
               <button onClick={() => cycleLoopPoint(currentTime)} aria-label="Loop section (A-B)" title="Loop a section: tap to set A, again for B, again to clear"
                 className={`px-4 min-h-[44px] rounded-full text-sm font-bold inline-flex items-center gap-1.5 transition-all active:scale-95 ${abLoop.b != null ? 'bg-accent text-black' : abLoop.a != null ? 'bg-accent/30 text-white' : 'bg-white/10'}`}>
                 <RepeatIcon size={15} />{abLoop.b != null ? `${formatTime(abLoop.a)}–${formatTime(abLoop.b)}` : abLoop.a != null ? `A ${formatTime(abLoop.a)}…` : 'A–B'}
-              </button>
-              <button onClick={() => setShowParty(true)} aria-label="Listen Together" title="Listen Together: host or join a synced party"
-                className="px-4 min-h-[44px] rounded-full text-[13px] font-semibold bg-[var(--surface-2)] inline-flex items-center gap-1.5 transition-all active:scale-95">
-                <span className={`w-2 h-2 rounded-full ${party ? 'bg-green-500 animate-pulse' : 'bg-white/30'}`} aria-hidden />Together{party ? ` ${party.code}` : ''}
               </button>
               <button onClick={share} className="px-4 min-h-[44px] rounded-full text-[13px] font-semibold bg-[var(--surface-2)] inline-flex items-center gap-1.5 transition-all active:scale-95"><ShareIcon size={15} />Share</button>
               <button onClick={() => { toggleDownload(track); toast(downloads[track.id] ? 'Removed from offline' : 'Saved for offline'); }} className="px-4 min-h-[44px] rounded-full text-[13px] font-semibold bg-[var(--surface-2)] inline-flex items-center gap-1.5 transition-all active:scale-95">
