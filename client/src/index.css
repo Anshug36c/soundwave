@@ -419,11 +419,14 @@ button:disabled:hover,
 .fade-r { -webkit-mask-image: linear-gradient(90deg, #000 90%, transparent); mask-image: linear-gradient(90deg, #000 90%, transparent); }
 /* ---------- synced lyrics ---------- */
 .lyrics-mask { -webkit-mask-image: linear-gradient(180deg, transparent, #000 14%, #000 86%, transparent); mask-image: linear-gradient(180deg, transparent, #000 14%, #000 86%, transparent); }
-.lyric-line { transition: opacity var(--dur-5) var(--ease-color), transform var(--dur-5) var(--ease), color var(--dur-4) var(--ease-color); transform-origin: left center; }
-.lyric-active { opacity: 1; color: var(--text-on-dark); transform: scale(1.03); }
-.lyric-past { opacity: .38; }
-.lyric-near { opacity: .68; }
-.lyric-far { opacity: .32; }
+.lyric-line { transition: opacity var(--dur-5) var(--ease-color), transform var(--dur-5) var(--ease), color var(--dur-4) var(--ease-color), filter var(--dur-5) var(--ease-color); transform-origin: left center; }
+.lyric-active { opacity: 1; color: var(--text-on-dark); transform: scale(1.03); filter: blur(0); }
+/* Echo v1.4.2 shipped a fix for "the blur effect not being applied to inactive
+   lyrics lines". Dimming alone left the surrounding lines competing with the
+   one being sung, so inactive lines blur by distance from it. */
+.lyric-past { opacity: .38; filter: blur(1.6px); }
+.lyric-near { opacity: .68; filter: blur(.5px); }
+.lyric-far { opacity: .32; filter: blur(2.4px); }
 
 @media (prefers-reduced-motion: reduce) {
   .animate-spin-slow, .animate-spin-slower, .eq-bar, .skeleton, .lyric-prelude { animation: none; }

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { api, streamFor, diag, diagEvent, isYouTubeTrack, ytMirrorUrl } from '../services/musicApi';
+import { equalPowerGains, AdaptivePreArm } from '../services/taste';
 import {
   youTubeLoad, youTubePlay, youTubePause, youTubeSeek, youTubeSetVolume,
   youTubeSetMuted, youTubeStop, onYouTubeEvent,
@@ -173,7 +174,14 @@ function purgePreloads() {
 // ---------- hot standby: next track staged to canplaythrough BEFORE current ends ----------
 // queue advances then cut instantly (no fade-out stall, no src-set buffering gap)
 let standbyAudio = null, standbyFor = '', standbyQ = '', standbyReady = false, standbyTimer = 0;
-let standbySettledFor = '', upcomingKey = '';
+let standbySettledFor = '', upcomingKey = '', standbyArmAt = 0;
+// Echo v1.4.2's crossfade engine adapts its pre-arm lead time to measured
+// preparation latency (20s base, 35s ceiling, expands on slow preps, decays on
+// fast ones). SoundWave already stages the next track as early as it can, so
+// the adaptive window drives the two decisions that used to be hardcoded: when
+// to re-verify the standby on a long track, and how long a slow standby gets
+// before it is abandoned.
+const preArm = new AdaptivePreArm();
 function teardownStandby() {
   if (standbyAudio) {
     try { standbyAudio.removeAttribute('src'); standbyAudio.load(); } catch { /* noop */ }
@@ -193,7 +201,7 @@ function armStandby(track, quality) {
   teardownStandby();
   if (!track?.streamUrl) return;
   try { if (!navigator.onLine) return; } catch { /* noop */ }
-  standbyFor = id; standbyQ = quality; standbyReady = false;
+  standbyFor = id; standbyQ = quality; standbyReady = false; standbyArmAt = Date.now();
   dbg('standby arm', id);
   const url = streamFor(track, quality);
   try { api.warm(url); } catch { /* noop */ }
@@ -203,13 +211,24 @@ function armStandby(track, quality) {
   try {
     const a = new Audio();
     a.preload = 'auto';
-    a.addEventListener('canplaythrough', () => { if (standbyFor === id) { standbyReady = true; settleStandby(id); } });
-    a.addEventListener('error', () => { if (standbyFor === id) { standbyReady = false; settleStandby(id); } });
+    // Feed every preparation back into the lead-time controller: this is how a
+    // slow network earns an earlier re-verify on the next track.
+    const settle = (ready) => {
+      if (standbyFor !== id) return;
+      if (standbyArmAt) { try { preArm.recordPreparationDuration(Date.now() - standbyArmAt); } catch { /* noop */ } standbyArmAt = 0; }
+      standbyReady = ready;
+      settleStandby(id);
+    };
+    a.addEventListener('canplaythrough', () => settle(true));
+    a.addEventListener('error', () => settle(false));
     a.src = url;
     a.load();
     standbyAudio = a;
     if (standbyTimer) clearTimeout(standbyTimer);
-    standbyTimer = setTimeout(() => { standbyTimer = 0; if (standbyFor === id) settleStandby(id); }, 30000); // never stall n2 past 30s
+    // never stall n2 forever — but a network that has been measuring slow gets
+    // proportionally longer than the old fixed 30s before we give up on it
+    standbyTimer = setTimeout(() => { standbyTimer = 0; if (standbyFor === id) settleStandby(id); },
+      Math.max(30000, preArm.currentLeadTimeMs + 10000));
   } catch { /* noop */ }
 }
 function neighborAt(off) {
@@ -235,6 +254,20 @@ function refreshUpcoming() {
   const n1Settled = !n1 || standbySettledFor === (n1.id || '');
   if (n2 && n1Settled) { try { preloadTrack(n2, st.quality); } catch { /* noop */ } }
 }
+/**
+ * Applies speed + Echo v1.4.2's "Varispeed" setting.
+ *
+ * Varispeed off (default) keeps the browser's pitch-preserving time stretch.
+ * Varispeed on sets `preservesPitch = false`, so pitch follows rate for the
+ * tape-style speed-up/slow-down upstream added in v1.4.2. The embedded YouTube
+ * transport has no pitch control, so varispeed is a plain-rate change there.
+ */
+function applyRate(el) {
+  const st = useStore.getState();
+  try { el.playbackRate = st.playbackRate || 1; } catch { /* noop */ }
+  try { el.preservesPitch = !st.varispeed; } catch { /* older engines ignore it */ }
+}
+
 // currentTime throws InvalidStateError when metadata isn't loaded — never let a seek crash playback
 function safeCurrentTime(el, t) {
   try {
@@ -242,11 +275,18 @@ function safeCurrentTime(el, t) {
     el.currentTime = t;
   } catch { /* not seekable yet */ }
 }
-/** Smooth volume ramp (crossfade / sleep fade-out). Token-cancelled: rapid
- *  skips start a new fade that kills the old one instead of fighting it. */
+/**
+ * Smooth volume ramp (crossfade / sleep fade-out). Token-cancelled: rapid
+ * skips start a new fade that kills the old one instead of fighting it.
+ *
+ * `curve` ports Echo v1.4.2's equal-power crossfade engine: 'out' follows
+ * cos(t·π/2) and 'in' follows sin(t·π/2), so acoustic power stays constant
+ * across the handover instead of dipping through the middle the way a linear
+ * ramp does. 'linear' is left for fades that have no counterpart track.
+ */
 let fadeToken = 0;
 function cancelFade() { fadeToken++; }
-function fadeVolume(el, to, ms) {
+function fadeVolume(el, to, ms, curve = 'linear') {
   return new Promise(resolve => {
     const tok = ++fadeToken;
     const from = el.volume;
@@ -256,7 +296,11 @@ function fadeVolume(el, to, ms) {
     const t = setInterval(() => {
       if (tok !== fadeToken) { clearInterval(t); resolve(); return; } // superseded
       i++;
-      try { el.volume = from + (to - from) * (i / steps); } catch { /* noop */ }
+      const p = i / steps;
+      const shaped = curve === 'out' ? equalPowerGains(p).outgoingGain
+        : curve === 'in' ? equalPowerGains(p).incomingGain
+          : p;
+      try { el.volume = from + (to - from) * shaped; } catch { /* noop */ }
       if (i >= steps) { clearInterval(t); try { el.volume = to; } catch { /* noop */ } resolve(); }
     }, ms / steps);
   });
@@ -271,7 +315,7 @@ async function fireSleepTimer() {
   try {
     const el = getAudio();
     const s = useStore.getState();
-    if (s.isPlaying && !s.muted) await fadeVolume(el, 0, 3000);
+    if (s.isPlaying && !s.muted) await fadeVolume(el, 0, 3000, 'out');
     s.setPlaying(false);
     s.setSleepTimer(0);
     el.volume = s.muted ? 0 : s.volume;
@@ -283,10 +327,46 @@ async function fireSleepTimer() {
 // ---------- module-scope event handlers (survive element recreation) ----------
 let lastPosState = 0;
 let lastProgressAt = 0, recoverCount = 0, lastRecoverAt = 0;
+// ---------- listening-time accrual (Local Taste Engine input) ----------
+// Echo v1.4.2's taste engine scores ln(1 + minutes listened) and penalises
+// skips, so the client has to actually measure both. timeupdate fires ~4Hz;
+// deltas are buffered here and flushed at most every 5s (plus on every
+// handover), so taste tracking never turns into a persist write per tick.
+let accrualTrack = null, accrualMs = 0, accrualLastAt = 0, accrualFlushAt = 0;
+function flushPlayTime(keep = false) {
+  if (accrualTrack?.id && accrualMs >= 500) {
+    try { useStore.getState().recordPlayTime(accrualTrack, accrualMs); } catch { /* best-effort */ }
+  }
+  accrualMs = 0;
+  accrualFlushAt = Date.now();
+  if (!keep) { accrualTrack = null; accrualLastAt = 0; }
+}
+function accruePlayTime() {
+  try {
+    const st = useStore.getState();
+    const track = st.queue[st.index];
+    const now = Date.now();
+    // Muted or paused playback is not listening, so it earns no taste signal.
+    if (!track?.id || !st.isPlaying || st.muted) { accrualLastAt = 0; return; }
+    if (accrualTrack?.id !== track.id) {
+      flushPlayTime();
+      accrualTrack = track; accrualLastAt = now; accrualFlushAt = now;
+      return;
+    }
+    // Only wall time while the element is genuinely advancing counts: a seek,
+    // a stall or a background-throttled tab would otherwise inflate the total.
+    const delta = accrualLastAt ? now - accrualLastAt : 0;
+    if (delta > 0 && delta < 2000) accrualMs += delta;
+    accrualLastAt = now;
+    if (now - accrualFlushAt >= 5000) flushPlayTime(true);
+  } catch { /* taste stats are never worth breaking playback */ }
+}
+
 function onTime() {
   const el = getAudio();
   const st = useStore.getState();
   lastProgressAt = Date.now();
+  accruePlayTime();
   st.setTime(el.currentTime, el.duration || st.duration);
   // A-B section repeat: loop back to A when B is reached (never fights an active seek drag)
   try {
@@ -318,9 +398,13 @@ function onTime() {
     }
   } catch { /* noop */ }
   if (sleepTimerEndsAt && Date.now() >= sleepTimerEndsAt) { sleepTimerEndsAt = 0; fireSleepTimer(); }
-  // late pre-stage: long track or seek — re-verify next is hot past the halfway mark
+  // Late pre-stage: re-verify the standby once the remaining time falls inside
+  // the adaptive preparation window (Echo v1.4.2), keeping the old 55% mark as
+  // the floor so a fast network still stages early.
   try {
-    if (el.duration > 30 && el.currentTime > el.duration * 0.55) refreshUpcoming();
+    const leadS = preArm.currentLeadTimeMs / 1000;
+    const remaining = (el.duration || 0) - (el.currentTime || 0);
+    if (el.duration > 30 && (remaining <= leadS || el.currentTime > el.duration * 0.55)) refreshUpcoming();
   } catch { /* noop */ }
 }
 function onLoaded() {
@@ -345,6 +429,7 @@ function onCanPlay() {
 }
 function onPause() {
   const el = getAudio();
+  flushPlayTime(true); // the listening stretch that just ended is real taste data
   if (el.ended) return;
   if (el.readyState === 0) return; // mid-load noise
   if (Date.now() - lastSrcAssign < 800) return; // our own src swap settling
@@ -396,6 +481,7 @@ function onError() {
 let errRetryFor = '';
 function onEnded() {
   const el = getAudio();
+  flushPlayTime(); // a finished track is fully credited before the queue moves
   const { repeat, next, index, queue } = useStore.getState();
   if (repeat === 'one') {
     // A YouTube track has no element position to rewind.
@@ -480,8 +566,8 @@ function recreateAudio() {
   el.crossOrigin = 'anonymous'; // see getAudio(): keeps the WebAudio graph un-muted cross-origin
   el.volume = useStore.getState().muted ? 0 : useStore.getState().volume;
   el.muted = useStore.getState().muted;
-  try { el.playbackRate = useStore.getState().playbackRate || 1; } catch { /* noop */ }
-  audio = el;
+  audio = el;                     // the singleton MUST be reassigned before use
+  applyRate(el);
   try { window.__audio = el; } catch { /* noop */ } // test/debug handle
   attachAudio(el);
   return el;
@@ -505,9 +591,15 @@ export function useAudioEngine() {
       },
     });
     window.addEventListener('keydown', onKey);
+    // A closed tab must not lose the last few seconds of listening history.
+    const onHide = () => flushPlayTime(true);
+    window.addEventListener('pagehide', onHide);
+    document.addEventListener('visibilitychange', onHide);
     return () => {
       detachAudio(getAudio());
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pagehide', onHide);
+      document.removeEventListener('visibilitychange', onHide);
     };
   }, []);
 
@@ -519,6 +611,7 @@ export function useAudioEngine() {
   const muted = useStore(s => s.muted);
   const gain = useStore(s => s.gain);
   const playbackRate = useStore(s => s.playbackRate);
+  const varispeed = useStore(s => s.varispeed);
   const quality = useStore(s => s.quality);
   const sleepTimerMin = useStore(s => s.sleepTimerMin);
   const studioOn = useStore(s => s.studioOn);
@@ -560,6 +653,7 @@ export function useAudioEngine() {
         } catch { /* plain fallback */ }
       }
       if (el.dataset.trackId !== track.id) {
+        flushPlayTime(); // credit the outgoing track before its element is reused
         useStore.getState().clearLoop();
         const hot = standbyReady && standbyFor === track.id;
         switchAt = Date.now(); pendingSwitch = true;
@@ -567,7 +661,7 @@ export function useAudioEngine() {
         purgePreloads();   // queued skips obsolete every pool preload; rebuilt below
         const doFade = st.crossfade && !st.muted && el.src && !el.paused && el.currentTime > 1 && !hot;
         if (doFade) {
-          await fadeVolume(el, 0, 350);
+          await fadeVolume(el, 0, 350, 'out');
           if (cancelled) return;
         } else if (st.crossfade && !st.muted) {
           el.volume = 0; // fade-in from silence on fresh loads too
@@ -593,9 +687,9 @@ export function useAudioEngine() {
         }
         if (useStore.getState().isPlaying) useStore.getState().setBuffering(true); // preparing…
         syncPlayback();
-        if (st.crossfade && !st.muted) fadeVolume(el, st.volume, 600);
+        if (st.crossfade && !st.muted) fadeVolume(el, st.volume, 600, 'in');
         else el.volume = st.muted ? 0 : st.volume;
-        try { el.playbackRate = st.playbackRate || 1; } catch { /* noop */ }
+        applyRate(el);
       }
       // hot-standby prefetch: next track fully staged, the one after warming
       try { refreshUpcoming(); } catch { /* noop */ }
@@ -767,10 +861,10 @@ export function useAudioEngine() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quality]);
 
-  // playback speed (pitch-preserving by default)
+  // playback speed + varispeed (pitch-preserving unless Varispeed is on)
   useEffect(() => {
-    try { getAudio().playbackRate = playbackRate || 1; } catch { /* noop */ }
-  }, [playbackRate]);
+    applyRate(getAudio());
+  }, [playbackRate, varispeed]);
 
   // seek requests — subscription-driven, zero re-renders. The engine is mounted
   // at app root, so subscribing to the 4Hz playback clock re-rendered the whole
