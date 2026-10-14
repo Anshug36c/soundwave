@@ -332,6 +332,8 @@ export function FullPlayer() {
   const playError = useStore(s => s.playError);
   const playbackRate = useStore(s => s.playbackRate);
   const setPlaybackRate = useStore(s => s.setPlaybackRate);
+  const varispeed = useStore(s => s.varispeed);
+  const setVarispeed = useStore(s => s.setVarispeed);
   const gain = useStore(s => s.gain);
   const setGain = useStore(s => s.setGain);
   const abLoop = useStore(s => s.abLoop);
@@ -514,7 +516,13 @@ export function FullPlayer() {
               <button onClick={() => setMuted(!muted)} aria-label={muted || volume === 0 ? 'Unmute' : 'Mute'} className="w-11 h-11 grid place-items-center btn-press shrink-0">{muted || volume === 0 ? <MuteIcon size={20} /> : <VolumeIcon size={20} />}</button>
               <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={(e) => setVolume(Number(e.target.value))} className="slider flex-1" aria-label="Volume"
                 style={{ background: `linear-gradient(90deg, var(--text) ${(muted ? 0 : volume) * 100}%, rgba(128,128,128,.4) ${(muted ? 0 : volume) * 100}%)` }} />
-              <button onClick={cycleSpeed} className="text-xs font-extrabold px-2 rounded-md bg-white/10 min-w-[46px] min-h-[40px]" aria-label="Playback speed" title="Playback speed">{playbackRate}×</button>
+              <button onClick={cycleSpeed} className="text-xs font-extrabold px-2 rounded-md bg-white/10 min-w-[46px] min-h-[40px]" aria-label="Playback speed" title={varispeed ? 'Playback speed (varispeed: pitch follows)' : 'Playback speed (pitch preserved)'}>{playbackRate}×</button>
+              {/* Echo v1.4.2 Varispeed: one tap swaps pitch-preserving stretch
+                  for tape-style speed, right where the speed control lives. */}
+              <button onClick={() => setVarispeed(!varispeed)} aria-pressed={varispeed}
+                className={`text-[11px] font-extrabold px-2 rounded-md min-h-[40px] ${varispeed ? 'bg-accent' : 'bg-white/10'}`}
+                style={varispeed ? { color: 'var(--accent-ink, #000)' } : {}}
+                aria-label="Varispeed" title={varispeed ? 'Varispeed on — pitch follows speed' : 'Varispeed off — pitch preserved'}>Tape</button>
             </div>
             <div className="flex items-center gap-2 mt-2 w-full max-w-xs slider-wrap" title="Volume boost up to 200%">
               <span className="text-[11px] font-extrabold text-dim w-12 shrink-0">BOOST</span>

@@ -54,6 +54,9 @@ export default function Settings() {
   const setStudioOn = useStore(s => s.setStudioOn);
   const crossfade = useStore(s => s.crossfade);
   const setCrossfade = useStore(s => s.setCrossfade);
+  const varispeed = useStore(s => s.varispeed);
+  const setVarispeed = useStore(s => s.setVarispeed);
+  const playStats = useStore(s => s.playStats);
   const autoplay = useStore(s => s.autoplay);
   const setAutoplay = useStore(s => s.setAutoplay);
   const profile = useStore(s => s.profile);
@@ -78,6 +81,11 @@ export default function Settings() {
   const topArtists = {};
   history.forEach(t => { const n = t.artist?.name || 'Unknown'; topArtists[n] = (topArtists[n] || 0) + 1; });
   const topList = Object.entries(topArtists).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  // What the Local Taste Engine (Echo v1.4.2) has measured on this device.
+  const statList = Object.values(playStats || {});
+  const listenedMin = Math.round(statList.reduce((a, s2) => a + (s2.totalPlayTimeMs || 0), 0) / 60000);
+  const skipTotal = statList.reduce((a, s2) => a + (s2.skipCount || 0), 0);
 
   return (
     <div className="pb-8 max-w-2xl">
@@ -130,6 +138,12 @@ export default function Settings() {
         </Row>
         <Row label="Crossfade" desc="Smooth fade-out / fade-in between tracks">
           <button onClick={() => { setCrossfade(!crossfade); toast(`Crossfade ${!crossfade ? 'on' : 'off'}`); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${crossfade ? 'bg-accent' : 'bg-white/10'}`} style={crossfade ? { color: 'var(--accent-ink, #000)' } : {}}>{crossfade ? 'ON' : 'OFF'}</button>
+        </Row>
+        <Row label="Varispeed" desc="Tape-style speed: pitch follows the rate instead of staying fixed. Off keeps pitch-preserving stretch.">
+          <button onClick={() => { setVarispeed(!varispeed); toast(`Varispeed ${!varispeed ? 'on — pitch follows speed' : 'off — pitch preserved'}`); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${varispeed ? 'bg-accent' : 'bg-white/10'}`} style={varispeed ? { color: 'var(--accent-ink, #000)' } : {}}>{varispeed ? 'ON' : 'OFF'}</button>
+        </Row>
+        <Row label="Taste engine" desc={`${statList.length} tracks measured · ${listenedMin} min listened · ${skipTotal} skips weighed — all on-device`}>
+          <span className="text-xs text-dim font-bold">Local</span>
         </Row>
         <Row label="Autoplay" desc="When the queue ends, keep playing similar songs">
           <button onClick={() => { setAutoplay(!autoplay); toast(autoplay ? 'Autoplay off' : 'Autoplay on'); }} className={`px-5 py-1.5 rounded-full text-sm font-bold ${autoplay ? 'bg-accent' : 'bg-white/10'}`} style={autoplay ? { color: 'var(--accent-ink, #000)' } : {}}>{autoplay ? 'ON' : 'OFF'}</button>

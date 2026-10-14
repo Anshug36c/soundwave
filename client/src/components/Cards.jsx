@@ -28,7 +28,7 @@ function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp,
   const isPlaying = useStore(s => s.isPlaying);
   const liked = useStore(s => s.liked);
   const toggleLike = useStore(s => s.toggleLike);
-  const toggleDislike = useStore(s => s.toggleDislike);
+  const neverRecommend = useStore(s => s.neverRecommend);
   const disliked = useStore(s => s.disliked);
   const addToQueue = useStore(s => s.addToQueue);
   const [more, setMore] = useState(false);
@@ -68,7 +68,10 @@ function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp,
         <button onClick={() => toggleLike(track)} className={`btn-quiet shrink-0 px-2 active:scale-90 ${isLiked ? 'accent' : ''}`} aria-label={isLiked ? 'Unlike' : 'Like'}>
           <HeartIcon size={18} filled={isLiked} />
         </button>
-        <button onClick={() => toggleDislike(track)} className={`btn-quiet hidden min-[400px]:grid shrink-0 place-items-center px-2 ${isDisliked ? 'text-red-400' : ''}`} aria-label="Dislike" title="Don't recommend this"><HideIcon size={18} /></button>
+        {/* Echo v1.4.2's song-menu action, same wording: the track leaves every
+            local recommendation surface and is sent to the server as an
+            exclusion, so the mix refills the slot instead of coming up short. */}
+        <button onClick={() => neverRecommend(track)} className={`btn-quiet hidden min-[400px]:grid shrink-0 place-items-center px-2 ${isDisliked ? 'text-red-400' : ''}`} aria-label={isDisliked ? 'Allow this song in recommendations again' : 'Never recommend this song again'} title={isDisliked ? 'Allow again' : 'Never recommend again'}><HideIcon size={18} /></button>
         {badge && <span className="hidden min-[400px]:block shrink-0 text-[12px] text-dim">{badge}</span>}
         <span className="hidden min-[360px]:block w-10 shrink-0 text-right text-[12px] text-dim tabular-nums">{formatTime(track.duration)}</span>
         <button onClick={() => playNext(track)} className="hidden min-[400px]:block px-2 py-2 text-[10px] font-bold text-dim transition-opacity hover:text-[var(--text)] md:opacity-0 md:group-hover:opacity-100" aria-label="Play next" title="Play next">NEXT</button>
@@ -85,7 +88,7 @@ function SongRow_({ track, index, context, showIndex = true, onRemove, onMoveUp,
         <div className="flex gap-2 px-3 pb-2.5 min-[400px]:hidden">
           <button onClick={() => addToQueue(track)} className="chip flex-1">Queue</button>
           <button onClick={() => playNext(track)} className="chip flex-1">Play next</button>
-          <button onClick={() => toggleDislike(track)} className={`chip flex-1 ${isDisliked ? 'text-red-400' : ''}`}>{isDisliked ? 'Hidden' : 'Hide'}</button>
+          <button onClick={() => neverRecommend(track)} className={`chip flex-1 ${isDisliked ? 'text-red-400' : ''}`}>{isDisliked ? 'Allow again' : 'Never again'}</button>
         </div>
       )}
     </div>

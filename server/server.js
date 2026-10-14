@@ -8,6 +8,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { mountAuth } from './auth.js';
 import { desDecryptBase64 } from './des.js';
+import { cleanMetadata, displayTitle, cleanQuery, excludeKey } from './metadata.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -1248,7 +1249,15 @@ const ytMatchCache = new Map(); // videoId -> { mirrors: [{ source, sid }], time
 async function ytResolve(title, artist, vid) {
   const hit = ytMatchCache.get(String(vid));
   if (hit && Date.now() - hit.time < PAGE_TTL) return hit.mirrors;
-  const q = [title, (artist && artist !== 'Unknown') ? artist : ''].filter(Boolean).join(' ');
+  // Echo v1.4.2 "better track matching": YouTube titles arrive as
+  // "Song (Official Video) [4K]" and channels as "Artist - Topic". Running the
+  // shared cleaner before the provider sweep is what makes the resolved mirror
+  // land on the same recording instead of a fuzzy text hit.
+  const known = (artist && artist !== 'Unknown') ? artist : '';
+  const cm = cleanMetadata(title, known);
+  const cTitle = cm.cleanTitle || String(title || '').trim();
+  const cArtist = cm.cleanArtist || known;
+  const q = [cTitle, cArtist].filter(Boolean).join(' ');
   if (!q) return null;
   const withTimeout = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r([]), ms))]);
   const lists = await Promise.all([
@@ -1259,7 +1268,7 @@ async function ytResolve(title, artist, vid) {
   ]);
   const all = lists.flat().filter(t => t?.sourceId);
   if (!all.length) return null;
-  const ft = fold(title), fa = fold((artist && artist !== 'Unknown') ? artist : '');
+  const ft = fold(cTitle), fa = fold(cm.primaryArtist || cArtist);
   const score = (t) => {
     const tt = fold(t.title || ''), ta = fold(t.artist?.name || '');
     return (tt && ft && (tt.includes(ft) || ft.includes(tt)) ? 2 : 0) + (ta && fa && (ta.includes(fa) || fa.includes(ta)) ? 1 : 0);
@@ -1474,7 +1483,11 @@ async function recoverMirrors(title, artist, tried = []) {
   const key = `${title}|${artist}`.toLowerCase().replace(/[^a-z0-9|]/g, '');
   const hit = recoverCache.get(key);
   if (hit && Date.now() - hit.time < 30 * 60 * 1000) return hit.mirrors;
-  const q = `${title} ${artist}`.trim();
+  // Query side gets the cleaned spelling (better recall on the providers);
+  // recoveryScore below still compares version-aware tokens, so a
+  // "Slowed + Reverb" request is never satisfied by the original recording.
+  const cm = cleanMetadata(title, artist);
+  const q = `${cm.cleanTitle || title} ${cm.cleanArtist || artist}`.trim();
   const down = new Set(srcDegraded());
   const triedKeys = new Set(tried.map(t => `${t.source}:${t.sid}`));
   const pick = (lists) => {
@@ -1565,15 +1578,30 @@ app.get('/api/deep-cuts', async (req, res) => {
     res.json({ songs: data.slice(0, limit) });
   } catch (e) { res.status(502).json({ error: 'Deep cuts failed', detail: e.message }); }
 });
-async function randomIndexTracks(n = 5) {
+/**
+ * Deterministic PRNG (mulberry32). Echo v1.4.3 replaced SQLite `RANDOM()` with
+ * a bound per-invocation seed for exactly this reason: a re-read of the same
+ * query must return the same rows, while a new invocation gets variety. Here
+ * the "re-read" is the response cache — one seed per refresh, not per render.
+ */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+async function randomIndexTracks(n = 5, seed = 0) {
+  const rnd = seed ? mulberry32(seed) : Math.random;
   const maps = await warmMaps();
   const pools = maps.filter(([, m]) => m?.size > 50);
   if (!pools.length) return [];
   const cands = [];
   for (let i = 0; i < n * 4 && cands.length < n * 2; i++) {
-    const [src, map] = pools[Math.floor(Math.random() * pools.length)];
+    const [src, map] = pools[Math.floor(rnd() * pools.length)];
     const keys = [...map.keys()];
-    const e = map.get(keys[Math.floor(Math.random() * keys.length)]);
+    const e = map.get(keys[Math.floor(rnd() * keys.length)]);
     if (e && !e.album) cands.push([src, e]);
   }
   const got = (await Promise.all(cands.map(([src, e]) => withTimeout((async () => {
@@ -1606,7 +1634,19 @@ app.get('/api/for-you', async (req, res) => {
   let seeds = [];
   try { seeds = JSON.parse(req.query.seeds || '[]').filter(s => s?.t).slice(0, 3); } catch {}
   const artists = String(req.query.artists || '').split('|').map(s => s.trim()).filter(Boolean).slice(0, 4);
-  const ck = `foryou:${mix}:${limit}:${fold(JSON.stringify(seeds))}:${fold(artists.join('|'))}`;
+  // Echo v1.4.2 "never recommend again": exclusions are applied here, before
+  // the limit is cut, so the rail comes back full instead of a few rows short
+  // after the client filtered it.
+  let exclude = new Set();
+  try {
+    exclude = new Set(JSON.parse(req.query.exclude || '[]').map(x => fold(String(x || '')).replace(/[^a-z0-9|]/g, '')).filter(Boolean).slice(0, 400));
+  } catch { /* a malformed list simply means no exclusions */ }
+  const blocked = (t) => !!(t && (exclude.has(String(t.id || '').toLowerCase()) || exclude.has(excludeKey(t.title, t.artist?.name))));
+  // Echo #559 "fresher recommendations": one seed per refresh varies the
+  // adventurous picks. It is part of the cache key, so a refresh costs one
+  // upstream sweep and repeated renders of the same refresh stay stable.
+  const seed = (parseInt(req.query.seed || '0', 10) || 0) >>> 0;
+  const ck = `foryou:${mix}:${limit}:${seed}:${fold(JSON.stringify(seeds))}:${fold(artists.join('|'))}:${[...exclude].sort().join(',')}`;
   const hit = getCache(ck);
   if (hit) return res.json({ songs: hit });
   try {
@@ -1621,7 +1661,7 @@ app.get('/api/for-you', async (req, res) => {
       if (!r?.ok) return [];
       return (await r.json().catch(() => ({})))?.songs || [];
     })().then(r => { deepList = r; }).catch(() => {});
-    const pAdv = (advN ? randomIndexTracks(advN + 2).catch(() => []) : Promise.resolve([])).then(r => { advList = r; }).catch(() => {});
+    const pAdv = (advN ? randomIndexTracks(advN + 2, seed || undefined).catch(() => []) : Promise.resolve([])).then(r => { advList = r; }).catch(() => {});
     const finished = await Promise.race([Promise.all([pFam, pDeep, pAdv]).then(() => true), new Promise(r => setTimeout(() => r(false), 45000))]);
     if (!finished) console.error(`[for-you] partial after 45s (fam:${famLists.flat().length} deep:${deepList.length} adv:${advList.length})`);
     const perSeedLists = seeds.map((s, i) => (famLists[i] || []).map(t => ({ ...t, reason: `Because you listened to “${s.t}”` })));
@@ -1630,13 +1670,16 @@ app.get('/api/for-you', async (req, res) => {
       for (const L of perSeedLists) { if (L[r]) picked.push(L[r]); if (picked.length >= famN) break; }
     const all = [...picked, ...(deepList || []).slice(0, 3), ...(advList || [])];
     const seen = new Set(), data = [];
+    let blockedN = 0;
     for (const t of all) {
       const k = normKey(t.title, t.artist?.name);
       if (seen.has(k)) continue;
       seen.add(k);
+      if (blocked(t)) { blockedN++; continue; }
       data.push(t);
       if (data.length >= limit) break;
     }
+    if (blockedN) console.log(`[for-you] ${blockedN} candidate(s) hidden by "never recommend again"`);
     setCache(ck, data, 10 * 60 * 1000);
     res.json({ songs: data });
   } catch (e) { res.status(502).json({ error: 'For-you failed', detail: e.message }); }
@@ -2048,6 +2091,9 @@ function parseNL(input) {
   const mood = MOODS.find(m => new RegExp(`\\b${m}\\w*\\b`).test(fold(q)));
   let cleaned = q.replace(FILLER, ' ').replace(/\s+/g, ' ').trim();
   cleaned = cleaned.replace(/\b(19\d{2}|20[0-2]\d|19[0-9]0s|20[0-4]0s|90s|80s|70s)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+  // Pasted video titles ("Alan Walker - Faded (Official Music Video) [4K]")
+  // go through the shared cleaner, so the providers get "Alan Walker Faded".
+  cleaned = cleanQuery(cleaned);
   if (cleaned && cleaned.toLowerCase() !== original.toLowerCase()) nl.cleaned = cleaned;
   if (mood) {
     const cap = mood.replace(/\b\w/g, c => c.toUpperCase());
@@ -2498,19 +2544,30 @@ app.get('/api/artist/:source/:id', async (req, res) => {
 });
 
 // ---------------- Lyrics: LRCLIB (synced) first, lyrics.ovh fallback ----------------
-// Recipe ported from EchoMusicApp's LrcLib module: junk-phrase title cleanup,
-// primary-artist extraction, 5 escalating search strategies, duration match
-// (+-5s) preferring synced lines.
-const LRC_JUNK_RE = /\s*\((official|video|audio|lyrics?|visualizer|hd|hq|4k|remaster|remix|live|acoustic|version|edit|extended|radio|clean|explicit)[^)]*\)|\s*\[[^\]]*(official|video|audio|lyrics?|visualizer|hd|hq|4k|remaster|remix|live|acoustic|version|edit|extended|radio|clean|explicit)[^\]]*\]|\s*\u3010.*?\u3011|\s*\|.*$|\s*-\s*(official|video|audio|lyrics?|visualizer).*$/gi;
-const LRC_FEAT_RE = /\s*\((feat|ft)\..*?\)|\s*(feat|ft)\..*$/gi;
-const lrcCleanTitle = (t) => String(t || '').replace(LRC_JUNK_RE, '').replace(LRC_FEAT_RE, '').trim();
+// Recipe ported from EchoMusicApp's LrcLib module, now running on the shared
+// cleaning pipeline Echo v1.4.2 introduced (`:metadata`, #550): one
+// deterministic title/artist cleanup for every lookup instead of a
+// lyrics-only regex. Escalating search strategies, duration match (+-5s),
+// synced lines preferred.
+const lrcMeta = (title, artist) => {
+  const m = cleanMetadata(title, artist);
+  const rawT = String(title || '').trim();
+  const rawA = String(artist || '').trim();
+  return {
+    title: m.cleanTitle || rawT,
+    artist: m.primaryArtist || rawA,
+    // KuGou and lyrics.ovh want the full credit line ("Calvin Harris & Dua
+    // Lipa"); LRCLIB's artist_name wants the primary artist only.
+    fullArtist: m.cleanArtist || rawA,
+    display: displayTitle(m),
+    changed: (!!m.cleanTitle && m.cleanTitle !== rawT) || (!!m.primaryArtist && m.primaryArtist !== rawA),
+    rawTitle: rawT,
+    rawArtist: rawA,
+  };
+};
+const lrcCleanTitle = (t) => cleanMetadata(t, '').cleanTitle || String(t || '').trim();
 function lrcPrimaryArtist(a) {
-  let c = String(a || '').trim();
-  for (const sep of [' & ', ' and ', ', ', ' x ', ' X ', ' feat. ', ' feat ', ' ft. ', ' ft ', ' featuring ', ' with ']) {
-    const i = c.toLowerCase().indexOf(sep);
-    if (i > 0) { c = c.slice(0, i); break; }
-  }
-  return c.trim();
+  return cleanMetadata('', a).primaryArtist || String(a || '').trim();
 }
 async function lrcSearch(params) {
   const u = new URL('https://lrclib.net/api/search');
@@ -2527,16 +2584,21 @@ function lrcPick(tracks, duration) {
   return tracks.find(t => t.syncedLyrics && close(t)) || tracks.find(t => close(t)) || tracks.find(t => t.syncedLyrics) || tracks[0];
 }
 async function lrcLyrics(title, artist, album, duration) {
-  const ct = lrcCleanTitle(title), ca = lrcPrimaryArtist(artist);
+  const m = lrcMeta(title, artist);
   const strategies = [
-    { track_name: ct, artist_name: ca, album_name: (album || '').trim() },
-    { track_name: ct },
-    { q: `${ca} ${ct}`.trim() },
-    { q: ct },
+    { track_name: m.title, artist_name: m.artist, album_name: (album || '').trim() },
   ];
-  if (ct !== String(title || '').trim() || ca !== String(artist || '').trim()) {
-    strategies.push({ track_name: String(title || '').trim(), artist_name: String(artist || '').trim() });
-  }
+  // A remix/live/acoustic recording is filed under its own title upstream, so
+  // the version-aware spelling is tried before the bare one.
+  if (m.display !== m.title) strategies.push({ track_name: m.display, artist_name: m.artist });
+  strategies.push(
+    { track_name: m.title, artist_name: m.artist },
+    { track_name: m.title },
+    { q: `${m.artist} ${m.title}`.trim() },
+    { q: m.title },
+  );
+  // last resort: the provider's own spelling, in case cleaning over-reached
+  if (m.changed) strategies.push({ track_name: m.rawTitle, artist_name: m.rawArtist });
   for (const s of strategies) {
     const hits = await lrcSearch(s).catch(() => []);
     const best = lrcPick(hits, duration);
@@ -2549,8 +2611,9 @@ async function lrcLyrics(title, artist, album, duration) {
 // matching returns wrong-song junk otherwise.
 async function kugouLyrics(title, artist, album, duration) {
   const clean = (s) => String(s || '').replace(/\(.*?\)|（.*?）|「.*?」|『.*?』|<.*?>|《.*?》|〈.*?〉|＜.*?＞/g, '').trim();
-  const kw = `${clean(title)} - ${clean(artist)}${album ? ' ' + clean(album) : ''}`.trim();
-  if (!clean(title) || !clean(artist)) return null;
+  const km = lrcMeta(title, artist);
+  const kw = `${clean(km.title)} - ${clean(km.fullArtist)}${album ? ' ' + clean(album) : ''}`.trim();
+  if (!clean(km.title) || !clean(km.fullArtist)) return null;
   const songs = await (await fetch(`https://mobileservice.kugou.com/api/v3/search/song?version=9108&plat=0&pagesize=5&showtype=0&keyword=${encodeURIComponent(kw)}`, { signal: AbortSignal.timeout(8000) })).json().catch(() => null);
   for (const s of (songs?.data?.info || [])) {
     if (duration > 0 && Math.abs((+s.duration || 0) - duration) > 8) continue;

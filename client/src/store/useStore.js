@@ -1,6 +1,25 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { streamFor } from '../services/musicApi';
+import { trackKeyOf, excludeKey, dailySeed, newSeed } from '../services/taste';
+
+// A skip is a taste signal only if the listener gave the track a real chance.
+// 30s matches the industry "a play counts" threshold and Echo's own candidate
+// filter (which forgives skips once 45s of total listening exists).
+const SKIP_BEFORE_S = 30;
+
+// Both playStats writers (pushHistory and recordPlayTime) share one cap, or the
+// table grows without bound in localStorage: 400 tracks, oldest last-played
+// dropped first. Mirrors the existing playCounts cap.
+const PLAY_STATS_CAP = 400;
+function capPlayStats(playStats) {
+  const keys = Object.keys(playStats);
+  if (keys.length <= PLAY_STATS_CAP) return playStats;
+  keys.sort((a, b) => (playStats[a]?.lastPlayedAtMillis || 0) - (playStats[b]?.lastPlayedAtMillis || 0));
+  const out = { ...playStats };
+  for (const k of keys.slice(0, keys.length - PLAY_STATS_CAP)) delete out[k];
+  return out;
+}
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -40,7 +59,11 @@ export const useStore = create(
       gain: 1, // volume boost multiplier 1..2 via Studio graph master gain
       muted: false,
       playbackRate: 1,
+      // Echo v1.4.2 "Varispeed": link pitch to speed for a tape-style effect.
+      // Off (default) keeps the browser's pitch-preserving time stretch.
+      varispeed: false,
       setPlaybackRate: (v) => set({ playbackRate: v }),
+      setVarispeed: (v) => set({ varispeed: !!v }),
       currentTime: 0,
       duration: 0,
       showFullPlayer: false,
@@ -55,15 +78,44 @@ export const useStore = create(
         if (d[track.id]) delete d[track.id]; else d[track.id] = true;
         return { disliked: d };
       }),
+      // Echo v1.4.2 song-menu action "Never recommend again": the track leaves
+      // every local recommendation surface AND is sent to /api/for-you as an
+      // exclusion, so the server refills the slot instead of returning it short.
+      neverRecommend: (track) => {
+        if (!track?.id) return;
+        const s = get();
+        const on = !s.disliked[track.id];
+        s.toggleDislike(track);
+        s.toast(on ? `Won't recommend “${track.title}” again` : `“${track.title}” allowed back`, 'info');
+      },
+      // Keys sent to the server for "never recommend again" filtering: the raw
+      // id plus the folded "title|artist" key, so the same recording is still
+      // excluded when it comes back from a different provider.
+      excludeKeys: () => {
+        const s = get();
+        const out = new Set();
+        for (const [id, t] of Object.entries(s.disliked)) {
+          if (!id) continue;
+          out.add(String(id).toLowerCase());
+          // `disliked` stores `true`, not the track — resolve the object from
+          // stats, liked or history, or the title|artist key can never be built.
+          const src = (t && typeof t === 'object') ? t
+            : s.playStats[id]?.track || s.liked[id] || s.history.find(h => h?.id === id);
+          const k = excludeKey(src?.title || '', src?.artist?.name || '');
+          if (k && k !== '|') out.add(k);
+        }
+        return [...out];
+      },
       hideArtist: (name) => { const k = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, ''); if (k) set(s => ({ hiddenArtists: { ...s.hiddenArtists, [k]: name } })); },
       unhideArtist: (name) => { const k = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, ''); set(s => { const h = { ...s.hiddenArtists }; delete h[k]; return { hiddenArtists: h }; }); },
       setDiscoverMix: (v) => set({ discoverMix: v }),
-      resetTaste: () => { set({ liked: {}, disliked: {}, hiddenArtists: {}, similar: [] }); get().toast('Taste profile reset', 'info'); },
+      resetTaste: () => { set({ liked: {}, disliked: {}, hiddenArtists: {}, similar: [], playStats: {} }); get().toast('Taste profile reset', 'info'); },
       sleepTimerMin: 0,
 
       playTracks: (tracks, startIndex = 0) => {
         const list = (tracks || []).filter(Boolean);
         if (!list.length) return;
+        get()._maybeSkip();
         const si = Math.max(0, Math.min(startIndex | 0, list.length - 1));
         set({ queue: list, index: si, isPlaying: true, currentTime: 0 });
         get().pushHistory(list[si]);
@@ -72,8 +124,9 @@ export const useStore = create(
         if (!track) return;
         if (context?.length) {
           const i = context.findIndex(t => t.id === track.id);
-          get().playTracks(context, i >= 0 ? i : 0);
+          get().playTracks(context, i >= 0 ? i : 0); // skip is counted inside
         } else {
+          get()._maybeSkip();
           const { queue } = get();
           const i = queue.findIndex(t => t.id === track.id);
           if (i >= 0) { set({ index: i, isPlaying: true }); get().pushHistory(track); }
@@ -84,6 +137,7 @@ export const useStore = create(
       next: () => {
         const { queue, index, shuffle } = get();
         if (!queue.length) return;
+        get()._maybeSkip();
         if (shuffle && queue.length > 1) {
           let n = index;
           while (n === index) n = Math.floor(Math.random() * queue.length);
@@ -97,6 +151,7 @@ export const useStore = create(
       prev: () => {
         const { queue, index, currentTime } = get();
         if (!queue.length) return;
+        get()._maybeSkip();
         if (currentTime > 3) { set({ currentTime: 0 }); get()._seekTo?.(0); return; }
         const n = (index - 1 + queue.length) % queue.length;
         set({ index: n, isPlaying: true, currentTime: 0 });
@@ -209,18 +264,103 @@ export const useStore = create(
         return { savedAlbums: a };
       }),
       playCounts: {}, // id -> { n, last, track } for Most Played (capped)
+      // Echo v1.4.2 Local Taste Engine input: accumulated listening time and
+      // skip counts per track, keyed by id and carrying upstream's trackKey.
+      // Shape matches scoreStats()/applyCandidateFilter() field-for-field.
+      playStats: {},
+      recordPlayTime: (track, deltaMs) => {
+        const id = track?.id;
+        const ms = Math.max(0, Math.min(Number(deltaMs) || 0, 10000)); // clamp a throttled-tab jump
+        if (!id || ms <= 0) return;
+        set(s => {
+          const prev = s.playStats[id];
+          const next = {
+            trackKey: prev?.trackKey || trackKeyOf(track.title, track.artist?.name),
+            title: track.title || prev?.title || '',
+            artist: track.artist?.name || prev?.artist || '',
+            totalPlayTimeMs: (prev?.totalPlayTimeMs || 0) + ms,
+            playCount: prev?.playCount || 0,
+            skipCount: prev?.skipCount || 0,
+            lastPlayedAtMillis: Date.now(),
+            track: prev?.track || track,
+          };
+          return { playStats: capPlayStats({ ...s.playStats, [id]: next }) };
+        });
+      },
+      recordSkip: (track) => {
+        const id = track?.id;
+        if (!id) return;
+        set(s => {
+          const prev = s.playStats[id];
+          return {
+            playStats: capPlayStats({
+              ...s.playStats,
+              [id]: {
+                trackKey: prev?.trackKey || trackKeyOf(track.title, track.artist?.name),
+                title: track.title || '', artist: track.artist?.name || '',
+                totalPlayTimeMs: prev?.totalPlayTimeMs || 0,
+                playCount: prev?.playCount || 0,
+                skipCount: (prev?.skipCount || 0) + 1,
+                lastPlayedAtMillis: prev?.lastPlayedAtMillis || Date.now(),
+                track: prev?.track || track,
+              },
+            }),
+          };
+        });
+      },
+      /** Count a skip when the listener bailed before the track got going. */
+      _maybeSkip: () => {
+        const s = get();
+        const t = s.queue[s.index];
+        if (t && s.currentTime > 1 && s.currentTime < SKIP_BEFORE_S) s.recordSkip(t);
+      },
+      // ---------- Daily Taste Mix (Echo v1.4.2) ----------
+      // One seed per calendar day: Home refreshes the mix every 24 h instead of
+      // building a duplicate each mount. A manual refresh rolls a fresh
+      // per-invocation seed, which is what makes the picks differ (#559).
+      tasteMix: { day: 0, seed: 0 },
+      syncTasteMix: () => {
+        const day = dailySeed();
+        const cur = get().tasteMix || { day: 0, seed: 0 };
+        if (cur.day === day && cur.seed) return cur.seed;
+        set({ tasteMix: { day, seed: day } });
+        return day;
+      },
+      refreshTasteMix: () => {
+        const seed = newSeed();
+        set(s => ({ tasteMix: { ...s.tasteMix, seed } }));
+        return seed;
+      },
       pushHistory: (track) => {
         if (!track?.id) return;
         const stamped = { ...track, _playedAt: Date.now() };
         set(s => {
+          let playStatsDraft = null;
           const pc = { ...s.playCounts };
           pc[track.id] = { n: (pc[track.id]?.n || 0) + 1, last: Date.now(), track: stamped };
+          const st = s.playStats[track.id];
+          playStatsDraft = {
+            ...s.playStats,
+            [track.id]: {
+              trackKey: st?.trackKey || trackKeyOf(track.title, track.artist?.name),
+              title: track.title || '', artist: track.artist?.name || '',
+              totalPlayTimeMs: st?.totalPlayTimeMs || 0,
+              playCount: (st?.playCount || 0) + 1,
+              skipCount: st?.skipCount || 0,
+              lastPlayedAtMillis: Date.now(),
+              track: stamped,
+            },
+          };
           const keys = Object.keys(pc);
           if (keys.length > 300) {
             keys.sort((a, b) => pc[a].last - pc[b].last);
             for (const k of keys.slice(0, keys.length - 300)) delete pc[k];
           }
-          return { history: [stamped, ...s.history.filter(t => t.id !== track.id)].slice(0, 100), playCounts: pc };
+          return {
+            history: [stamped, ...s.history.filter(t => t.id !== track.id)].slice(0, 100),
+            playCounts: pc,
+            ...(playStatsDraft ? { playStats: capPlayStats(playStatsDraft) } : null),
+          };
         });
       },
       clearHistory: () => set({ history: [] }),
@@ -287,8 +427,9 @@ export const useStore = create(
       partialize: (s) => ({
         queue: s.queue.slice(0, 200), index: s.index,
         liked: s.liked, playlists: s.playlists, followedArtists: s.followedArtists,
-        savedAlbums: s.savedAlbums, history: s.history, playCounts: s.playCounts, downloads: s.downloads,
-        theme: s.theme, quality: s.quality, playbackRate: s.playbackRate, crossfade: s.crossfade, autoplay: s.autoplay,
+        savedAlbums: s.savedAlbums, history: s.history, playCounts: s.playCounts, playStats: s.playStats, downloads: s.downloads,
+        theme: s.theme, quality: s.quality, playbackRate: s.playbackRate, varispeed: s.varispeed,
+        crossfade: s.crossfade, autoplay: s.autoplay, tasteMix: s.tasteMix,
         studioOn: s.studioOn, eqEnabled: s.eqEnabled, eqGains: s.eqGains,
         eqPreset: s.eqPreset, eqPreamp: s.eqPreamp, normalizeOn: s.normalizeOn,
         profile: s.profile, searchHistory: s.searchHistory, volume: s.volume, gain: s.gain,

@@ -104,7 +104,21 @@ export const api = {
     return get(`/search?${p.toString()}`, opts);
   },
   suggest: (q, limit = 8, opts = {}) => get(`/suggest?q=${encodeURIComponent(q)}&limit=${limit}`, { timeout: 15000, ...opts }),
-  forYou: (mix, seeds, artists, limit = 15) => get(`/for-you?mix=${mix}&limit=${limit}&seeds=${encodeURIComponent(JSON.stringify(seeds || []))}&artists=${encodeURIComponent((artists || []).join('|'))}`),
+  // Echo v1.4.2: `exclude` carries the "never recommend again" keys so the
+  // server refills those slots instead of the client trimming a short list;
+  // `seed` is one per refresh, which is what makes the picks differ (#559).
+  forYou: (mix, seeds, artists, limit = 15, opts = {}) => {
+    const p = new URLSearchParams({
+      mix: String(mix ?? 30),
+      limit: String(limit ?? 15),
+      seeds: JSON.stringify(seeds || []),
+      artists: (artists || []).join('|'),
+    });
+    const exclude = (opts.exclude || []).filter(Boolean).slice(0, 400);
+    if (exclude.length) p.set('exclude', JSON.stringify(exclude));
+    if (opts.seed) p.set('seed', String(opts.seed >>> 0));
+    return get(`/for-you?${p.toString()}`);
+  },
   song: (source, id) => get(`/song/${source}/${encodeURIComponent(id)}`),
   album: (source, id) => get(`/album/${source}/${encodeURIComponent(id)}`),
   artist: (source, id) => get(`/artist/${source}/${encodeURIComponent(id)}`),

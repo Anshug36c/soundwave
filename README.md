@@ -55,18 +55,26 @@ Everything below exists in the codebase today.
 - Typo-tolerant suggestions ("did you mean"-style), exact-match-first ranking
 - Artist pages: top songs + complete cross-provider discography, follow/unfollow, hide
 - Album pages with track lists; "Shuffle artist" and "add artist songs to queue"
-- Home: search entry, Recently Played rail, and Recommended — a mix built from
-  your last plays (seeded songs + top artists, deep cuts per artist) with a
-  Familiar/Adventurous discovery slider
+- Home: search entry, Recently Played rail, Forgotten Favourites (quiet tracks
+  resurfaced with a per-refresh seeded order), and Taste Mix — a daily-refreshing
+  mix built from measured listening (seeded songs + top artists, deep cuts per
+  artist) with a Familiar/Adventurous discovery slider
+- Pasted video titles are cleaned before searching: "Alan Walker - Faded
+  (Official Music Video) [4K]" searches as "Alan Walker Faded"
 
 ### Playback
 - Play / pause / next / previous (previous restarts the track if > 3s in — like Spotify)
 - Queue drawer: reorder, play-next, add-many, remove, clear; persists across reloads
 - Seeking (slider, arrow keys ±10s, elapsed/remaining toggle), volume + mute
 - Shuffle, repeat (off → all → one), playback speed (0.5×–2×, persisted)
-- Sleep timer with fade-out, crossfade between tracks
+- Varispeed: tape-style speed where pitch follows the rate (player "Tape" button
+  or Settings), off by default so speed changes stay pitch-preserving
+- Sleep timer with fade-out, equal-power crossfade between tracks (cos/sin gain
+  curves — constant acoustic power, no dip through the middle of the handover)
 - YouTube Music search (Echo InnerTube recipe): Songs/Albums/Artists/YouTube tabs, YT tracks play via closest-mirror resolve, KuGou as 3rd lyrics provider
-- Hot-standby prefetch: next track staged before the current one ends
+- Hot-standby prefetch: next track staged before the current one ends, with an
+  adaptive pre-arm window that widens (20s → 35s) when preparation measures slow
+  and decays back when it is fast
 - Boot resume: refresh mid-song → player reopens paused at the same position
 - MediaSession integration (OS media keys / lock-screen controls)
 - Studio sound: WebAudio 10-band EQ + preamp + normalize + live visualizer
@@ -83,9 +91,36 @@ Everything below exists in the codebase today.
 - Dark / light themes (persisted), loading skeletons, buffering spinners, toasts
 - Full keyboard control: `Space` play/pause, `N`/`P` next/prev, `←/→` seek,
   `↑/↓` volume, `M` mute, `S` shuffle, `R` repeat, `Q` queue, `⌘/Ctrl+K` palette
-- Synced (LRC) lyrics via LRCLIB (Echo recipe: title cleanup + duration match), lyrics.ovh fallback, auto-scrolling highlight
+- Synced (LRC) lyrics via LRCLIB (Echo recipe: shared metadata cleanup + duration
+  match), KuGou as the third provider, lyrics.ovh fallback, auto-scrolling
+  highlight with inactive lines blurred
+- Local Taste Engine: play time, skips, likes, recency and time of day are
+  measured on-device and drive the mix; "Never recommend again" excludes a track
+  locally *and* server-side, so the rail refills instead of coming up short
 - Offline banner + connectivity-aware fetching; "Erase all local data" one-tap reset
 - Local profile, library, playlists, history, and offline saves (no account required)
+
+### Ported from Echo Music
+
+SoundWave borrows recipes from [Echo Music](https://github.com/EchoMusicApp/Echo-Music)
+(an open-source YouTube Music client) rather than reinventing them. Synced to
+**Echo v1.4.3** (released 2026-10-11); earlier recipes came from v1.4.x.
+
+| SoundWave | Upstream source | What it does |
+|---|---|---|
+| `server/metadata.js` | `:metadata` — `MetadataCleaner`, `CleanerRules` (v1.4.2, #550) | Five-stage deterministic title/artist cleaning: entities + emoji, "Artist - Title" split, junk/version/feat extraction, `- Topic`/`VEVO` scrubbing, multi-artist split. Feeds lyrics, mirror recovery, YouTube matching and search. Band names with ampersands/conjunctions are preserved |
+| `client/src/services/taste.js` | `LocalTasteEngine.kt`, `GetQuickPicksUseCase.kt`, `ResolveLocalMixUseCase.kt` (v1.4.2, #542) | Weights (play 2.0, skip −3.0, like +5.0, recency +1.5, time-of-day ×1.3), log-normalised play time, candidate filter, seed ranking |
+| `equalPowerGains()` | `crossfade/EqualPowerCurve.kt` (v1.4.2) | cos/sin constant-power fade curve used by the crossfade and sleep fades |
+| `AdaptivePreArm` | `crossfade/AdaptivePreArmManager.kt` (v1.4.2) | Expands/contracts the prefetch lead time from measured preparation latency |
+| `seededOrder()`, `newSeed()`, `dailySeed()` | `DatabaseDao.quickPicks` / `forgottenFavorites` (v1.4.3) | Per-invocation seeded ordering: one seed per refresh, never per render — upstream replaced SQL `RANDOM()` for exactly this reason |
+| Varispeed | `PlayerSettings.kt` (v1.4.2) | `preservesPitch = false` for tape-style speed |
+| "Never recommend again" | `RecommendationExclusionDao` (v1.4.2) | Song-menu exclusion, enforced on both sides of the wire |
+| Lyrics blur | v1.4.2 bug fix | Inactive synced-lyrics lines blur by distance from the sung line |
+| InnerTube search + LRCLIB/KuGou lyrics | `:innertube`, `:lrclib`, `:kugou` (earlier) | YouTube Music catalogue search, synced-lyrics lookup recipes |
+
+Not portable to a web app, deliberately skipped: bit-perfect USB-DAC output,
+Room/SQLite migrations, Extension Sources (addon servers), haptics, Spotify
+account integrations, widgets.
 
 ---
 
@@ -326,7 +361,10 @@ All provider traffic happens **server-side**; the browser never contacts provide
 | **Mr-Jatt** (`mrj`) | Songs + MP3s; on-disk index | Search, audio | id → tracks, MP3s, hi-res covers | Same as above | None (built-in) |
 | **PenduJatt** | Extra mirror | Audio failover | id → MP3 | Skipped silently | None |
 | **JioSaavn** (`saavn`, via Rhythmax API) | Metadata + encrypted stream URLs | Search, audio | query/token → tracks, DES-encrypted URLs (decrypted with legacy OpenSSL + `_96→_160→_320` upgrade) | Skip / next mirror | None (built-in `rthmx.vercel.app`) |
-| **lyrics.ovh** | Lyrics text | `/api/lyrics` | artist+title → lyrics (plain or LRC) | "Lyrics not available" | None |
+| **LRCLIB** | Synced (LRC) + plain lyrics | `/api/lyrics` (1st) | cleaned title/artist/duration → LRC or plain text | Falls through to KuGou | None (built-in) |
+| **KuGou** | Synced lyrics | `/api/lyrics` (2nd) | title-artist keyword → hash → base64 LRC | Falls through to lyrics.ovh | None (built-in) |
+| **lyrics.ovh** | Lyrics text | `/api/lyrics` (3rd) | artist+title → lyrics (plain or LRC) | "Lyrics not available" | None |
+| **YouTube InnerTube** | Video/YouTube-Music catalogue | Search YouTube tab, `ytv:` tracks | query → videos (no stream extraction — bot-walled) | Tab shows nothing | None (built-in key) |
 
 Why several music providers? No single source has everything, and direct links rot.
 Mirrors + fastest-CDN ranking (`cdnScore`, visible in `/api/sources`) keep playback
@@ -394,14 +432,19 @@ soundwave/
 │       ├── store/
 │       │   └── useStore.js  # Zustand: queue, library, settings, persistence
 │       ├── services/
-│       │   └── musicApi.js  # API client, streamFor(), warm(), diagnostics
+│       │   ├── musicApi.js  # API client, streamFor(), warm(), diagnostics
+│       │   └── taste.js     # Local Taste Engine, equal-power curve, pre-arm, seeds
 │       ├── audio/
 │       │   └── studio.js    # WebAudio graph: EQ, preamp, normalize, analyser
-│       └── utils.test.js    # vitest unit tests
+│       ├── utils.test.js    # vitest unit tests (formatters, shuffle, quality)
+│       └── taste.test.js    # vitest unit tests (taste scoring, fades, seeds)
 ├── server/
 │   ├── server.js            # Express app: ALL /api/* routes, caches, proxying
+│   ├── metadata.js          # title/artist cleaning pipeline (Echo :metadata port)
+│   ├── youtube.js           # InnerTube search + video metadata (no stream extraction)
+│   ├── des.js               # legacy DES-ECB for JioSaavn stream URLs
 │   ├── auth.js              # Google ID-token verify + signed cookie sessions
-│   └── test/auth.test.js    # node:test unit tests
+│   └── test/                # node:test: auth, des, cors, youtube, metadata
 ├── .github/workflows/ci.yml # server check+test+audit, client test+build+audit
 ├── render.yaml / railway.toml / Dockerfile  # deploy targets
 ├── AUTH_SETUP.md / CHANGELOG.md / CONTRIBUTING.md
@@ -414,10 +457,13 @@ soundwave/
 | `client/src/hooks/useAudioEngine.js` | Playback: element control, full-track loading, seek/volume/keys, preloading, resume, watchdog, MediaSession |
 | `client/src/store/useStore.js` | Queue + library + settings state, actions, localStorage persistence, offline-save + download logic |
 | `client/src/services/musicApi.js` | Backend client, `streamFor(track, quality)` URL builder, warm dedup, quality tiers, diagnostics counters |
+| `client/src/services/taste.js` | Pure taste maths: `scoreStats`, `applyCandidateFilter`, seed ranking, `equalPowerGains`, `AdaptivePreArm`, seeded ordering |
 | `client/src/components/Player.jsx` | Player bar, full player, queue drawer, lyrics/EQ/details tabs, sleep/speed/menus |
 | `client/src/audio/studio.js` | WebAudio routing: 10-band EQ, preamp, loudness normalize, visualizer analyser |
 | `client/public/sw.js` | PWA shell cache + exact-URL offline audio cache with Range support |
 | `server/server.js` | Search fan-out, `/api/audio` proxy+cache+dedup+failover, warm, lyrics, for-you recommendations, indexes, health |
+| `server/metadata.js` | Deterministic title/artist cleaning: junk, versions, featuring artists, channel suffixes, exclusion keys |
+| `server/youtube.js` | InnerTube search + watch-page metadata for `ytv:` tracks |
 | `server/auth.js` | Google sign-in verify + cookie sessions (optional; guest works without) |
 
 ---
@@ -439,6 +485,13 @@ Want to change preloading?           → useAudioEngine.js (armStandby/preloadTr
                                        refreshUpcoming) + musicApi.warm
 Want to change quality tiers?        → server QUALITY_ORDER + client quality setting
 Want to change the EQ/studio sound?  → client/src/audio/studio.js + Equalizer.jsx
+Want to change recommendations?      → client/src/services/taste.js (scoring) +
+                                       pages/Home.jsx (rails) + server/server.js
+                                       (/api/for-you, /api/similar, /api/deep-cuts)
+Want to change title/artist cleanup? → server/metadata.js (+ its test) — it feeds
+                                       lyrics, matching, recovery and search
+Want to change crossfade feel?       → useAudioEngine.js (fadeVolume curves,
+                                       preArm) + taste.js (equalPowerGains)
 Want to change auth?                 → server/auth.js + GoogleLogin.jsx + AUTH_SETUP.md
 Want to change styling/theme?        → client/src/index.css + Settings.jsx
 ```
@@ -831,8 +884,8 @@ terms in your jurisdiction. Nothing here is legal advice.
 
 | What | Command | Where |
 |---|---|---|
-| Client unit tests (11, vitest: formatters, shuffle, quality, stream URLs) | `npm test` | `client/` |
-| Server unit tests (18, node:test: Google-token verify, sessions, cookies) | `npm test` | `server/` |
+| Client unit tests (57, vitest: formatters, shuffle, quality, stream URLs, taste scoring, equal-power curve, pre-arm, seeded ordering, play-stats/skip/exclusion wiring) | `npm test` | `client/` |
+| Server unit tests (58, node:test: Google-token verify, sessions, cookies, DES, CORS, YouTube helpers, metadata cleaning) | `npm test` | `server/` |
 | Server syntax check | `node --check server.js` | `server/` |
 | Client production build | `npm run build` | `client/` |
 | Dependency audit | `npm audit --audit-level=high` | both (CI) |
